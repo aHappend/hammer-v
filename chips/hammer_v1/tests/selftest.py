@@ -16,6 +16,36 @@ from iss import MASK, arithmetic, decode
 from retention import Evidence, ToolFailure
 
 
+def interrupted_command_checks():
+    for code in (-15, -9, 1, 0):
+        with tempfile.TemporaryDirectory(prefix="hammer-interruption-fixture-") as directory:
+            root = Path(directory)
+            probe = Evidence.__new__(Evidence)
+            probe.directory = root / "fixture"
+            probe.directory.mkdir()
+            probe.commands = []
+            probe.hashes = {}
+            argv = ["fixture-tool", "expected-rejection"]
+            with patch("retention.ROOT", root), \
+                    patch.object(probe, "version", return_value="synthetic fixture"), \
+                    patch("retention.subprocess.run", return_value=Mock(returncode=code)):
+                try:
+                    folder, _ = probe.command(argv, cwd=root, expect_failure=True)
+                except ToolFailure:
+                    equal(code < 0, True, "completed command is not an interruption")
+                    folder = (root / probe.commands[-1]).parent
+                else:
+                    equal(code >= 0, True,
+                          "signal termination cannot count as expected-negative execution")
+            receipt = json.loads((folder / "receipt.json").read_text())
+            equal(receipt["argv"], argv, "interrupted command exact argv")
+            equal(receipt["exit_code"], code, "original exit/signal status retained")
+            equal(receipt["timed_out"], False, "signal termination is not a watchdog timeout")
+            equal((root / receipt["stdout"]).exists(), True, "command stdout retained")
+            equal((root / receipt["stderr"]).exists(), True, "command stderr retained")
+    print("INTERRUPTION_FIXTURES compared=4; synthetic statuses; no tool interrupted")
+
+
 def prerequisite_receipt_checks():
     with tempfile.TemporaryDirectory(prefix="hammer-receipt-fixture-") as directory:
         root = Path(directory)
@@ -249,6 +279,7 @@ def compiler_elf_checks():
 
 
 def main():
+    interrupted_command_checks()
     prerequisite_receipt_checks()
     compiler_selection_checks()
     compiler_fallback_checks()

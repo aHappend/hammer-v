@@ -120,6 +120,7 @@ class Evidence:
             (folder / "receipt.json").write_text(json.dumps(record, indent=2) + "\n")
             self.commands.append(str((folder / "receipt.json").relative_to(ROOT)))
         if (record.get("launch_error") or record["timed_out"]
+                or record["exit_code"] is None or record["exit_code"] < 0
                 or (record["exit_code"] != 0 and not expect_failure)):
             raise ToolFailure(f"tool execution failed: {self.commands[-1]}")
         return folder, record
