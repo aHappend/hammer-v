@@ -79,7 +79,7 @@ class Evidence:
         record = {"argv": [str(v) for v in argv], "cwd": str(cwd.relative_to(ROOT)),
                   "source_sha256": self.hashes, "start_time": timestamp(),
                   "timeout_s": timeout, "timed_out": False, "exit_code": None,
-                  "tool_version": self.version(str(argv[0])),
+                  "tool_version": "unavailable; prerequisite query not completed",
                   "stdout": str((folder / "stdout.log").relative_to(ROOT)),
                   "stderr": str((folder / "stderr.log").relative_to(ROOT)),
                   "expected_negative": expect_failure}
@@ -98,6 +98,14 @@ class Evidence:
         start = time.monotonic()
         try:
             with (folder / "stdout.log").open("wb") as out, (folder / "stderr.log").open("wb") as err:
+                try:
+                    record["tool_version"] = self.version(str(argv[0]))
+                except ToolFailure as error:
+                    record["prerequisite_error"] = str(error)
+                    err.write((str(error) + "\n").encode())
+                    raise ToolFailure(
+                        f"tool prerequisite failed: {(folder / 'receipt.json').relative_to(ROOT)}"
+                    ) from error
                 try:
                     process = subprocess.run([str(v) for v in argv], cwd=cwd, stdout=out, stderr=err, timeout=timeout)
                     record["exit_code"] = process.returncode

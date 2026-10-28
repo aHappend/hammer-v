@@ -2,6 +2,8 @@
 
 import sys
 import struct
+import json
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,7 +13,43 @@ from compiler import discover, load_elf
 from cycle import equal
 from encoding import i, r
 from iss import MASK, arithmetic, decode
-from retention import ToolFailure
+from retention import Evidence, ToolFailure
+
+
+def prerequisite_receipt_checks():
+    with tempfile.TemporaryDirectory(prefix="hammer-receipt-fixture-") as directory:
+        root = Path(directory)
+        probe = Evidence.__new__(Evidence)
+        probe.directory = root / "fixture"
+        probe.directory.mkdir()
+        probe.commands = []
+        probe.hashes = {}
+        argv = ["fixture-missing-compiler", "--target=rv64im"]
+        with patch("retention.ROOT", root), \
+                patch.object(probe, "version",
+                             side_effect=ToolFailure("synthetic unavailable version query")), \
+                patch("retention.subprocess.run",
+                      side_effect=AssertionError("prerequisite failure must not launch command")):
+            try:
+                probe.command(argv, cwd=root, expect_failure=True)
+            except ToolFailure as error:
+                equal("tool prerequisite failed:" in str(error), True,
+                      "version failure remains a prerequisite error")
+            else:
+                equal(True, False, "version failure cannot count as expected-negative execution")
+        equal(len(probe.commands), 1, "attempted command retained on prerequisite failure")
+        receipt = json.loads((root / probe.commands[0]).read_text())
+        equal(receipt["argv"], argv, "unexecuted command exact argv")
+        equal(receipt["exit_code"], None, "no invented child exit")
+        equal(receipt["timed_out"], False, "version failure is not command timeout")
+        equal(receipt["prerequisite_error"], "synthetic unavailable version query",
+              "original prerequisite diagnostic retained")
+        equal((root / receipt["stdout"]).read_bytes(), b"", "no invented child stdout")
+        equal((root / receipt["stderr"]).read_text(),
+              "synthetic unavailable version query\n", "retained prerequisite stderr")
+        for field in ("cwd", "source_sha256", "start_time", "end_time", "timeout_s", "tool_version"):
+            equal(field in receipt, True, f"prerequisite receipt includes {field}")
+    print("PREREQUISITE_RECEIPT_FIXTURES compared=1; no compiler or RTL executed")
 
 
 def compiler_selection_checks():
@@ -112,6 +150,7 @@ def compiler_elf_checks():
 
 
 def main():
+    prerequisite_receipt_checks()
     compiler_selection_checks()
     compiler_elf_checks()
     cases = (
