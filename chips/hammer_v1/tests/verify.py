@@ -216,12 +216,17 @@ class Campaign:
             self.run("memory-boundary", [NOP] if iw == 1 else [NOP, EBREAK],
                      (iw, dw, 0, 1), simulator="icarus", limit=100,
                      expected_trap=(4, 1 if iw == 1 else 3))
+        self.parameters()
+
+    def parameters(self):
+        require("iverilog", "vvp")
         for config in itertools.product((1, 3, 16384), (1, 3, 8192), (0, 1), (1, 4, 16, 64)):
-            output = fresh(self.evidence.directory, "elaborate")
             argv = ["iverilog", "-g2012", "-Wall", "-t", "null", "-s", "hammer_v1_top"]
             argv += [f"-Phammer_v1_top.{name}={value}" for name, value in zip(
                 ("IMEM_WORDS", "DMEM_WORDS", "PRED_MODE", "BTB_ENTRIES"), config)]
-            self.evidence.command(argv + RTL)
+            folder, _ = self.evidence.command(argv + RTL)
+            self.records.append({"name": "legal-parameter-elaboration", "config": config,
+                                 "receipt": str((folder / "receipt.json").relative_to(ROOT))})
         for param, value in (("IMEM_WORDS", 0), ("IMEM_WORDS", 16385), ("DMEM_WORDS", 0),
                              ("DMEM_WORDS", 8193), ("PRED_MODE", -1), ("PRED_MODE", 2),
                              ("BTB_ENTRIES", 0), ("BTB_ENTRIES", 2)):
@@ -234,6 +239,9 @@ class Campaign:
             log = (folder / "stdout.log").read_text() + (folder / "stderr.log").read_text()
             if f"PARAMETER ERROR: {param}" not in log:
                 raise ComparisonFailure(f"missing explicit diagnostic {param}={value}")
+            self.records.append({"name": "illegal-parameter-rejection", "parameter": param,
+                                 "value": value, "exit_code": result["exit_code"],
+                                 "receipt": str((folder / "receipt.json").relative_to(ROOT))})
 
     def summary(self):
         return {"cases": self.records, "retirements": dict(self.retirements),
@@ -387,7 +395,7 @@ def main():
     parser.add_argument("--repair-of", help="project-relative retained failed preparation receipt")
     parser.add_argument("--probe", choices=("hazard", "axi", "functional", "synthesis", "compiler", "reset",
                                            "terminal", "m-cartesian", "lw-sign", "pipeline-mutations",
-                                           "random-control", "memory-ordering", "prediction"),
+                                           "random-control", "memory-ordering", "prediction", "parameters"),
                         help="bounded advisory experiment")
     args = parser.parse_args()
     if (args.compact_only or args.probe) and not args.prepare:
@@ -402,6 +410,8 @@ def main():
         if args.suite == "smoke":
             if args.probe == "hazard":
                 campaign.hazard_probe()
+            elif args.probe == "parameters":
+                campaign.parameters()
             elif args.probe == "functional":
                 evidence.command(["python3", "tests/selftest.py"])
                 campaign.run("functional-first-configuration", scenarios.functional_program())
