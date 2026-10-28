@@ -13,7 +13,43 @@ from compiler import compile_benchmark, discover, load_elf
 from cycle import equal
 from encoding import i, r
 from iss import MASK, arithmetic, decode
-from retention import Evidence, ToolFailure
+from portable import run_portable
+from retention import ROOT, Evidence, ToolFailure
+
+
+def portable_prerequisite_checks():
+    campaign = Mock()
+    failure = ToolFailure("PREREQUISITE_MISSING: synthetic unavailable compiler")
+    with patch("compiler.discover", side_effect=failure), \
+            patch("portable.fresh", return_value=ROOT / "fixture-tree") as create_tree, \
+            patch("portable.sources", return_value={}) as enumerate_sources, \
+            patch("portable.shutil.copyfile") as copy_source:
+        try:
+            run_portable(campaign)
+        except ToolFailure as error:
+            equal(error is failure, True, "portable preserves compiler prerequisite failure")
+        else:
+            equal(True, False, "portable cannot succeed without compilation prerequisite")
+        create_tree.assert_not_called()
+        enumerate_sources.assert_not_called()
+        copy_source.assert_not_called()
+        campaign.evidence.command.assert_not_called()
+    tree = ROOT / "fixture-tree"
+    with patch("compiler.discover", return_value=["/fixture/clang"]), \
+            patch("portable.fresh", return_value=tree), \
+            patch("portable.sources", return_value={}), \
+            patch("portable.shutil.copyfile") as copy_source:
+        result = run_portable(campaign)
+    equal(result["source_tree"], "fixture-tree", "portable retains clean-tree output identity")
+    equal(campaign.evidence.command.call_count, 3,
+          "compiler preflight does not replace any clean-tree component")
+    for invocation, component in zip(campaign.evidence.command.call_args_list,
+                                     ("smoke", "sha256", "synthesis")):
+        equal(invocation.args, (["python3", "tests/portable_child.py", component],),
+              "portable component command unchanged")
+        equal(invocation.kwargs, {"cwd": tree}, "components execute in clean source tree")
+    copy_source.assert_not_called()
+    print("PORTABLE_PREREQUISITE_FIXTURES compared=2; synthetic only; no compiler or RTL executed")
 
 
 def interrupted_command_checks():
@@ -279,6 +315,7 @@ def compiler_elf_checks():
 
 
 def main():
+    portable_prerequisite_checks()
     interrupted_command_checks()
     prerequisite_receipt_checks()
     compiler_selection_checks()

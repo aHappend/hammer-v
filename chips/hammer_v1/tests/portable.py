@@ -2,10 +2,12 @@
 
 import shutil
 
+import compiler
 from retention import ROOT, fresh, sources
 
 
 def run_portable(campaign):
+    compiler.discover()
     tree = fresh(campaign.evidence.directory, "clean-source")
     for relative in sources():
         target = tree / relative
