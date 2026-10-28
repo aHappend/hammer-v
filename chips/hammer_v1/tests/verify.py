@@ -366,7 +366,7 @@ def main():
     parser.add_argument("--compact-only", action="store_true", help="advisory first smoke only; never full acceptance")
     parser.add_argument("--repair-of", help="project-relative retained failed preparation receipt")
     parser.add_argument("--probe", choices=("hazard", "axi", "functional", "synthesis", "compiler", "reset",
-                                           "terminal", "m-cartesian", "lw-sign"),
+                                           "terminal", "m-cartesian", "lw-sign", "pipeline-mutations"),
                         help="bounded advisory experiment")
     args = parser.parse_args()
     if (args.compact_only or args.probe) and not args.prepare:
@@ -403,6 +403,10 @@ def main():
             elif args.probe == "lw-sign":
                 from mutations import run_mutations
                 campaign.records.extend(run_mutations(campaign, names=("lw-sign",)))
+            elif args.probe == "pipeline-mutations":
+                from mutations import run_mutations
+                campaign.records.extend(run_mutations(campaign, names=(
+                    "add", "forward-priority", "load-interlock", "wrong-path-kill", "divide-zero")))
             elif args.probe == "reset":
                 campaign.run("reset-read-outstanding",
                              [lui(20, 0x40000), load("LD", 1, 20), ECALL],
