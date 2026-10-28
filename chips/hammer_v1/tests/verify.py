@@ -263,8 +263,7 @@ class Campaign:
             if self.m_operands[name, a, b] - before[name, a, b] == 0:
                 raise ComparisonFailure(f"unobserved M Cartesian operand pair {name}:{a:#x},{b:#x}")
 
-    def directed(self):
-        self.evidence.command(["python3", "tests/selftest.py"])
+    def prediction_matrix(self):
         for mode, entries in itertools.product((0, 1), (1, 4, 16, 64)):
             config = (769, 257, mode, entries)
             before = self.cycles.copy()
@@ -281,6 +280,10 @@ class Campaign:
                         raise ComparisonFailure(f"static configuration {config} missing {key}")
             elif delta["target_correction"] == 0 or delta["btb_collision"] == 0:
                 raise ComparisonFailure(f"dynamic configuration {config} missing target/collision evidence")
+
+    def directed(self):
+        self.evidence.command(["python3", "tests/selftest.py"])
+        self.prediction_matrix()
         self.m_cartesian()
         # Complete bit-boundary matrix, including shifts whose upper operand bits must be ignored.
         code = [lui(20, DATA >> 12), i("ADDI", 1, 0, -1)]
@@ -305,21 +308,7 @@ class Campaign:
         schedules += tuple(tuple(rng.choice((1, 2, 17)) for _ in range(5)) for _ in range(8))
         for delays in schedules:
             self.run("axi-lanes-and-stalls", scenarios.axi_program(), delays=delays)
-        for response, write in itertools.product((1, 2, 3), (False, True)):
-            access = store("SD", 2, 1) if write else load("LD", 2, 1)
-            self.run("axi-error-precision", [lui(1, 0x40000), NOP, access,
-                                           store("SD", 0, 1), ECALL],
-                     delays=(17, 1, 2, 2, 17), response=response, expected_trap=(8, 7 if write else 5))
-        self.run("m-completion-under-memory-stall", [
-            lui(20, 0x40000), i("ADDI", 1, 0, 17), i("ADDI", 2, 0, 19),
-            store("SD", 1, 20), r("MUL", 3, 1, 2), r("ADD", 4, 3, 3), EBREAK],
-            delays=(1, 2, 97, 0, 0))
-        self.run("redirect-after-memory-hold", [
-            lui(20, 0x40000), store("SD", 0, 20), branch("BEQ", 0, 0, 8),
-            store("SD", 0, 20, 8), ECALL], delays=(17, 1, 17, 0, 0))
-        for access in (store("SD", 0, 20), load("LD", 1, 20)):
-            self.run("reset-accepted-outstanding-request", [lui(20, 0x40000), access, ECALL],
-                     delays=(0, 17, 17, 0, 17), reset_outstanding=True)
+        self.memory_ordering()
         self.run("last-legal-data-word", [
             lui(20, DATA >> 12), i("ADDI", 20, 20, 1024), i("ADDI", 20, 20, 1024),
             i("ADDI", 1, 0, -17), store("SD", 1, 20), load("LD", 2, 20), ECALL])
@@ -341,6 +330,27 @@ class Campaign:
             if self.cycles[key] == 0:
                 raise ComparisonFailure(f"required observed cycle coverage missing: {key}")
 
+    def memory_ordering(self):
+        before = self.cycles.copy()
+        for response, write in itertools.product((1, 2, 3), (False, True)):
+            access = store("SD", 2, 1) if write else load("LD", 2, 1)
+            self.run("axi-error-precision", [lui(1, 0x40000), NOP, access,
+                                           store("SD", 0, 1), ECALL],
+                     delays=(17, 1, 2, 2, 17), response=response, expected_trap=(8, 7 if write else 5))
+        self.run("m-completion-under-memory-stall", [
+            lui(20, 0x40000), i("ADDI", 1, 0, 17), i("ADDI", 2, 0, 19),
+            store("SD", 1, 20), r("MUL", 3, 1, 2), r("ADD", 4, 3, 3), EBREAK],
+            delays=(1, 2, 97, 0, 0))
+        self.run("redirect-after-memory-hold", [
+            lui(20, 0x40000), store("SD", 0, 20), branch("BEQ", 0, 0, 8),
+            store("SD", 0, 20, 8), ECALL], delays=(17, 1, 17, 0, 0))
+        for access in (store("SD", 0, 20), load("LD", 1, 20)):
+            self.run("reset-accepted-outstanding-request", [lui(20, 0x40000), access, ECALL],
+                     delays=(0, 17, 17, 0, 17), reset_outstanding=True)
+        for key in ("redirect_after_hold", "m_complete_mem_hold"):
+            if self.cycles[key] - before[key] == 0:
+                raise ComparisonFailure(f"memory-ordering interaction not observed: {key}")
+
     def random(self, seed, minimum):
         if seed not in (17, 89, 2027):
             raise ValueError("the admitted random seeds are 17, 89 and 2027")
@@ -355,6 +365,16 @@ class Campaign:
         if retired < minimum:
             raise ComparisonFailure(f"random seed {seed}: {retired} < {minimum} compared retirements")
 
+    def random_control_probe(self):
+        code, data = scenarios.random_program(17, 256)
+        result = self.run("random-control-seed-17", code, (769, 257, 1, 16),
+                          data=data + [0] * (257 - len(data)), limit=50000)
+        if result["retired"] < 276:
+            raise ComparisonFailure("bounded random probe did not execute its initialized backbone")
+        for key in ("redirect", "branch_forward", "jalr_forward"):
+            if result["cycle_coverage"].get(key, 0) == 0:
+                raise ComparisonFailure(f"bounded random control probe missing {key}")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -366,7 +386,8 @@ def main():
     parser.add_argument("--compact-only", action="store_true", help="advisory first smoke only; never full acceptance")
     parser.add_argument("--repair-of", help="project-relative retained failed preparation receipt")
     parser.add_argument("--probe", choices=("hazard", "axi", "functional", "synthesis", "compiler", "reset",
-                                           "terminal", "m-cartesian", "lw-sign", "pipeline-mutations"),
+                                           "terminal", "m-cartesian", "lw-sign", "pipeline-mutations",
+                                           "random-control", "memory-ordering", "prediction"),
                         help="bounded advisory experiment")
     args = parser.parse_args()
     if (args.compact_only or args.probe) and not args.prepare:
@@ -400,6 +421,12 @@ def main():
                 campaign.terminal_precision(compact=True)
             elif args.probe == "m-cartesian":
                 campaign.m_cartesian()
+            elif args.probe == "random-control":
+                campaign.random_control_probe()
+            elif args.probe == "memory-ordering":
+                campaign.memory_ordering()
+            elif args.probe == "prediction":
+                campaign.prediction_matrix()
             elif args.probe == "lw-sign":
                 from mutations import run_mutations
                 campaign.records.extend(run_mutations(campaign, names=("lw-sign",)))
