@@ -5,11 +5,11 @@ import struct
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True
-from compiler import discover, load_elf
+from compiler import compile_benchmark, discover, load_elf
 from cycle import equal
 from encoding import i, r
 from iss import MASK, arithmetic, decode
@@ -77,6 +77,67 @@ def compiler_selection_checks():
             else:
                 equal(actual, expected, "compiler selection policy")
     print(f"COMPILER_SELECTION_FIXTURES compared={len(cases)}; no compiler executed")
+
+
+def compiler_fallback_checks():
+    with tempfile.TemporaryDirectory(prefix="hammer-compiler-fixture-") as directory:
+        root = Path(directory)
+        candidates = ["/fixture/clang", "/fixture/clang-18"]
+        evidence = Mock(directory=root)
+        evidence.command.side_effect = [
+            (root / "first", {"exit_code": 1}),
+            (root / "second", {"exit_code": 0}),
+        ]
+        loaded = object()
+        with patch("compiler.ROOT", root), \
+                patch("compiler.discover", return_value=candidates), \
+                patch("compiler.load_elf", return_value=loaded) as loader:
+            equal(compile_benchmark(evidence, 5) is loaded, True,
+                  "fallback returns validated ELF rather than failed candidate")
+        equal(evidence.command.call_count, 2, "failed compiler does not hide next candidate")
+        for index, invocation in enumerate(evidence.command.call_args_list):
+            argv = invocation.args[0]
+            equal(argv[0], candidates[index], "compiler fallback order")
+            for flag in ("--target=riscv64-unknown-elf", "-fuse-ld=lld",
+                         "-march=rv64im", "-mabi=lp64", "-DBENCH=5"):
+                equal(flag in argv, True, f"fallback preserves required flag {flag}")
+            equal(invocation.kwargs, {"expect_failure": True},
+                  "failed compilation retains its command result")
+        first, second = [invocation.args[0][-1]
+                         for invocation in evidence.command.call_args_list]
+        equal(first != second, True, "fallback never reuses failed output namespace")
+        loader.assert_called_once_with(root / second)
+
+        evidence.command.reset_mock(side_effect=True)
+        evidence.command.side_effect = [
+            (root / "first", {"exit_code": 1}),
+            (root / "second", {"exit_code": 1}),
+        ]
+        with patch("compiler.ROOT", root), \
+                patch("compiler.discover", return_value=candidates), \
+                patch("compiler.load_elf") as loader:
+            try:
+                compile_benchmark(evidence, 5)
+            except ToolFailure as error:
+                for receipt in ("first/receipt.json", "second/receipt.json"):
+                    equal(receipt in str(error), True, "all compiler failures remain indexed")
+            else:
+                equal(True, False, "exhausted candidates cannot succeed")
+            loader.assert_not_called()
+
+        evidence.command.reset_mock(side_effect=True)
+        evidence.command.return_value = (root / "invalid", {"exit_code": 0})
+        with patch("compiler.ROOT", root), \
+                patch("compiler.discover", return_value=candidates), \
+                patch("compiler.load_elf", side_effect=ToolFailure("synthetic invalid ELF")):
+            try:
+                compile_benchmark(evidence, 5)
+            except ToolFailure as error:
+                equal(str(error), "synthetic invalid ELF", "invalid ELF diagnostic is not hidden")
+            else:
+                equal(True, False, "compiler exit zero does not establish a valid ELF")
+        equal(evidence.command.call_count, 1, "invalid ELF is not silently replaced")
+    print("COMPILER_FALLBACK_FIXTURES compared=3; synthetic only; no compiler or RTL executed")
 
 
 def compiler_elf_checks():
@@ -152,6 +213,7 @@ def compiler_elf_checks():
 def main():
     prerequisite_receipt_checks()
     compiler_selection_checks()
+    compiler_fallback_checks()
     compiler_elf_checks()
     cases = (
         ("ADD", MASK, 1, 0), ("SUB", 0, 1, MASK),
