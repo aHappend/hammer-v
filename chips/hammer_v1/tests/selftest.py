@@ -2,15 +2,46 @@
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True
+from compiler import discover
 from cycle import equal
 from encoding import i, r
 from iss import MASK, arithmetic, decode
+from retention import ToolFailure
+
+
+def compiler_selection_checks():
+    cases = (
+        ({}, {"clang": "/fixture/clang", "clang-23": "/fixture/clang",
+              "clang-18": "/fixture/clang-18"},
+         ["/fixture/clang", "/fixture/clang-18"]),
+        ({"RISCV_CC": "selected"}, {"selected": "/fixture/selected",
+                                   "clang": "/fixture/clang"},
+         ["/fixture/selected"]),
+        ({"RISCV_CC": "missing"}, {"clang": "/fixture/clang"}, None),
+        ({"RISCV_CC": ""}, {"clang": "/fixture/clang"}, None),
+        ({}, {}, None),
+    )
+    for environment, available, expected in cases:
+        with patch.dict("os.environ", environment, clear=True), \
+                patch("compiler.shutil.which", side_effect=available.get):
+            try:
+                actual = discover()
+            except ToolFailure as error:
+                if expected is not None:
+                    raise
+                equal(str(error).startswith("PREREQUISITE_MISSING:"), True,
+                      "compiler selection failure diagnostic")
+            else:
+                equal(actual, expected, "compiler selection policy")
+    print(f"COMPILER_SELECTION_FIXTURES compared={len(cases)}; no compiler executed")
 
 
 def main():
+    compiler_selection_checks()
     cases = (
         ("ADD", MASK, 1, 0), ("SUB", 0, 1, MASK),
         ("ADDW", 0x7fffffff, 1, 0xffffffff80000000),

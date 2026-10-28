@@ -10,7 +10,7 @@ from retention import ROOT, ToolFailure, fresh
 
 def discover():
     requested = os.environ.get("RISCV_CC")
-    candidates = [requested] if requested else [
+    candidates = [requested] if requested is not None else [
         "riscv64-unknown-elf-gcc", "riscv64-linux-gnu-gcc", "clang",
         *[f"clang-{version}" for version in range(23, 7, -1)]]
     available = []
