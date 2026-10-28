@@ -13,29 +13,40 @@ def discover():
     candidates = [requested] if requested else [
         "riscv64-unknown-elf-gcc", "riscv64-linux-gnu-gcc", "clang",
         *[f"clang-{version}" for version in range(23, 7, -1)]]
+    available = []
     for candidate in candidates:
-        if candidate and shutil.which(candidate):
-            return shutil.which(candidate)
+        resolved = shutil.which(candidate) if candidate else None
+        if resolved and resolved not in available:
+            available.append(resolved)
+    if available:
+        return available
     raise ToolFailure(
         "PREREQUISITE_MISSING: RV64IM C compiler; require riscv64-unknown-elf-gcc, "
         "riscv64-linux-gnu-gcc, or clang with RISC-V target and linker "
-        "(alternatively set RISCV_CC to an existing compiler); no tools were installed")
+        "(alternatively set RISCV_CC to an existing compiler); "
+        f"checked={candidates!r}; no tools were installed")
 
 
 def compile_benchmark(evidence, number):
-    compiler = discover()
-    directory = fresh(evidence.directory, "compiled-c")
-    output = directory / "benchmark.elf"
-    argv = [compiler]
-    if "clang" in Path(compiler).name:
-        argv += ["--target=riscv64-unknown-elf", "-fuse-ld=lld"]
-    argv += ["-march=rv64im", "-mabi=lp64", "-mcmodel=medany", "-mno-relax",
-             "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-msmall-data-limit=0", "-nostdlib",
-             "-static", "-O1", "-Wl,--no-relax", "-Wl,-T,tests/link.ld",
-             f"-DBENCH={number}", "tests/start.S", "tests/bench.c",
-             "-o", str(output.relative_to(ROOT))]
-    evidence.command(argv)
-    return load_elf(output)
+    failures = []
+    for compiler in discover():
+        directory = fresh(evidence.directory, "compiled-c")
+        output = directory / "benchmark.elf"
+        argv = [compiler]
+        if "clang" in Path(compiler).name:
+            argv += ["--target=riscv64-unknown-elf", "-fuse-ld=lld"]
+        argv += ["-march=rv64im", "-mabi=lp64", "-mcmodel=medany", "-mno-relax",
+                 "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-msmall-data-limit=0", "-nostdlib",
+                 "-static", "-O1", "-Wl,--no-relax", "-Wl,-T,tests/link.ld",
+                 f"-DBENCH={number}", "tests/start.S", "tests/bench.c",
+                 "-o", str(output.relative_to(ROOT))]
+        folder, record = evidence.command(argv, expect_failure=True)
+        if record["exit_code"] == 0:
+            return load_elf(output)
+        failures.append(str((folder / "receipt.json").relative_to(ROOT)))
+    raise ToolFailure(
+        "RV64IM_COMPILATION_FAILED: no discovered compiler linked the requested "
+        f"workload; retained failed command receipts={failures!r}")
 
 
 def load_elf(path):
