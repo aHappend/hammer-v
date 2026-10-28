@@ -32,6 +32,7 @@ class Campaign:
         self.cycles = Counter()
         self.m_operands = Counter()
         self.records = []
+        self.benchmark_ledger = []
 
     def build(self, config, simulator="verilator", rtl=None):
         key = (config, simulator, tuple(rtl or RTL))
@@ -246,7 +247,8 @@ class Campaign:
     def summary(self):
         return {"cases": self.records, "retirements": dict(self.retirements),
                 "branch_directions": {f"{name}:{int(taken)}": count for (name, taken), count in self.directions.items()},
-                "traps": dict(self.traps), "cycle_coverage": dict(self.cycles)}
+                "traps": dict(self.traps), "cycle_coverage": dict(self.cycles),
+                "benchmarks": self.benchmark_ledger}
 
     def terminal_precision(self, compact=False):
         before = self.traps.copy()

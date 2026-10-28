@@ -4,7 +4,9 @@ import hashlib
 import zlib
 
 from compiler import compile_benchmark
+from cycle import ComparisonFailure
 from iss import MASK
+from retention import ROOT, ToolFailure
 
 
 NAMES = ("accumulation", "overlapping-move", "division", "matrix", "crc32", "sha256")
@@ -41,8 +43,28 @@ def expected(number):
 
 
 def run_benchmarks(campaign, numbers=range(6)):
-    for number in numbers:
-        program, memory, symbols, elf = compile_benchmark(campaign.evidence, number)
-        campaign.run("c-" + NAMES[number], program, (16384, 8192, 1, 16), data=memory,
-                     expected_trap=(symbols["_halt"], 11), limit=5000000,
-                     expected_buffer=(symbols["results"], expected(number)))
+    rows = [{"name": "c-" + NAMES[number], "number": number,
+             "config": [16384, 8192, 1, 16], "status": "not_run",
+             "stage": "not_reached", "required_result_words": len(expected(number)),
+             "compared_result_words": None, "compared_retirements": None,
+             "command_receipts": []} for number in numbers]
+    campaign.benchmark_ledger.extend(rows)
+    for row in rows:
+        first_command = len(campaign.evidence.commands)
+        try:
+            row["stage"] = "compilation_and_elf_loading"
+            program, memory, symbols, elf = compile_benchmark(campaign.evidence, row["number"])
+            row["elf"] = str(elf.relative_to(ROOT))
+            row["stage"] = "rtl_and_independent_comparisons"
+            result = campaign.run(
+                row["name"], program, tuple(row["config"]), data=memory,
+                expected_trap=(symbols["_halt"], 11), limit=5000000,
+                expected_buffer=(symbols["results"], expected(row["number"])))
+            row.update(status="passed", stage="completed",
+                       compared_result_words=row["required_result_words"],
+                       compared_retirements=result["retired"])
+        except (ComparisonFailure, ToolFailure, ValueError, OSError) as error:
+            row.update(status="failed", error=str(error))
+            raise
+        finally:
+            row["command_receipts"] = campaign.evidence.commands[first_command:]

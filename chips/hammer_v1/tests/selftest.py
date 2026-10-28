@@ -10,11 +10,51 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True
 from compiler import compile_benchmark, discover, load_elf
+from benchmarks import run_benchmarks
 from cycle import equal
 from encoding import i, r
 from iss import MASK, arithmetic, decode
 from portable import run_portable
 from retention import ROOT, Evidence, ToolFailure
+
+
+def benchmark_ledger_checks():
+    for failed_number in (0, 2, None):
+        campaign = Mock(benchmark_ledger=[])
+        campaign.evidence.commands = []
+        failure = ToolFailure("synthetic compiler prerequisite failure")
+
+        def compile_fixture(evidence, number):
+            evidence.commands.append(f"fixture/compile-{number}/receipt.json")
+            if number == failed_number:
+                raise failure
+            return [], [], {"_halt": 4, "results": 0x10000000}, ROOT / "fixture.elf"
+
+        campaign.run.return_value = {"retired": 17}
+        with patch("benchmarks.compile_benchmark", side_effect=compile_fixture):
+            try:
+                run_benchmarks(campaign)
+            except ToolFailure as error:
+                equal(error is failure, True, "ledger preserves original compilation failure")
+                equal(failed_number is not None, True, "successful fixture cannot fail")
+            else:
+                equal(failed_number, None, "compilation failure cannot become a pass")
+        equal(len(campaign.benchmark_ledger), 6, "ledger retains every benchmark obligation")
+        completed = 6 if failed_number is None else failed_number
+        equal(campaign.run.call_count, completed, "only compiled fixtures reach comparison")
+        for number, row in enumerate(campaign.benchmark_ledger):
+            status = ("passed" if number < completed else
+                      "failed" if number == failed_number else "not_run")
+            equal(row["status"], status, "benchmark outcome classification")
+            equal(row["compared_result_words"],
+                  row["required_result_words"] if status == "passed" else None,
+                  "unexecuted comparisons cannot claim result coverage")
+            equal(row["compared_retirements"], 17 if status == "passed" else None,
+                  "unexecuted comparisons cannot claim retirements")
+            equal(row["command_receipts"],
+                  [] if status == "not_run" else [f"fixture/compile-{number}/receipt.json"],
+                  "benchmark receipt association")
+    print("BENCHMARK_LEDGER_FIXTURES compared=3; synthetic only; no compiler or RTL executed")
 
 
 def portable_prerequisite_checks():
@@ -315,6 +355,7 @@ def compiler_elf_checks():
 
 
 def main():
+    benchmark_ledger_checks()
     portable_prerequisite_checks()
     interrupted_command_checks()
     prerequisite_receipt_checks()
