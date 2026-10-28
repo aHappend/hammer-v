@@ -1,0 +1,30 @@
+{
+  "gate": "rtl-timing-lint",
+  "timestamp_utc": "2026-10-28T16:55:56.667336+00:00",
+  "root": "/data/sufeng/hammer-v1-line/workspace/project",
+  "status": "passed",
+  "max_comb_div_width": 0,
+  "rtl_files_checked": 11,
+  "auto_sanitized_nomem2reg_files": [],
+  "source_sha256": {
+    "rtl/hammer_v1_alu.sv": "f9f5ef0b370aba0d3ba0277efb541597ff6157fbe596c738037c46727bc6192a",
+    "rtl/hammer_v1_axi_lite.sv": "646cf2198dd7b142eb57734d1de13c575ed0c603252c80e39f4127a96f3ef9db",
+    "rtl/hammer_v1_core.sv": "62092b56df5df521ec3b8107577d9b0330b133c7349c6aebd70287f51668739e",
+    "rtl/hammer_v1_decode.sv": "d4f260a02290ae1af63acb8e8a280123a92be9b9039dead806e408bf89770eef",
+    "rtl/hammer_v1_dmem.sv": "98fbf4046f87b7e57c046abbd5fef66e05d7637ae7e9ee00a7c04f10bd879870",
+    "rtl/hammer_v1_hazard.sv": "0d2fc407839a2cc12c0bb5ab5a23eb79ddf56fc248a42f7a037b9af43f351f45",
+    "rtl/hammer_v1_imem.sv": "be1583988d4325d0b1749a89f783063de0f62847adea573ddd92d6eacaa7e710",
+    "rtl/hammer_v1_muldiv.sv": "8f6dc985d2c3bcda16a0248d38e22edd1028e44d1f3392682076d3f99009fd01",
+    "rtl/hammer_v1_predictor.sv": "3c2f379d6257c966593f485710016e39af6bb81f0b5718bd120e8fd679512001",
+    "rtl/hammer_v1_regfile.sv": "956d992ed49fbdbf4d0ff7777c730ac261eb7bc932fb159afb1bd5c5489180d6",
+    "rtl/hammer_v1_top.sv": "04eb533aaadec8c8ffbda75b8f7f7b3d8639ec85ec5fa941c18eec96882df3bb"
+  },
+  "netlist_sha256": {},
+  "rtl_div_mod_hazards": [],
+  "netlist_div_mod_hazards": [],
+  "mixed_assign_hazards": [],
+  "lut_clock_gate_hazards": [],
+  "ast_unroll_loop_hazards": [],
+  "detail": "Zero combinational divider/modulo, LUT clock-gate, AST loop-unroll, or mixed-assignment hazards detected.",
+  "applicable": true
+}
