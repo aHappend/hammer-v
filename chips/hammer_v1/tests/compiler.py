@@ -54,8 +54,9 @@ def load_elf(path):
     if data[:6] != b"\x7fELF\x02\x01":
         raise ToolFailure("compiled benchmark is not little-endian ELF64")
     header = struct.unpack_from("<16sHHIQQQIHHHHHH", data)
-    if header[2] != 243 or header[4] != 0 or header[7] & 7:
-        raise ToolFailure("compiled ELF requires RISC-V, entry PC=0, no compressed code and LP64 integer ABI")
+    if header[2] != 243 or header[4] != 0 or header[7] != 0:
+        raise ToolFailure("compiled ELF requires RISC-V, entry PC=0 and zero flags "
+                          "(uncompressed RV64IM with LP64 integer ABI)")
     code = bytearray(16384 * 4)
     memory = bytearray(8192 * 8)
     for index in range(header[10]):
