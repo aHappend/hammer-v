@@ -9,9 +9,9 @@ from iss import DATA
 from retention import ROOT, fresh
 
 
-def run_mutations(campaign):
+def run_mutations(campaign, names=None):
     basic = [i("ADDI", 1, 0, 7), i("ADDI", 2, 0, 3), r("ADD", 3, 1, 2), ECALL]
-    sign = [lui(20, DATA >> 12), load("LW", 1, 20), ECALL]
+    sign = [lui(20, DATA >> 12), load("LW", 1, 20, 4), ECALL]
     priority = [i("ADDI", 1, 0, 1), i("ADDI", 1, 0, 2), r("ADD", 2, 1, 1), ECALL]
     interlock = [lui(20, DATA >> 12), load("LD", 1, 20), r("ADD", 2, 1, 1), ECALL]
     kill = [lui(20, DATA >> 12), branch("BEQ", 0, 0, 8), store("SD", 0, 20), ECALL]
@@ -33,8 +33,13 @@ def run_mutations(campaign):
          "wire [63:0] signed_q = zero_divisor ? 64'hffffffffffffffff :",
          "wire [63:0] signed_q = zero_divisor ? 64'b0 :", zero),
     )
+    selected = {entry[0] for entry in mutants} if names is None else set(names)
+    if not selected or selected - {entry[0] for entry in mutants}:
+        raise ValueError(f"unknown or empty mutation selection: {names}")
     results = []
     for name, filename, before, after, code in mutants:
+        if name not in selected:
+            continue
         # A passing original counterpart is essential; compile/timeout/parser failures
         # are not recognized as semantic defect detections.
         original = type(campaign)(campaign.evidence)
@@ -72,6 +77,6 @@ def run_mutations(campaign):
                             "execution_receipt": campaign.evidence.commands[-1]})
         else:
             raise ComparisonFailure(f"UNDETECTED_MUTANT: {name}")
-    if len(results) != 6:
-        raise ComparisonFailure("six distinct semantic defect detections required")
+    if len(results) != len(selected):
+        raise ComparisonFailure(f"{len(selected)} distinct semantic defect detections required")
     return results
