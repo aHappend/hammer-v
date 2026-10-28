@@ -42,39 +42,73 @@ def compiler_selection_checks():
 
 
 def compiler_elf_checks():
-    image = bytearray(412)
+    image = bytearray(528)
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<16sHHIQQQIHHHHHH", image, 0,
-                     ident, 2, 243, 1, 0, 64, 128, 0, 64, 56, 1, 64, 3, 0)
-    struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 408, 0, 0, 4, 4, 4)
+                     ident, 2, 243, 1, 0, 64, 192, 0, 64, 56, 2, 64, 3, 0)
+    struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 512, 0, 0, 4, 4, 4)
+    struct.pack_into("<IIQQQQQQ", image, 120,
+                     1, 6, 520, 0x10000000, 0x10000000, 8, 16, 8)
     names = b"\0results\0_halt\0"
-    image[320:320 + len(names)] = names
-    struct.pack_into("<IIQQQQIIQQ", image, 192,
-                     0, 3, 0, 0, 320, len(names), 0, 0, 1, 0)
+    image[400:400 + len(names)] = names
     struct.pack_into("<IIQQQQIIQQ", image, 256,
-                     0, 2, 0, 0, 336, 72, 1, 1, 8, 24)
-    struct.pack_into("<IBBHQQ", image, 360, 1, 0x11, 0, 1, 0x10000000, 8)
-    struct.pack_into("<IBBHQQ", image, 384, 9, 0x12, 0, 1, 0, 4)
-    image[408:412] = b"\x13\x00\x00\x00"
+                     0, 3, 0, 0, 400, len(names), 0, 0, 1, 0)
+    struct.pack_into("<IIQQQQIIQQ", image, 320,
+                     0, 2, 0, 0, 432, 72, 1, 1, 8, 24)
+    struct.pack_into("<IBBHQQ", image, 456, 1, 0x11, 0, 1, 0x10000000, 8)
+    struct.pack_into("<IBBHQQ", image, 480, 9, 0x12, 0, 1, 0, 4)
+    image[512:516] = b"\x13\x00\x00\x00"
+    image[520:528] = (123).to_bytes(8, "little")
     path = Path("synthetic-abi-fixture.elf")
     with patch.object(Path, "read_bytes", return_value=bytes(image)):
         code, memory, symbols, actual_path = load_elf(path)
     equal(code[0], 0x13, "ELF fixture instruction segment")
-    equal(memory[0], 0, "ELF fixture initialized data")
+    equal(memory[0], 123, "ELF fixture initialized data")
+    equal(memory[1], 0, "ELF fixture zero-filled BSS")
     equal(symbols["results"], 0x10000000, "ELF fixture results symbol")
     equal(symbols["_halt"], 0, "ELF fixture halt symbol")
     equal(actual_path, path, "ELF fixture identity")
+    invalid = []
+    for label, offset, fmt, value in (
+            ("missing executable segment", 64, "<I", 0),
+            ("non-executable entry", 68, "<I", 4),
+            ("relocatable image", 16, "<H", 1),
+            ("bad ELF version", 20, "<I", 0),
+            ("bad header size", 52, "<H", 0),
+            ("bad program entry size", 54, "<H", 0),
+            ("program table outside file", 32, "<Q", len(image)),
+            ("bad section entry size", 58, "<H", 0),
+            ("section table outside file", 40, "<Q", len(image)),
+            ("segment payload outside file", 72, "<Q", len(image)),
+            ("segment file larger than memory", 96, "<Q", 8),
+            ("segment high-address alias", 80, "<Q", 1 << 32),
+            ("invalid string-table index", 360, "<I", 3),
+            ("bad symbol entry size", 376, "<Q", 0),
+            ("string table outside file", 280, "<Q", len(image)),
+            ("symbol table outside file", 344, "<Q", len(image)),
+            ("symbol name outside strings", 456, "<I", len(names)),
+            ("unaligned halt symbol", 488, "<Q", 2),
+            ("unloaded results symbol", 464, "<Q", 0x10000010)):
+        corrupted = bytearray(image)
+        struct.pack_into(fmt, corrupted, offset, value)
+        invalid.append((label, bytes(corrupted)))
+    corrupted = bytearray(image)
+    corrupted[400 + len(names) - 1] = ord("x")
+    invalid += [("truncated header", bytes(image[:32])),
+                ("unterminated symbol name", bytes(corrupted))]
     for flags in (1, 2, 4, 8, 16, 0x80000000):
-        struct.pack_into("<I", image, 48, flags)
-        with patch.object(Path, "read_bytes", return_value=bytes(image)):
+        corrupted = bytearray(image)
+        struct.pack_into("<I", corrupted, 48, flags)
+        invalid.append((f"unsupported ABI flags={flags:#x}", bytes(corrupted)))
+    for label, corrupted in invalid:
+        with patch.object(Path, "read_bytes", return_value=corrupted):
             try:
                 load_elf(path)
             except ToolFailure as error:
-                equal("compiled ELF requires" in str(error), True,
-                      f"ELF ABI rejection diagnostic flags={flags:#x}")
+                equal(bool(str(error)), True, f"ELF rejection diagnostic: {label}")
             else:
-                equal(True, False, f"ELF accepted unsupported ABI flags={flags:#x}")
-    print("COMPILER_ELF_FIXTURES valid=1 rejected=6; no compiler or RTL executed")
+                equal(True, False, f"ELF accepted {label}")
+    print(f"COMPILER_ELF_FIXTURES valid=1 rejected={len(invalid)}; no compiler or RTL executed")
 
 
 def main():
