@@ -140,6 +140,44 @@ def compiler_fallback_checks():
     print("COMPILER_FALLBACK_FIXTURES compared=3; synthetic only; no compiler or RTL executed")
 
 
+def compiler_failure_propagation_checks():
+    with tempfile.TemporaryDirectory(prefix="hammer-compiler-failure-fixture-") as directory:
+        root = Path(directory)
+        evidence = Mock(directory=root)
+        missing = ToolFailure("PREREQUISITE_MISSING: synthetic unavailable compiler")
+        with patch("compiler.discover", side_effect=missing), \
+                patch("compiler.fresh") as create_output, \
+                patch("compiler.load_elf") as loader:
+            try:
+                compile_benchmark(evidence, 5)
+            except ToolFailure as error:
+                equal(error is missing, True, "missing compiler preserves original failure")
+            else:
+                equal(True, False, "missing compiler cannot return a benchmark")
+            evidence.command.assert_not_called()
+            create_output.assert_not_called()
+            loader.assert_not_called()
+
+        for label in ("launch failure", "timeout"):
+            failure = ToolFailure(f"synthetic compiler {label}; retained receipt")
+            evidence.command.reset_mock(side_effect=True)
+            evidence.command.side_effect = failure
+            with patch("compiler.ROOT", root), \
+                    patch("compiler.discover", return_value=[
+                        "/fixture/clang", "/fixture/clang-18"]), \
+                    patch("compiler.load_elf") as loader:
+                try:
+                    compile_benchmark(evidence, 5)
+                except ToolFailure as error:
+                    equal(error is failure, True, f"compiler {label} preserves original failure")
+                else:
+                    equal(True, False, f"compiler {label} cannot return a benchmark")
+                equal(evidence.command.call_count, 1,
+                      f"compiler {label} is not a completed negative compilation")
+                loader.assert_not_called()
+    print("COMPILER_FAILURE_FIXTURES compared=3; synthetic only; no compiler or RTL executed")
+
+
 def compiler_elf_checks():
     image = bytearray(528)
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
@@ -214,6 +252,7 @@ def main():
     prerequisite_receipt_checks()
     compiler_selection_checks()
     compiler_fallback_checks()
+    compiler_failure_propagation_checks()
     compiler_elf_checks()
     cases = (
         ("ADD", MASK, 1, 0), ("SUB", 0, 1, MASK),
