@@ -1,6 +1,7 @@
 """Fresh, source-bound command receipts shared by portable suites and probes."""
 
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 from pathlib import Path
@@ -82,7 +83,13 @@ class Evidence:
         for argument in argv:
             relative = str(argument).removeprefix("+input=")
             candidate = cwd / relative
-            if candidate.is_file():
+            try:
+                is_file = candidate.is_file()
+            except OSError as error:
+                if error.errno != errno.ENAMETOOLONG:
+                    raise
+                is_file = False
+            if is_file:
                 record["additional_source_sha256"][relative] = hashlib.sha256(candidate.read_bytes()).hexdigest()
         start = time.monotonic()
         try:
