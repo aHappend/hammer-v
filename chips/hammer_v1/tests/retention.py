@@ -59,14 +59,18 @@ class Evidence:
                     record["exit_code"] = result.returncode
                 except subprocess.TimeoutExpired:
                     record["timed_out"] = True
-            self.tool_versions[tool] = ((folder / "stdout.log").read_text() +
-                                        (folder / "stderr.log").read_text()).strip()
+                except OSError as error:
+                    record["launch_error"] = {"errno": error.errno, "message": str(error)}
+                    err.write((str(error) + "\n").encode())
+            output = ((folder / "stdout.log").read_text() +
+                      (folder / "stderr.log").read_text()).strip()
             record["end_time"] = timestamp()
-            record["tool_version"] = self.tool_versions[tool]
+            record["tool_version"] = output if record["exit_code"] == 0 else "unavailable; see raw logs"
             (folder / "receipt.json").write_text(json.dumps(record, indent=2) + "\n")
             self.commands.append(str((folder / "receipt.json").relative_to(ROOT)))
             if record["timed_out"] or record["exit_code"] != 0:
                 raise ToolFailure(f"tool version query failed: {self.commands[-1]}")
+            self.tool_versions[tool] = output
         return self.tool_versions[tool]
 
     def command(self, argv, cwd=ROOT, timeout=3600, expect_failure=False):
@@ -94,8 +98,12 @@ class Evidence:
         start = time.monotonic()
         try:
             with (folder / "stdout.log").open("wb") as out, (folder / "stderr.log").open("wb") as err:
-                process = subprocess.run([str(v) for v in argv], cwd=cwd, stdout=out, stderr=err, timeout=timeout)
-                record["exit_code"] = process.returncode
+                try:
+                    process = subprocess.run([str(v) for v in argv], cwd=cwd, stdout=out, stderr=err, timeout=timeout)
+                    record["exit_code"] = process.returncode
+                except OSError as error:
+                    record["launch_error"] = {"errno": error.errno, "message": str(error)}
+                    err.write((str(error) + "\n").encode())
         except subprocess.TimeoutExpired:
             record["timed_out"] = True
         finally:
@@ -103,7 +111,8 @@ class Evidence:
             record["duration_s"] = time.monotonic() - start
             (folder / "receipt.json").write_text(json.dumps(record, indent=2) + "\n")
             self.commands.append(str((folder / "receipt.json").relative_to(ROOT)))
-        if record["timed_out"] or (record["exit_code"] != 0 and not expect_failure):
+        if (record.get("launch_error") or record["timed_out"]
+                or (record["exit_code"] != 0 and not expect_failure)):
             raise ToolFailure(f"tool execution failed: {self.commands[-1]}")
         return folder, record
 
