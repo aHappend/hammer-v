@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Retain the outer command even if an advisory runner has an import/syntax error."""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True
+from retention import Evidence, ToolFailure
+
+
+def main():
+    evidence = Evidence("outer-probe", preparation=True)
+    argv = ["python3", "tests/verify.py", "--suite", "smoke", "--prepare", *sys.argv[1:]]
+    try:
+        evidence.command(argv, timeout=2700)
+    except ToolFailure as error:
+        print(evidence.finish("failed", error=str(error)))
+        return 1
+    print(evidence.finish("passed"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
