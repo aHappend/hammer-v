@@ -64,6 +64,8 @@ class Machine:
         self.external_pending = 0
         self.mtimecmp = MASK
         self.msip = 0
+        self.mmio = bytearray(65536)
+        self.bus_events = []
 
     def pending(self, edge):
         return (self.csrs[0x344] | self.external_pending |
@@ -85,12 +87,19 @@ class Machine:
         off = address - RAM_BASE
         if address % size:
             raise Fault(4, address)
+        if 0x40000000 <= address and address + size <= 0x40010000:
+            return self.mmio_access(address, size, False, 0)
         if off < 0 or off + size > len(self.memory):
             raise Fault(5, address)
         self.touched.update(range(off, off + size))
         return int.from_bytes(self.memory[off:off + size], "little")
 
     def write_memory(self, address, size, value):
+        if address % size:
+            raise Fault(6, address)
+        if 0x40000000 <= address and address + size <= 0x40010000:
+            self.mmio_access(address, size, True, value)
+            return
         if address in (0x02000000, 0x02004000):
             if address == 0x02000000 and size <= 4:
                 self.msip = value & 1
@@ -109,6 +118,29 @@ class Machine:
         self.touched.update(range(off, off + size))
         if self.reservation and address // 8 == self.reservation[0] // 8:
             self.reservation = None
+
+    def mmio_access(self, address, size, write, value):
+        if not self.bus_events:
+            raise AssertionError(f"MMIO {address:#x}: missing public bus transaction")
+        observed = self.bus_events.pop(0)
+        aligned = address & ~7
+        off = aligned - 0x40000000
+        error = int(off >= 65520)
+        mask = ((1 << size) - 1) << (address & 7) if write else 0
+        data = (value << (8 * (address & 7))) & MASK if write else 0
+        read = 0 if write or error else int.from_bytes(self.mmio[off:off + 8], "little")
+        expected = {"write": int(write), "address": aligned, "data": data,
+                    "mask": mask, "read": read, "error": error}
+        actual = {key: observed[key] for key in expected}
+        if actual != expected:
+            raise AssertionError(f"MMIO expected={expected}, observed={actual}")
+        if error:
+            raise Fault(7 if write else 5, address)
+        offset = address - 0x40000000
+        if write:
+            self.mmio[offset:offset + size] = (value & ((1 << (size * 8)) - 1)).to_bytes(size, "little")
+            return 0
+        return int.from_bytes(self.mmio[offset:offset + size], "little")
 
     def read_csr(self, address, edge):
         status_fixed = (2 << 32) | (2 << 34)
@@ -301,6 +333,10 @@ class Machine:
             if op == 2 and rs2:
                 illegal()
             size = 1 << f3
+            if a % size:
+                raise Fault(4 if op == 2 else 6, a)
+            if a < RAM_BASE or a + size > RAM_BASE + len(self.memory):
+                raise Fault(5 if op == 2 else 7, a)
             old_reservation = self.reservation
             if op in (2, 3):
                 self.reservation = None
