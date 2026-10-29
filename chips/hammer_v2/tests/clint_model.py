@@ -174,3 +174,87 @@ def compare(path, stimulus):
         raise AssertionError("CLINT comparison-equality edge not compared")
     return {"edges_compared": rows, **model.counts, "sizes": sorted(model.sizes),
             "write_lanes": sorted(model.lanes), "compare_equality_edges": model.simultaneous_compare}
+
+
+def compare_integrated(path):
+    model = Clint()
+    edge = 0
+    transitions = []
+    operations = []
+    complete = False
+
+    def clock(vector):
+        nonlocal edge
+        edge += 1
+        before, after = model.edge(vector)
+        if before[5:] != after[5:]:
+            transitions.append((edge, after[4], *after[5:]))
+        return before, after
+
+    def advance(target):
+        if target < edge:
+            raise AssertionError("CLINT integrated event time reversed")
+        while edge < target:
+            clock((1, 0, 0, 0, 0, 0, 0, 0))
+
+    with path.open() as stream:
+        for raw in stream:
+            fields = raw.split()
+            kind, observed_edge = fields[0], int(fields[1])
+            if complete:
+                raise AssertionError("CLINT event after completion")
+            if kind in ("Q", "R"):
+                advance(observed_edge - 1)
+                before = model.outputs(1)
+                if kind == "Q":
+                    write, size = int(fields[2]), int(fields[3])
+                    address, data, strobe = (int(fields[4], 16), int(fields[5], 16),
+                                             int(fields[6], 16))
+                    observed_clock = (int(fields[7], 16), int(fields[8]), int(fields[9]))
+                    if before[0] != 1:
+                        raise AssertionError("CLINT accepted an overlapping request")
+                    _, after = clock((1, 1, write, size, address, data, strobe, 0))
+                    operations.append({"edge": observed_edge, "write": write, "size": size,
+                                       "address": address, "data": data, "strobe": strobe,
+                                       "snapshot": after[3], "error": after[2]})
+                else:
+                    observed_clock = (int(fields[4], 16), int(fields[5]), int(fields[6]))
+                    if (int(fields[2], 16), int(fields[3])) != (before[3], before[2]) or (
+                            before[1] != 1):
+                        raise AssertionError(f"CLINT edge {observed_edge}: incorrect/orphan response")
+                    clock((1, 0, 0, 0, 0, 0, 0, 1))
+                if observed_clock != before[4:]:
+                    raise AssertionError(f"CLINT edge {observed_edge}: pre-edge timer/IRQ "
+                                         f"expected={before[4:]}, observed={observed_clock}")
+            elif kind in ("P", "DONE"):
+                advance(observed_edge)
+                observed = (observed_edge, int(fields[2], 16), int(fields[3]), int(fields[4]))
+                if kind == "P":
+                    if not transitions or transitions.pop(0) != observed:
+                        raise AssertionError(f"CLINT edge {observed_edge}: pending transition mismatch")
+                else:
+                    if observed[1:] != model.outputs(1)[4:] or transitions or model.response:
+                        raise AssertionError("CLINT final clock/pending/channel conservation mismatch")
+                    complete = True
+            else:
+                raise AssertionError(f"unknown CLINT integrated event: {kind}")
+    if not complete or not operations:
+        raise AssertionError("CLINT integrated comparisons did not execute")
+    return operations, {"observed_edges": edge, "accepted_operations": len(operations),
+                        **model.counts}
+
+
+def state_before(operations, edge):
+    model = Clint()
+    previous = 0
+    for operation in operations:
+        acceptance = operation["edge"]
+        if acceptance >= edge:
+            break
+        model.time = (model.time + acceptance - previous - 1) & MASK
+        model.response = None
+        model.edge((1, 1, operation["write"], operation["size"],
+                    operation["address"], operation["data"], operation["strobe"], 0))
+        previous = acceptance
+    model.time = (model.time + edge - previous - 1) & MASK
+    return model.time, model.compare, model.software

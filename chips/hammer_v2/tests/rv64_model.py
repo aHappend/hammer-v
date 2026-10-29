@@ -1,6 +1,7 @@
 """Architectural RV64 integer/atomic oracle, independent of pipeline timing."""
 
 from dataclasses import dataclass
+import clint_model
 
 MASK = (1 << 64) - 1
 RAM_BASE = 0x10000000
@@ -44,7 +45,7 @@ class Retirement:
 
 
 class Machine:
-    def __init__(self, instructions, dwords=128):
+    def __init__(self, instructions, dwords=128, clint_operations=None):
         self.instructions = list(instructions)
         self.regs = [0] * 32
         self.pc = 0
@@ -66,8 +67,14 @@ class Machine:
         self.msip = 0
         self.mmio = bytearray(65536)
         self.bus_events = []
+        self.clint_operations = clint_operations
+        self.clint_consumed = 0
 
     def pending(self, edge):
+        if self.clint_operations is not None:
+            time, compare, software = clint_model.state_before(self.clint_operations, edge)
+            return (self.csrs[0x344] | self.external_pending | (software << 3) |
+                    (int(time >= compare) << 7))
         return (self.csrs[0x344] | self.external_pending |
                 (self.msip << 3) |
                 (int(((edge - 1 + self.time_offset) & MASK) >= self.mtimecmp) << 7))
@@ -87,6 +94,8 @@ class Machine:
         off = address - RAM_BASE
         if address % size:
             raise Fault(4, address)
+        if self.clint_operations is not None and 0x02000000 <= address < 0x02010000:
+            return self.clint_access(address, size, False, 0)
         if 0x40000000 <= address and address + size <= 0x40010000:
             return self.mmio_access(address, size, False, 0)
         if off < 0 or off + size > len(self.memory):
@@ -97,6 +106,9 @@ class Machine:
     def write_memory(self, address, size, value):
         if address % size:
             raise Fault(6, address)
+        if self.clint_operations is not None and 0x02000000 <= address < 0x02010000:
+            self.clint_access(address, size, True, value)
+            return
         if 0x40000000 <= address and address + size <= 0x40010000:
             self.mmio_access(address, size, True, value)
             return
@@ -142,6 +154,25 @@ class Machine:
             return 0
         return int.from_bytes(self.mmio[offset:offset + size], "little")
 
+    def clint_access(self, address, size, write, value):
+        selected = [(base, length) for base, length in clint_model.REGISTERS
+                    if base <= address < base + length]
+        if not selected:
+            raise Fault(7 if write else 5, address)
+        if self.clint_consumed >= len(self.clint_operations):
+            raise AssertionError(f"CLINT {address:#x}: missing accepted public request")
+        operation = self.clint_operations[self.clint_consumed]
+        self.clint_consumed += 1
+        expected = {"write": int(write), "size": size.bit_length() - 1,
+                    "address": address, "data": (value << (8 * (address & 7))) & MASK if write else 0,
+                    "strobe": ((1 << size) - 1) << (address & 7) if write else 0}
+        actual = {key: operation[key] for key in expected}
+        if expected != actual:
+            raise AssertionError(f"CLINT expected request={expected}, observed={actual}")
+        if operation["error"]:
+            raise Fault(7 if write else 5, address)
+        return (operation["snapshot"] >> (8 * (address & 7))) & ((1 << (size * 8)) - 1)
+
     def read_csr(self, address, edge):
         status_fixed = (2 << 32) | (2 << 34)
         if address == 0x300:
@@ -158,6 +189,8 @@ class Machine:
         if address in (0xB00, 0xC00):
             return (edge - 1 + self.cycle_offset) & MASK
         if address == 0xC01:
+            if self.clint_operations is not None:
+                return clint_model.state_before(self.clint_operations, edge)[0]
             return (edge - 1 + self.time_offset) & MASK
         if address in (0xB02, 0xC02):
             return self.instret

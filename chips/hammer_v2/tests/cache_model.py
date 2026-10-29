@@ -15,6 +15,7 @@ class CacheOracle:
             "read_hits", "write_hits", "misses", "dirty_evictions", "clean_evictions",
             "refill_beats", "writeback_beats", "errors", "maintenance",
             "reset_outstanding", "responses", "backing_requests", "invalid_requests")}
+        self.counts.update({f"command_{command}": 0 for command in range(4)})
         self.pending = None
 
     def prepare(self, cmd, address, data, strobe, fail_n):
@@ -29,6 +30,8 @@ class CacheOracle:
 
         def count(name):
             deltas[name] = deltas.get(name, 0) + 1
+
+        count(f"command_{cmd}")
 
         def transfer(write, addr, value=0):
             failed = int(fail_n > 0 and len(traffic) + 1 == fail_n)
@@ -199,7 +202,11 @@ def compare_integrated_cache(path, lines, image, readonly):
     oracle.backing[:] = image
     accepted_edge = None
     backing_response = None
+    backing_edge = None
     complete = False
+    runtime = False
+    pending_command = None
+    runtime_commands = {f"runtime_command_{command}": 0 for command in range(4)}
     with path.open() as stream:
         for raw in stream:
             parts = raw.split()
@@ -212,6 +219,8 @@ def compare_integrated_cache(path, lines, image, readonly):
                               int(parts[5], 16))
                     accepted_edge = edge
                     oracle.prepare(*fields, 0)
+                    pending_command = fields[0]
+                    runtime |= pending_command < 2
                 elif kind == "B":
                     write, address, data, strobe = (int(parts[2]), int(parts[3], 16),
                                                     int(parts[4], 16), int(parts[5], 16))
@@ -220,17 +229,25 @@ def compare_integrated_cache(path, lines, image, readonly):
                     if backing_response is not None:
                         raise AssertionError("multiple outstanding backing requests")
                     backing_response = (expected, 0)
+                    backing_edge = edge
                     oracle.backing_request((write, address, data, strobe, 0))
                 elif kind == "V":
                     fields = (int(parts[2], 16), int(parts[3]))
                     if fields != backing_response:
                         raise AssertionError(f"backing response expected={backing_response}, observed={fields}")
+                    if edge - backing_edge != 2:
+                        raise AssertionError(f"registered backing response acceptance latency "
+                                             f"expected=2, observed={edge - backing_edge}")
                     backing_response = None
+                    backing_edge = None
                 elif kind == "R":
                     data, error, first_response = int(parts[2], 16), int(parts[3]), int(parts[4])
                     if backing_response is not None or accepted_edge is None:
                         raise AssertionError("premature cache response")
                     oracle.response(data, error, first_response - accepted_edge)
+                    if runtime:
+                        runtime_commands[f"runtime_command_{pending_command}"] += 1
+                    pending_command = None
                     accepted_edge = None
                 else:
                     if parts[2:] != ["0"] or oracle.pending or backing_response is not None:
@@ -240,4 +257,4 @@ def compare_integrated_cache(path, lines, image, readonly):
                 raise AssertionError(f"integrated cache edge {edge}, event {kind}: {error}") from error
     if not complete or oracle.counts["responses"] == 0:
         raise AssertionError("missing integrated cache comparisons/completion")
-    return oracle.counts
+    return {**oracle.counts, **runtime_commands}
