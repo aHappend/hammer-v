@@ -5,6 +5,7 @@ class Vectors:
     def __init__(self):
         self.lines = []
         self.frames = []
+        self.streams = []
         self.coverage = {}
 
     def cover(self, key):
@@ -250,6 +251,46 @@ def uart_vectors():
     for byte in range(16):
         v.uart(0, expected=byte)
     v.uart(5, expected=0x60)
+    # Associate line errors with queued bytes; IIR alone does not clear them.
+    v.uart(4, True, 0)
+    v.uart(3, True, 0x1B)
+    for kind, byte, expected_lsr in (("parity", 0x35, 0xE5),
+                                     ("framing", 0x55, 0xE9),
+                                     ("break", 0, 0xF9)):
+        v.uart(2, True, 7)
+        bits = frame_bits(byte, 0x1B)
+        if kind == "parity":
+            bits[-1] ^= 1
+        for bit in bits:
+            v.lines.append(f"U {bit} 16")
+        v.lines.append(f"U {0 if kind in ('framing', 'break') else 1} "
+                       f"{500 if kind == 'break' else 16}")
+        v.lines.append("U 1 32")
+        v.irq(1, 1)
+        v.uart(2, expected=0xC6)
+        v.irq(1, 1)
+        v.uart(5, expected=expected_lsr)
+        v.irq(1, 0)
+        v.uart(5, expected=0x61)
+        v.uart(0, expected=byte)
+        v.uart(5, expected=0x60)
+        v.cover(f"line-error-{kind}")
+    # Fill the holding FIFO while a slow frame is active. The eighteenth
+    # request must wait for real space, and every accepted byte must reach TX.
+    v.uart(3, True, 0x83)
+    v.uart(0, True, 27)
+    v.uart(1, True, 0)
+    v.uart(3, True, 3)
+    v.uart(2, True, 7)
+    marker = len(v.frames)
+    v.lines.append(f"M {marker}")
+    values = list(range(0x40, 0x52))
+    v.streams.append({"marker": marker, "values": values, "lcr": 3, "divisor": 27})
+    for index, value in enumerate(values):
+        v.uart(0, True, value, minimum_blocked=100 if index == 17 else 0)
+    v.wait(len(values) * character_cycles(3, 27) + 100)
+    v.uart(5, expected=0x60)
+    v.cover("tx-full-backpressure")
     for address in (0x10010008, 0x110010000):
         v.bus(0, False, address, 0, error=1)
     v.bus(0, True, 0x10010000, 1, mask=3, error=1)
@@ -257,7 +298,7 @@ def uart_vectors():
     return v
 
 
-def compare_waveform(path, frames):
+def compare_waveform(path, frames, streams=()):
     events = []
     markers = {}
     for line in path.read_text().splitlines():
@@ -293,4 +334,23 @@ def compare_waveform(path, frames):
             raise AssertionError(f"UART_SERIAL frame={marker} format={frame} "
                                  f"expected={expected} observed={transitions}")
         comparisons += 1
+    for stream in streams:
+        cursor = markers[stream["marker"]]
+        for index, value in enumerate(stream["values"]):
+            starts = [cycle for cycle, bit in events if cycle > cursor and bit == 0]
+            if not starts:
+                raise AssertionError(f"UART_TX_FULL lost byte index={index} value={value:x}")
+            start = starts[0]
+            duration = character_cycles(stream["lcr"], stream["divisor"])
+            actual = [(cycle - start, bit) for cycle, bit in events
+                      if start <= cycle < start + duration]
+            expected, previous = [], 1
+            for bit_index, bit in enumerate([*frame_bits(value, stream["lcr"]), 1]):
+                if bit != previous:
+                    expected.append((bit_index * 16 * stream["divisor"], bit))
+                    previous = bit
+            if actual != expected:
+                raise AssertionError(f"UART_TX_FULL byte={index} expected={expected} actual={actual}")
+            cursor = start + duration - 1
+            comparisons += 1
     return comparisons

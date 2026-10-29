@@ -86,12 +86,20 @@ class BareMachine:
         self.memory = {}
         self.pc = 0
         self.priv = 3
+        self.reservation = None
 
     def fetch(self):
         return self.words[self.pc // 4]
 
     def physical(self, address, access):
         return address
+
+    def read_memory(self, address, size):
+        return sum(self.memory[address + byte] << (8 * byte) for byte in range(size))
+
+    def write_memory(self, address, size, value):
+        for byte in range(size):
+            self.memory[address + byte] = (value >> (8 * byte)) & 255
 
     def step(self):
         pc = self.pc
@@ -182,16 +190,16 @@ class BareMachine:
             size = 1 << funct3
             assert funct3 <= 3 and addr % size == 0
             physical = self.physical(addr, 2)
-            for byte in range(size):
-                self.memory[physical + byte] = (b >> (8 * byte)) & 255
+            self.write_memory(physical, size, b)
             memory = (1, addr, ((1 << size) - 1) << (addr & 7),
                       (b << (8 * (addr & 7))) & MASK64, 0)
+            self.reservation = None
         elif opcode == 0x03:
             addr = (a + signed(instruction >> 20, 12)) & MASK64
             size = 1 << (funct3 & 3)
             assert funct3 != 7 and addr % size == 0
             physical = self.physical(addr, 1)
-            raw = sum(self.memory[physical + byte] << (8 * byte) for byte in range(size))
+            raw = self.read_memory(physical, size)
             value = raw if funct3 >= 4 else signed(raw, 8 * size)
             memory = (0, addr, 0, 0, value & MASK64)
         elif opcode == 0x63:
@@ -211,6 +219,56 @@ class BareMachine:
                          (((instruction >> 20) & 1) << 11) |
                          (((instruction >> 21) & 1023) << 1), 21)
             value, next_pc = pc + 4, (pc + imm) & MASK64
+        elif opcode == 0x67 and funct3 == 0:
+            value, next_pc = pc + 4, ((a + signed(instruction >> 20, 12)) & MASK64) & ~1
+        elif opcode == 0x2F:
+            size = {2: 4, 3: 8}[funct3]
+            operation = instruction >> 27
+            physical = self.physical(a, 1 if operation == 2 else 2 if operation == 3 else 3)
+            if a % size:
+                raise ArchitecturalTrap(4 if operation == 2 else 6, a)
+            width_mask = (1 << (size * 8)) - 1
+            if operation == 3:
+                success = self.reservation == (physical, size)
+                self.reservation = None
+                value = int(not success)
+                updated, old = b & width_mask, 0
+                writing = success
+            else:
+                old_raw = sum(self.memory[physical + byte] << (8 * byte) for byte in range(size))
+                old = signed(old_raw, size * 8) & MASK64
+                value, writing = old, operation != 2
+                operand = b & width_mask
+                if operation == 2:
+                    self.reservation = (physical, size)
+                    updated = 0
+                elif operation == 1:
+                    updated = operand
+                elif operation == 0:
+                    updated = old_raw + operand
+                elif operation == 4:
+                    updated = old_raw ^ operand
+                elif operation == 12:
+                    updated = old_raw & operand
+                elif operation == 8:
+                    updated = old_raw | operand
+                elif operation in (16, 20):
+                    choose_old = (signed(old_raw, size * 8) < signed(operand, size * 8)
+                                  if operation == 16 else
+                                  signed(old_raw, size * 8) > signed(operand, size * 8))
+                    updated = old_raw if choose_old else operand
+                elif operation in (24, 28):
+                    updated = (min if operation == 24 else max)(old_raw, operand)
+                else:
+                    raise NotImplementedError(f"unmodeled AMO operation {operation}")
+            shifted = ((updated & width_mask) << (8 * (a & 7))) & MASK64
+            mask = ((1 << size) - 1) << (a & 7)
+            if writing:
+                for byte in range(size):
+                    self.memory[physical + byte] = (updated >> (8 * byte)) & 255
+                self.reservation = None
+            memory = (int(writing), a, mask if writing else 0,
+                      shifted if writing else 0, old)
         elif opcode == 0x0F:
             pass
         elif instruction == 0x00000073:
@@ -360,3 +418,229 @@ def startup_program():
         data[0x3000 + offset] = 0
     data[0x3000] = 0x1234567887654321
     return words, data
+
+
+class ArchitecturalTrap(Exception):
+    def __init__(self, cause, tval):
+        super().__init__(f"architectural exception {cause} tval={tval:x}")
+        self.cause = cause
+        self.tval = tval
+
+
+class FaultMachine(StartupMachine):
+    """Translation-fault reference for short real privileged software programs."""
+
+    def __init__(self, words, initial_data):
+        super().__init__(words, initial_data)
+        self.csrs[0x302] = 0
+
+    def physical(self, address, access):
+        result = sv39(address, access, self.priv, self.csrs[0x180],
+                      self.csrs[0x300], self.read_pte)
+        if result.fault:
+            raise ArchitecturalTrap(
+                (12, 13, 15, 15)[access] if result.fault == "page" else
+                (1, 5, 7, 7)[access], address)
+        physical = result.pa
+        legal = (0 <= physical < len(self.words) * 4 if access == 0 else
+                 0x10000000 <= physical < 0x10008000)
+        if not legal:
+            raise ArchitecturalTrap((1, 5, 7, 7)[access], address)
+        return physical
+
+    def step(self):
+        pc = self.pc
+        try:
+            event = super().step()
+        except ArchitecturalTrap as trap:
+            target = 1 if self.priv != 3 and self.csrs[0x302] & (1 << trap.cause) else 3
+            return ("T", pc, trap.cause, trap.tval, target, 0)
+        if event[0] == "T":
+            target = 1 if self.priv != 3 and self.csrs[0x302] & (1 << event[2]) else 3
+            return (*event[:4], target, 0)
+        return event
+
+
+def load_constant(register, value):
+    """Positive 11-bit chunks avoid assembler and signed-immediate dependencies."""
+    value &= MASK64
+    chunks = []
+    while value:
+        chunks.append(value & 2047)
+        value >>= 11
+    if not chunks:
+        return [i_type(0x13, register, 0, 0, 0)]
+    words = [i_type(0x13, register, 0, 0, chunks.pop())]
+    while chunks:
+        words += [i_type(0x13, register, 1, register, 11),
+                  i_type(0x13, register, 0, register, chunks.pop())]
+    return words
+
+
+class SystemMachine(FaultMachine):
+    """Instruction/privilege oracle for actual software trap handlers and scheduling."""
+
+    def __init__(self, words, initial_data):
+        super().__init__(words, initial_data)
+        for address in (0x105, 0x140, 0x141, 0x142, 0x143, 0x305, 0x340, 0x342, 0x343):
+            self.csrs[address] = 0
+        self.trap_counts = {}
+        self.user_returns = 0
+        self.stopped = False
+
+    def physical(self, address, access):
+        result = sv39(address, access, self.priv, self.csrs[0x180],
+                      self.csrs[0x300], self.read_pte)
+        if result.fault:
+            raise ArchitecturalTrap(
+                (12, 13, 15, 15)[access] if result.fault == "page" else
+                (1, 5, 7, 7)[access], address)
+        legal = (0 <= result.pa < len(self.words) * 4 if access == 0 else
+                 0x10000000 <= result.pa < 0x10010000)
+        if not legal:
+            raise ArchitecturalTrap((1, 5, 7, 7)[access], address)
+        return result.pa
+
+    def trap(self, cause, tval):
+        pc = self.pc
+        target = 1 if self.priv != 3 and self.csrs[0x302] & (1 << cause) else 3
+        status = self.csrs[0x300]
+        if target == 1:
+            self.csrs[0x141], self.csrs[0x142], self.csrs[0x143] = pc, cause, tval
+            status = (status & ~((1 << 8) | (1 << 5) | (1 << 1))) | (
+                int(self.priv == 1) << 8) | (((status >> 1) & 1) << 5)
+        else:
+            self.csrs[0x341], self.csrs[0x342], self.csrs[0x343] = pc, cause, tval
+            status = (status & ~((3 << 11) | (1 << 7) | (1 << 3))) | (
+                self.priv << 11) | (((status >> 3) & 1) << 7)
+        self.csrs[0x300] = status
+        self.priv = target
+        self.pc = self.csrs[0x105 if target == 1 else 0x305] & ~3
+        self.trap_counts[cause] = self.trap_counts.get(cause, 0) + 1
+        self.stopped = cause == 9
+        return ("T", pc, cause, tval, target, 0)
+
+    def csr_read(self, address):
+        if address == 0x100:
+            return (self.csrs[0x300] & 0xC0122) | (2 << 32)
+        if address == 0x300:
+            return self.csrs[address] | (2 << 32) | (2 << 34)
+        if address not in self.csrs:
+            raise NotImplementedError(f"unmodeled system CSR {address:03x}")
+        return self.csrs[address]
+
+    def csr_write(self, address, value):
+        if address == 0x100:
+            mask = sum(1 << bit for bit in (1, 5, 8, 18, 19))
+            self.csrs[0x300] = (self.csrs[0x300] & ~mask) | (value & mask)
+        elif address == 0x180:
+            if value >> 60 in (0, 8):
+                self.csrs[address] = value
+        elif address in (0x141, 0x341):
+            self.csrs[address] = value & ~3
+        elif address == 0x300:
+            mask = sum(1 << bit for bit in (1, 3, 5, 7, 8, 11, 12, 17, 18, 19, 20, 21, 22))
+            self.csrs[address] = value & mask
+        elif address == 0x302:
+            self.csrs[address] = value & sum(1 << bit for bit in
+                                            (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 15))
+        else:
+            if address not in self.csrs:
+                raise NotImplementedError(f"unmodeled system CSR write {address:03x}")
+            self.csrs[address] = value & MASK64
+
+    def step(self):
+        try:
+            instruction = self.fetch()
+            pc, privilege = self.pc, self.priv
+            if instruction & 127 != 0x73:
+                return BareMachine.step(self)
+            if instruction == 0x73:
+                return self.trap({0: 8, 1: 9, 3: 11}[self.priv], 0)
+            rd, rs1 = (instruction >> 7) & 31, (instruction >> 15) & 31
+            operation = (instruction >> 12) & 7
+            next_pc = pc + 4
+            value, write = 0, False
+            if instruction in (0x30200073, 0x10200073):
+                status = self.csrs[0x300]
+                if instruction == 0x30200073:
+                    if self.priv != 3:
+                        return self.trap(2, instruction)
+                    self.priv = (status >> 11) & 3
+                    next_pc = self.csrs[0x341]
+                    status = (status & ~((3 << 11) | (1 << 3))) | (
+                        ((status >> 7) & 1) << 3) | (1 << 7)
+                else:
+                    if self.priv == 0 or self.priv == 1 and status & (1 << 22):
+                        return self.trap(2, instruction)
+                    self.priv = (status >> 8) & 1
+                    next_pc = self.csrs[0x141]
+                    status = (status & ~((1 << 8) | (1 << 1))) | (
+                        ((status >> 5) & 1) << 1) | (1 << 5)
+                    if self.priv == 0:
+                        self.user_returns += 1
+                if self.priv < 3:
+                    status &= ~(1 << 17)
+                self.csrs[0x300] = status
+            elif instruction & 0xFE007FFF == 0x12000073:
+                if self.priv == 0 or self.priv == 1 and self.csrs[0x300] & (1 << 20):
+                    return self.trap(2, instruction)
+            elif operation in (1, 2, 3, 5, 6, 7):
+                address = instruction >> 20
+                if self.priv < ((address >> 8) & 3):
+                    return self.trap(2, instruction)
+                if address == 0x180 and self.priv == 1 and self.csrs[0x300] & (1 << 20):
+                    return self.trap(2, instruction)
+                old = self.csr_read(address)
+                source = rs1 if operation & 4 else self.regs[rs1]
+                updated = source if operation & 3 == 1 else (
+                    old | source if operation & 3 == 2 else old & ~source)
+                if operation & 3 == 1 or rs1 != 0:
+                    self.csr_write(address, updated)
+                value, write = old, rd != 0
+                if write:
+                    self.regs[rd] = old
+            else:
+                raise NotImplementedError(f"unmodeled system instruction {instruction:08x}")
+            self.pc = next_pc
+            return ("R", pc, instruction, next_pc, int(write),
+                    rd if write else 0, value if write else 0, None, privilege)
+        except ArchitecturalTrap as trap:
+            return self.trap(trap.cause, trap.tval)
+
+
+class ConsoleMachine(SystemMachine):
+    """Minimal register oracle for the compact software console experiment."""
+
+    def __init__(self, words, initial_data):
+        super().__init__(words, initial_data)
+        self.console = []
+        self.line_control = 0
+
+    def physical(self, address, access):
+        result = sv39(address, access, self.priv, self.csrs[0x180],
+                      self.csrs[0x300], self.read_pte)
+        if not result.fault and access in (1, 2) and 0x10010000 <= result.pa < 0x10010008:
+            return result.pa
+        return super().physical(address, access)
+
+    def read_memory(self, address, size):
+        if 0x10010000 <= address < 0x10010008:
+            if address == 0x10010005 and size == 1:
+                # The program waits >160 retired NOPs after its only THR write.
+                return 0x60
+            raise NotImplementedError(f"unmodeled compact console read {address:x}/{size}")
+        return super().read_memory(address, size)
+
+    def write_memory(self, address, size, value):
+        if 0x10010000 <= address < 0x10010008:
+            if size != 1:
+                raise AssertionError("compact console software must issue byte writes")
+            if address == 0x10010003:
+                self.line_control = value & 255
+            elif address == 0x10010000 and self.line_control == 3:
+                self.console.append(value & 255)
+            else:
+                raise NotImplementedError(f"unmodeled compact console write {address:x}/{value:x}")
+            return
+        return super().write_memory(address, size, value)

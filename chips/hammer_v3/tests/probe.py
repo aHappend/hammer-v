@@ -13,8 +13,10 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from oracle import BareMachine, StartupMachine, bare_program, startup_program
-from scenarios import walker_cases
+from oracle import (BareMachine, StartupMachine, FaultMachine, bare_program, startup_program,
+                    SystemMachine, ConsoleMachine, i_type, s_type, load_constant)
+from scenarios import (walker_cases, fault_programs, context_program, isa_program,
+                       shootdown_program)
 from peripherals import plic_vectors, uart_vectors, compare_waveform
 
 
@@ -30,15 +32,17 @@ def digest(path):
 
 
 class Probe:
-    def __init__(self, name):
+    def __init__(self, name, preparation=True):
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        self.folder = ROOT / "evidence" / "preparation" / f"{name}-{stamp}"
+        base = ROOT / "evidence" / "preparation" if preparation else ROOT / "evidence"
+        self.folder = base / f"{name}-{stamp}"
         self.folder.mkdir(parents=True, exist_ok=False)
+        self.rtl_folder = ROOT / "rtl"
         sources = sorted([*ROOT.glob("rtl/*.sv"), *ROOT.glob("design/*.md"),
                           *ROOT.glob("tests/*"), *ROOT.glob("hammer_v2_reference/rtl/*.sv")])
         sources = [p for p in sources if p.is_file()]
         self.receipt = {
-            "kind": "advisory-verifier-preparation",
+            "kind": "advisory-verifier-preparation" if preparation else "portable-l1-execution",
             "acceptance_evidence": False,
             "argv": [sys.executable, *sys.argv],
             "cwd": ".",
@@ -88,7 +92,7 @@ class Probe:
         print(self.relative(self.folder / "receipt.json"))
 
 
-def generate_top_wiring(top, source, folder, dmem_words):
+def generate_top_wiring(top, source, folder, dmem_words, parameters=None, extra_driven=()):
     header = source.read_text().split(");", 1)[0].split(") (", 1)[1]
     ports = []
     for declaration in header.split(","):
@@ -104,6 +108,7 @@ def generate_top_wiring(top, source, folder, dmem_words):
         ports.append((direction, width or "", name))
     driven = {"clk", "rst_n", "start", "host_valid", "host_write", "host_imem",
               "host_addr", "host_wdata", "host_wstrb", "dbg_raddr"}
+    driven.update(extra_driven)
     declarations = []
     for direction, width, name in ports:
         if direction == "output":
@@ -114,11 +119,19 @@ def generate_top_wiring(top, source, folder, dmem_words):
             value = "1'b1" if name == "uart_rx" else "'0"
             declarations.append(f"wire {width} {name} = {value};")
     (folder / "top_declarations.svh").write_text("\n".join(declarations) + "\n")
-    instance = f"""{top} #(.IMEM_WORDS(128), .DMEM_WORDS({dmem_words}), .BTB_ENTRIES(1),
-        .PRED_MODE(0), .ICACHE_LINES(1), .DCACHE_LINES(1)) dut (
-"""
+    configuration = {"IMEM_WORDS": 128, "DMEM_WORDS": dmem_words, "BTB_ENTRIES": 1,
+                     "PRED_MODE": 0, "ICACHE_LINES": 1, "DCACHE_LINES": 1}
+    configuration.update(parameters or {})
+    instance = top + " #(" + ", ".join(
+        f".{key}({value})" for key, value in configuration.items()) + ") dut (\n"
     instance += ",\n".join(f".{name}({name})" for _, _, name in ports) + ");\n"
     (folder / "top_instance.svh").write_text(instance)
+    (folder / "top_initial.svh").write_text(
+        "\n".join(f"{name} = '0;" for direction, _, name in ports
+                  if direction == "input" and name in driven) + "\n")
+    (folder / "top_observers.svh").write_text(
+        "wire monitor_uart_tx = " +
+        ("uart_tx" if any(name == "uart_tx" for _, _, name in ports) else "1'b1") + ";\n")
 
 
 def compare_trace(probe, trace, model):
@@ -148,6 +161,8 @@ def compare_trace(probe, trace, model):
                     raise AssertionError(f"store expected {expected}, observed {line}")
                 if not write and values[11] != read:
                     raise AssertionError(f"load expected {expected}, observed {line}")
+                if values[1] & 127 == 0x2F and values[11] != read:
+                    raise AssertionError(f"atomic old data expected {expected}, observed {line}")
         comparisons += 1
     if not terminal:
         raise AssertionError(f"incomplete probe: comparisons={comparisons}, terminal={terminal}")
@@ -162,7 +177,7 @@ def top_probe(probe, parent, sv39_startup=False):
     for tool, option in (("iverilog", "-V"), ("vvp", "-V"), ("python3", "--version")):
         probe.run(f"version-{tool}", [tool, option])
     top = "hammer_v2_top" if parent else "hammer_v3_top"
-    source = ROOT / "rtl" / f"{top}.sv"
+    source = probe.rtl_folder / f"{top}.sv"
     generate_top_wiring(top, source, probe.folder, 4096 if sv39_startup else 32)
     words, data = startup_program() if sv39_startup else (bare_program(), {})
     program = probe.folder / "program.hex"
@@ -172,7 +187,7 @@ def top_probe(probe, parent, sv39_startup=False):
     probe.run("compile", ["iverilog", "-g2012", "-Wall", "-s", "top_probe",
                          "-I", probe.relative(probe.folder), "-o", probe.relative(binary),
                          "tests/top_probe.sv",
-                         *[str(p.relative_to(ROOT)) for p in sorted(ROOT.glob("rtl/*.sv"))]])
+                         *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
     argv = ["vvp", probe.relative(binary),
             f"+program={probe.relative(program)}", f"+trace={probe.relative(trace)}"]
     if data:
@@ -185,16 +200,25 @@ def top_probe(probe, parent, sv39_startup=False):
     compare_trace(probe, trace, model)
 
 
-def synthesis_probe(probe):
+def synthesis_probe(probe, configuration="min"):
     probe.run("version-yosys", ["yosys", "-V"])
     netlist = probe.folder / "netlist.json"
     script = probe.folder / "synthesis.ys"
+    configurations = {
+        "min": {"IMEM_WORDS": 1, "DMEM_WORDS": 1, "ICACHE_LINES": 1,
+                "DCACHE_LINES": 1, "BTB_ENTRIES": 1, "ITLB_ENTRIES": 1, "DTLB_ENTRIES": 1},
+        "default": {},
+        "odd": {"IMEM_WORDS": 4093, "DMEM_WORDS": 4093, "ICACHE_LINES": 4,
+                "DCACHE_LINES": 16, "ITLB_ENTRIES": 4, "DTLB_ENTRIES": 8},
+    }
+    parameters = configurations[configuration]
+    parameter_command = ("chparam " + " ".join(
+        f"-set {key} {value}" for key, value in parameters.items()) +
+        " hammer_v3_top\n") if parameters else ""
     script.write_text(
         "read_verilog -sv " +
         " ".join(str(p.relative_to(ROOT)) for p in sorted(ROOT.glob("rtl/*.sv"))) + "\n"
-        "chparam -set IMEM_WORDS 1 -set DMEM_WORDS 1 -set ICACHE_LINES 1 "
-        "-set DCACHE_LINES 1 -set BTB_ENTRIES 1 -set ITLB_ENTRIES 1 "
-        "-set DTLB_ENTRIES 1 hammer_v3_top\n"
+        + parameter_command +
         "hierarchy -check -top hammer_v3_top\n"
         "proc\nopt_expr\nopt_clean\ncheck -assert\n"
         "memory -nomap\nopt_clean\ncheck -assert\n"
@@ -208,9 +232,53 @@ def synthesis_probe(probe):
                    if cell["type"].startswith("$mem"))
     if cells < 100 or memories == 0:
         raise AssertionError(f"non-substantive synthesis: cells={cells}, memories={memories}")
+    names = {name: module.get("attributes", {}).get("hdlname", name).split()[0].lstrip("\\")
+             for name, module in modules.items()}
+
+    def hierarchy(module_name, path):
+        module = modules[module_name]
+        for cell_name, cell in module.get("cells", {}).items():
+            if cell["type"] in modules:
+                child = f"{path}.{cell_name}" if path else cell_name
+                yield child, names[cell["type"]], cell
+                yield from hierarchy(cell["type"], child)
+
+    instances = list(hierarchy("hammer_v3_top", ""))
+    required = {
+        "u_core": "hammer_v3_core", "u_mmu": "hammer_v3_mmu",
+        "u_icache": "hammer_v3_icache", "u_dcache": "hammer_v3_dcache",
+        "u_fabric": "hammer_v3_fabric", "u_plic": "hammer_v3_plic",
+        "u_uart": "hammer_v3_uart", "u_clint": "hammer_v2_clint",
+        "u_accel": "hammer_v3_accel_bridge", "u_mem_axi": "hammer_v3_axi_master",
+        "u_mmu.u_itlb": "hammer_v3_tlb", "u_mmu.u_dtlb": "hammer_v3_tlb",
+        "u_mmu.u_ptw": "hammer_v3_ptw",
+    }
+    for suffix, expected in required.items():
+        matching = [(path, cell) for path, module, cell in instances
+                    if path.endswith("." + suffix) and module == expected]
+        if len(matching) != 1 or not matching[0][1].get("connections"):
+            raise AssertionError(f"SYNTHESIS_HIERARCHY {suffix}:{expected} missing or disconnected")
+    core_children = {"u_decode", "u_regfile", "u_hazard", "u_alu", "u_predictor",
+                     "u_muldiv", "u_atomic", "u_csr", "u_trap"}
+    for child in core_children:
+        if not any(path.endswith(".u_core." + child) for path, _, _ in instances):
+            raise AssertionError(f"SYNTHESIS_CORE_HIERARCHY missing {child}")
+    memory_bits = 0
+    state_cells = 0
+    for module in modules.values():
+        for cell in module.get("cells", {}).values():
+            if cell["type"].startswith("$mem"):
+                memory_bits += int(cell["parameters"]["WIDTH"], 2) * int(
+                    cell["parameters"]["SIZE"], 2)
+            if "dff" in cell["type"]:
+                state_cells += 1
+    if memory_bits == 0 or state_cells < 50:
+        raise AssertionError(f"SYNTHESIS_STATE memory_bits={memory_bits} state_cells={state_cells}")
     probe.receipt["assertions"].append(
-        {"id": "minimum-structural-preparation", "passed": True, "cells": cells,
-         "memory_cells": memories, "scope": "minimum only; no timing claim"})
+        {"id": f"{configuration}-structural-preparation", "passed": True, "cells": cells,
+         "memory_cells": memories, "memory_bits": memory_bits, "state_cells": state_cells,
+         "required_hierarchy": required, "parameters": parameters,
+         "scope": "generic structural synthesis; no physical timing claim"})
 
 
 WALKER_MUTANTS = {
@@ -350,8 +418,9 @@ def peripheral_probe(probe, unit):
         probe.run("compile", ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
                              "--top-module", "peripheral_probe", "--Mdir",
                              probe.relative(objects), "-o", "../simulation",
-                             "tests/peripheral_probe.sv", "rtl/hammer_v3_plic.sv",
-                             "rtl/hammer_v3_uart.sv"])
+                             "tests/peripheral_probe.sv",
+                             probe.relative(probe.rtl_folder / "hammer_v3_plic.sv"),
+                             probe.relative(probe.rtl_folder / "hammer_v3_uart.sv")])
         output = probe.run("simulation", [probe.relative(probe.folder / "simulation"),
                                           f"+vectors={probe.relative(vector_file)}",
                                           f"+waveform={probe.relative(waveform)}"])
@@ -359,7 +428,7 @@ def peripheral_probe(probe, unit):
                           output)
         if not match or int(match[2]) == 0:
             raise AssertionError("peripheral probe lacks completed real comparisons")
-        serial_frames = compare_waveform(waveform, vectors.frames)
+        serial_frames = compare_waveform(waveform, vectors.frames, vectors.streams)
         probe.receipt["assertions"].append({
             "id": f"{unit}-public-interface", "passed": True,
             "comparisons": int(match[2]), "serial_frames": serial_frames,
@@ -371,22 +440,401 @@ def peripheral_probe(probe, unit):
             shutil.rmtree(objects)
 
 
+def fault_probe(probe):
+    probe.run("version-verilator", ["verilator", "--version"])
+    generate_top_wiring("hammer_v3_top", probe.rtl_folder / "hammer_v3_top.sv", probe.folder, 4096)
+    objects = probe.folder / "compile-obj"
+    records = []
+    try:
+        probe.run("compile", ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
+                             "--top-module", "top_probe", "--Mdir", probe.relative(objects),
+                             "-o", "../simulation", "-I" + probe.relative(probe.folder),
+                             "tests/top_probe.sv",
+                             *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+        for index, (spec, words, data) in enumerate(fault_programs()):
+            case = probe.folder / f"case-{index:03d}"
+            case.mkdir()
+            program, image, trace = case / "program.hex", case / "data.hex", case / "trace.txt"
+            program.write_text("".join(f"{word:08x}\n" for word in
+                                      words + [0x13] * (128 - len(words))))
+            image.write_text("".join(f"{address:08x} {word:016x}\n"
+                                     for address, word in sorted(data.items())))
+            (case / "specification.json").write_text(json.dumps(spec, indent=2) + "\n")
+            probe.run(f"case-{index:03d}", [probe.relative(probe.folder / "simulation"),
+                                          f"+program={probe.relative(program)}",
+                                          f"+trace={probe.relative(trace)}",
+                                          f"+data={probe.relative(image)}"])
+            compare_trace(probe, trace, FaultMachine(words, data))
+            records.append({"case": index, "specification": spec, "passed": True,
+                            "trace": probe.relative(trace)})
+            probe.receipt["fault_cases"] = records
+            probe.persist()
+        probe.receipt["assertions"].append({
+            "id": "top-precise-translation-faults", "passed": True, "cases": len(records),
+            "scope": "short terminal-fault programs; no handler/context-switch closure"})
+    finally:
+        if objects.is_dir():
+            shutil.rmtree(objects)
+
+
+def coherence_probe(probe, simulator="verilator", exchanges=100):
+    probe.run(f"version-{simulator}", [simulator, "--version" if simulator == "verilator" else "-V"])
+    top = probe.rtl_folder / "hammer_v3_top.sv"
+    header = top.read_text().split(");", 1)[0]
+    extra_driven = re.findall(r"\bs_acc_axi_\w+", header)
+    generate_top_wiring("hammer_v3_top", top, probe.folder, 1024,
+                        extra_driven=extra_driven)
+    words = [0x100000B7, i_type(0x13, 2, 0, 0, 0),
+             i_type(0x03, 3, 3, 1, 0), i_type(0x13, 2, 0, 2, 1),
+             s_type(3, 1, 2, 8), 0xFF5FF06F]
+    program = probe.folder / "program.hex"
+    program.write_text("".join(f"{word:08x}\n" for word in words + [0x13] * (128 - len(words))))
+    trace = probe.folder / "trace.txt"
+    objects = probe.folder / "compile-obj"
+    try:
+        sources = [str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]
+        if simulator == "verilator":
+            binary = probe.folder / "simulation"
+            compile_argv = ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
+                            "--top-module", "coherence_probe", "--Mdir", probe.relative(objects),
+                            "-o", "../simulation", "-I" + probe.relative(probe.folder),
+                            f"-GEXCHANGES={exchanges}", "tests/coherence_probe.sv", *sources]
+            execute = [probe.relative(binary)]
+        else:
+            binary = probe.folder / "simulation.vvp"
+            compile_argv = ["iverilog", "-g2012", "-Wall", "-s", "coherence_probe",
+                            f"-Pcoherence_probe.EXCHANGES={exchanges}",
+                            "-I", probe.relative(probe.folder), "-o", probe.relative(binary),
+                            "tests/coherence_probe.sv", *sources]
+            execute = ["vvp", probe.relative(binary)]
+        probe.run("compile", compile_argv)
+        probe.run("simulation", [*execute,
+                                 f"+program={probe.relative(program)}",
+                                 f"+trace={probe.relative(trace)}"])
+        model = BareMachine(words)
+        model.memory = {0x10000000 + offset: 0 for offset in range(32)}
+        model.memory.update({0x10000100 + offset: 0 for offset in range(32)})
+        cpu = reads = writes = progress = observations = 0
+        last_admission = -1
+        last_value = None
+        for line in trace.read_text().splitlines():
+            fields = line.split()
+            if fields[0] == "N":
+                retired = int(fields[3])
+                if retired <= last_admission:
+                    raise AssertionError(f"COHERENCE_CPU_STARVATION: {line}")
+                last_admission = retired
+                progress += 1
+            elif fields[0] == "A":
+                address, value, identity = (int(field, 16) for field in fields[2:])
+                if fields[1] == "W":
+                    for byte in range(8):
+                        model.memory[address + byte] = (value >> (8 * byte)) & 255
+                    last_value = value
+                    writes += 1
+                else:
+                    expected = sum(model.memory[address + byte] << (8 * byte) for byte in range(8))
+                    if value != expected:
+                        raise AssertionError(f"COHERENCE_ACCEL_READ address={address:x} "
+                                             f"expected={expected:x} got={value:x}")
+                    reads += 1
+            else:
+                values = [int(field, 16) for field in fields[1:]]
+                expected = model.step()
+                if fields[0] != "R" or tuple(values[:6]) != expected[1:7] or values[12] != expected[8]:
+                    raise AssertionError(f"COHERENCE_CPU_RETIRE expected={expected} got={line}")
+                memory = expected[7]
+                if values[6] != int(memory is not None):
+                    raise AssertionError(f"COHERENCE_CPU_MEMORY_VALID expected={expected} got={line}")
+                if memory:
+                    write, address, mask, data, read = memory
+                    if (values[7], values[8]) != (write, address):
+                        raise AssertionError(f"COHERENCE_CPU_MEMORY expected={expected} got={line}")
+                    if write and (values[9], values[10]) != (mask, data):
+                        raise AssertionError(f"COHERENCE_CPU_STORE expected={expected} got={line}")
+                    if not write and values[11] != read:
+                        raise AssertionError(f"COHERENCE_CPU_LOAD expected={expected} got={line}")
+                    if not write and last_value is not None and read == last_value:
+                        observations += 1
+                cpu += 1
+        if (writes != exchanges or reads != exchanges or observations < exchanges or
+                progress != 2 * exchanges or cpu == 0):
+            raise AssertionError(f"COHERENCE_INCOMPLETE writes={writes} reads={reads} "
+                                 f"cpu_observations={observations} admissions={progress}")
+        probe.receipt["assertions"].append({
+            "id": "public-top-running-coherence", "passed": True,
+            "cpu_retirements": cpu, "accelerator_reads": reads, "accelerator_writes": writes,
+            "cpu_observations": observations, "forward_progress_admissions": progress,
+            "scope": "single-beat legacy data RAM; full AXI/external executable RAM still required"})
+    finally:
+        if objects.is_dir():
+            shutil.rmtree(objects)
+
+
+def console_probe(probe):
+    probe.run("version-iverilog", ["iverilog", "-V"])
+    probe.run("version-vvp", ["vvp", "-V"])
+    words, data = startup_program()
+    words = words[:64] + load_constant(5, 0x40010000)
+    words += [i_type(0x13, 3, 0, 0, 3), s_type(0, 5, 3, 3),
+              i_type(0x13, 3, 0, 0, ord("V")), s_type(0, 5, 3, 0)]
+    words += [0x13] * 250
+    words += [i_type(0x03, 6, 4, 5, 5), 0x73]
+    generate_top_wiring("hammer_v3_top", probe.rtl_folder / "hammer_v3_top.sv", probe.folder,
+                        4096, parameters={"IMEM_WORDS": 512})
+    program, image, trace, waveform = (probe.folder / name for name in
+                                      ("program.hex", "data.hex", "trace.txt", "waveform.txt"))
+    program.write_text("".join(f"{word:08x}\n" for word in words))
+    image.write_text("".join(f"{address:08x} {word:016x}\n"
+                             for address, word in sorted(data.items())))
+    binary = probe.folder / "simulation.vvp"
+    probe.run("compile", ["iverilog", "-g2012", "-Wall", "-s", "top_probe",
+                         f"-Ptop_probe.PROGRAM_WORDS={len(words)}",
+                         "-Ptop_probe.MAX_CYCLES=500000", "-I", probe.relative(probe.folder),
+                         "-o", probe.relative(binary), "tests/top_probe.sv",
+                         *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+    probe.run("simulation", ["vvp", probe.relative(binary),
+                             f"+program={probe.relative(program)}",
+                             f"+data={probe.relative(image)}", f"+trace={probe.relative(trace)}",
+                             f"+waveform={probe.relative(waveform)}"])
+    model = ConsoleMachine(words, data)
+    compare_trace(probe, trace, model)
+    frames = [{"marker": 0, "value": ord("V"), "lcr": 3, "divisor": 1}]
+    compared = compare_waveform(waveform, frames)
+    if model.console != [ord("V")] or compared != 1 or model.regs[6] != 0x60:
+        raise AssertionError("CONSOLE_COVERAGE missing actual software/serial comparison")
+    probe.receipt["assertions"].append({
+        "id": "public-top-sv39-console", "passed": True, "serial_bytes": model.console,
+        "serial_frames": compared, "scope": "compact real S-mode console; not Linux boot"})
+
+
+def context_probe(probe):
+    probe.run("version-verilator", ["verilator", "--version"])
+    words, data = context_program()
+    generate_top_wiring("hammer_v3_top", probe.rtl_folder / "hammer_v3_top.sv", probe.folder, 8192,
+                        parameters={"IMEM_WORDS": 4096})
+    program, image, trace = (probe.folder / name for name in
+                             ("program.hex", "data.hex", "trace.txt"))
+    program.write_text("".join(f"{word:08x}\n" for word in words))
+    image.write_text("".join(f"{address:08x} {word:016x}\n"
+                             for address, word in sorted(data.items())))
+    objects = probe.folder / "compile-obj"
+    try:
+        probe.run("compile", ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
+                             "--top-module", "top_probe",
+                             f"-GPROGRAM_WORDS={len(words)}", "-GMAX_CYCLES=500000",
+                             "-GCONTINUE_TRAPS=1", "--Mdir", probe.relative(objects),
+                             "-o", "../simulation", "-I" + probe.relative(probe.folder),
+                             "tests/top_probe.sv",
+                             *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+        probe.run("simulation", [probe.relative(probe.folder / "simulation"),
+                                 f"+program={probe.relative(program)}",
+                                 f"+trace={probe.relative(trace)}",
+                                 f"+data={probe.relative(image)}"])
+        model = SystemMachine(words, data)
+        compare_trace(probe, trace, model)
+        if not model.stopped or model.trap_counts != {13: 1, 8: 20, 9: 1} or model.user_returns != 21:
+            raise AssertionError(f"CONTEXT_COVERAGE traps={model.trap_counts} "
+                                 f"returns={model.user_returns} stopped={model.stopped}")
+        probe.receipt["assertions"].append({
+            "id": "public-top-context-switch-software", "passed": True,
+            "traps": model.trap_counts, "user_returns": model.user_returns,
+            "scope": "20 user-ECALL scheduler round trips and delegated A-bit repair; "
+                     "timer preemption and full seeded matrix still mandatory"})
+    finally:
+        if objects.is_dir():
+            shutil.rmtree(objects)
+
+
+def isa_probe(probe, parent=False, seed=17):
+    probe.run("version-verilator", ["verilator", "--version"])
+    top = "hammer_v2_top" if parent else "hammer_v3_top"
+    source_folder = ROOT / "hammer_v2_reference/rtl" if parent else probe.rtl_folder
+    generate_top_wiring(top, source_folder / f"{top}.sv", probe.folder, 1024,
+                        parameters={"IMEM_WORDS": 1024})
+    words, labels = isa_program(seed)
+    program, trace = probe.folder / "program.hex", probe.folder / "trace.txt"
+    program.write_text("".join(f"{word:08x}\n" for word in words))
+    objects = probe.folder / "compile-obj"
+    try:
+        probe.run("compile", ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
+                             "--top-module", "top_probe",
+                             f"-GPROGRAM_WORDS={len(words)}", "-GMAX_CYCLES=500000",
+                             "--Mdir", probe.relative(objects),
+                             "-o", "../simulation", "-I" + probe.relative(probe.folder),
+                             "tests/top_probe.sv",
+                             *[str(p.relative_to(ROOT)) for p in sorted(source_folder.glob("*.sv"))]])
+        probe.run("simulation", [probe.relative(probe.folder / "simulation"),
+                                 f"+program={probe.relative(program)}",
+                                 f"+trace={probe.relative(trace)}"])
+        model = SystemMachine(words, {})
+        compare_trace(probe, trace, model)
+        if model.trap_counts != {11: 1}:
+            raise AssertionError(f"ISA_TERMINATION unexpected traps={model.trap_counts}")
+        completed_bins = {}
+        for line in trace.read_text().splitlines():
+            fields = line.split()
+            label = labels.get(int(fields[1], 16))
+            if label and fields[0] == "R":
+                completed_bins[label] = completed_bins.get(label, 0) + 1
+        if completed_bins.get("jump-skipped", 0):
+            raise AssertionError("ISA_WRONG_PATH_SIDE_EFFECT: skipped instruction retired")
+        for label in set(labels.values()) - {"jump-skipped", "terminal-ecall"}:
+            if completed_bins.get(label, 0) == 0:
+                raise AssertionError(f"ISA_MISSING_COMPARISON: {label}")
+        probe.receipt["assertions"].append({
+            "id": "parent-isa-oracle" if parent else "v3-isa-oracle", "passed": True,
+            "seed": seed, "program_words": len(words), "completed_program_bins": completed_bins,
+            "scope": "Bare RV64IMA instructions and machine scratch CSR operations; "
+                     "CLINT/interrupt/host/MMIO regressions remain separate"})
+    finally:
+        if objects.is_dir():
+            shutil.rmtree(objects)
+
+
+def shootdown_probe(probe):
+    probe.run("version-verilator", ["verilator", "--version"])
+    words, data = shootdown_program()
+    generate_top_wiring("hammer_v3_top", probe.rtl_folder / "hammer_v3_top.sv", probe.folder, 8192)
+    program, image, trace = (probe.folder / name for name in
+                             ("program.hex", "data.hex", "trace.txt"))
+    program.write_text("".join(f"{word:08x}\n" for word in words + [0x13] * (128 - len(words))))
+    image.write_text("".join(f"{address:08x} {word:016x}\n"
+                             for address, word in sorted(data.items())))
+    objects = probe.folder / "compile-obj"
+    try:
+        probe.run("compile", ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
+                             "--top-module", "top_probe", "--Mdir", probe.relative(objects),
+                             "-o", "../simulation", "-I" + probe.relative(probe.folder),
+                             "tests/top_probe.sv",
+                             *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+        probe.run("simulation", [probe.relative(probe.folder / "simulation"),
+                                 f"+program={probe.relative(program)}",
+                                 f"+trace={probe.relative(trace)}",
+                                 f"+data={probe.relative(image)}"])
+        model = SystemMachine(words, data)
+        compare_trace(probe, trace, model)
+        if model.regs[6] != 0x1234567887654321 or model.regs[9] != 0x55AA55AA55667788:
+            raise AssertionError("SHOOTDOWN_COVERAGE: remapped values not independently observed")
+        probe.receipt["assertions"].append({
+            "id": "public-top-dirty-pte-shootdown", "passed": True, "old_pa": 0x10003000,
+            "new_pa": 0x10006000, "old_value": model.regs[6], "new_value": model.regs[9],
+            "scope": "all/all fence on a dirty cached PTE; selective forms still mandatory"})
+    finally:
+        if objects.is_dir():
+            shutil.rmtree(objects)
+
+
+SYSTEM_MUTANTS = {
+    "sfence": ("hammer_v3_mmu.sv", [
+        ("wire invalidate = rst_n && fence_state == INVALIDATE;",
+         "wire invalidate = 1'b0;")], "shootdown", r"retirement \d+: expected"),
+    "fault-record": ("hammer_v3_core.sv", [
+        ("d_rsp_page_fault ? (m.load ? 4'd13 : 4'd15)",
+         "d_rsp_page_fault ? (m.load ? 4'd5 : 4'd15)")],
+        "faults", r"trap expected"),
+    "plic-claim": ("hammer_v3_plic.sv", [
+        ("rank[c][2*t] >= rank[c][2*t+1]",
+         "rank[c][2*t][8:6] > rank[c][2*t+1][8:6]")],
+        "plic", r"PERIPHERAL_RESULT command=\d+ unit=1"),
+    "uart-byte": ("hammer_v3_uart.sv", [
+        ("tx_fifo[tx_tail] <= write_byte;", "tx_fifo[tx_tail] <= write_byte ^ 8'h01;")],
+        "uart", r"PERIPHERAL_RESULT command=\d+ unit=0"),
+    "coherence": ("hammer_v3_top.sv", [
+        (".req_ready(da_ready), .req_cmd({2'b11,2'b0,route_cmd}),",
+         ".req_ready(da_ready), .req_cmd({2'b10,2'b0,route_cmd}),")],
+        "coherence", r"COHERENCE_CPU_RETIRE expected="),
+}
+
+
+def system_mutant_probe(probe, mutant):
+    filename, changes, experiment, intended = SYSTEM_MUTANTS[mutant]
+    copied = probe.folder / "mutant-rtl"
+    copied.mkdir()
+    for source in sorted((ROOT / "rtl").glob("*.sv")):
+        shutil.copyfile(source, copied / source.name)
+    target = copied / filename
+    before = target.read_text()
+    after = before
+    for old, new in changes:
+        if after.count(old) != 1:
+            raise AssertionError(f"mutation {mutant} does not have one exact target: {old}")
+        after = after.replace(old, new, 1)
+    target.write_text(after)
+    delta = probe.folder / "mutation.diff"
+    delta.write_text("".join(difflib.unified_diff(
+        before.splitlines(keepends=True), after.splitlines(keepends=True),
+        fromfile=f"rtl/{filename}", tofile=f"mutant-rtl/{filename}")))
+    probe.receipt["mutation"] = {
+        "class": mutant, "delta": probe.relative(delta),
+        "original_sha256": hashlib.sha256(before.encode()).hexdigest(),
+        "mutant_sha256": digest(target), "intended_assertion": intended,
+    }
+    probe.rtl_folder = copied
+    probe.persist()
+    try:
+        if experiment == "shootdown":
+            shootdown_probe(probe)
+        elif experiment == "faults":
+            fault_probe(probe)
+        elif experiment == "coherence":
+            coherence_probe(probe)
+        else:
+            peripheral_probe(probe, experiment)
+    except AssertionError as error:
+        first_failure = str(error)
+        if not re.search(intended, first_failure):
+            raise AssertionError(f"{mutant}: wrong rejection, not intended mismatch: {error}") from error
+    except RuntimeError as error:
+        record = probe.receipt["commands"][-1]
+        if record["timed_out"] or record["exit_status"] not in (1, -6, 134):
+            raise
+        output = (ROOT / record["stdout"]).read_text()
+        match = re.search(intended + r"[^\n]*", output)
+        if not match or "simulation" not in record["stdout"]:
+            raise RuntimeError(f"{mutant}: tool/harness failure is not detection: {error}") from error
+        first_failure = match[0]
+    else:
+        raise AssertionError(f"{mutant}: semantic mutant survived actual functional comparison")
+    compiled = [record for record in probe.receipt["commands"]
+                if record["argv"][0] == "verilator" and "--binary" in record["argv"]]
+    if not compiled or any(record["exit_status"] != 0 for record in compiled):
+        raise AssertionError(f"{mutant}: compile failure is not semantic detection")
+    probe.receipt["assertions"].append({
+        "id": "disposable-defect-sensitivity", "passed": True, "mutant": mutant,
+        "first_failing_assertion": first_failure, "experiment": experiment,
+        "scope": "independent semantic comparison on a disposable complete RTL copy"})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", choices=["top-bare", "top-sv39", "synthesis-min", "walker",
-                                          "parameters", "plic", "uart"],
+                                          "synthesis-default", "synthesis-odd",
+                                          "parameters", "plic", "uart", "faults", "coherence",
+                                          "context", "isa", "shootdown", "mutants", "console",
+                                          "coherence-compact"],
                         default="top-bare")
     parser.add_argument("--parent", action="store_true")
-    parser.add_argument("--mutant", choices=sorted(WALKER_MUTANTS))
+    parser.add_argument("--mutant", choices=sorted({**WALKER_MUTANTS, **SYSTEM_MUTANTS}))
     parser.add_argument("--repair-of", help="Project-relative retained diagnostic being repaired")
     args = parser.parse_args()
-    if args.mutant and args.probe != "walker":
-        parser.error("--mutant requires --probe walker")
-    if args.parent and args.probe != "top-bare":
-        parser.error("--parent requires --probe top-bare")
+    if args.mutant and args.probe not in ("walker", "mutants"):
+        parser.error("--mutant requires --probe walker or mutants")
+    if args.probe == "mutants" and not args.mutant:
+        parser.error("--probe mutants requires --mutant")
+    if args.parent and args.probe not in ("top-bare", "isa"):
+        parser.error("--parent requires --probe top-bare or isa")
     probe = Probe(f"verifier-mutant-{args.mutant}" if args.mutant else
                   "verifier-parameters" if args.probe == "parameters" else
                   f"verifier-{args.probe}" if args.probe in ("plic", "uart") else
+                  "verifier-top-faults" if args.probe == "faults" else
+                  "verifier-top-coherence" if args.probe == "coherence" else
+                  "verifier-top-context" if args.probe == "context" else
+                  "verifier-top-shootdown" if args.probe == "shootdown" else
+                  f"verifier-top-{args.probe}" if args.probe in ("console", "coherence-compact") else
+                  ("verifier-parent-isa" if args.parent else "verifier-top-isa")
+                  if args.probe == "isa" else
+                  f"verifier-{args.probe}" if args.probe.startswith("synthesis-") else
                   "verifier-walker" if args.probe == "walker" else
                   "verifier-synthesis-min" if args.probe == "synthesis-min" else
                   "verifier-top-sv39" if args.probe == "top-sv39" else
@@ -398,10 +846,26 @@ def main():
         probe.receipt["repair_of"] = args.repair_of
         probe.persist()
     try:
-        if args.probe in ("plic", "uart"):
+        if args.probe == "console":
+            console_probe(probe)
+        elif args.probe == "coherence-compact":
+            coherence_probe(probe, "iverilog", 2)
+        elif args.mutant in SYSTEM_MUTANTS:
+            system_mutant_probe(probe, args.mutant)
+        elif args.probe == "shootdown":
+            shootdown_probe(probe)
+        elif args.probe == "isa":
+            isa_probe(probe, args.parent)
+        elif args.probe == "context":
+            context_probe(probe)
+        elif args.probe == "coherence":
+            coherence_probe(probe)
+        elif args.probe == "faults":
+            fault_probe(probe)
+        elif args.probe in ("plic", "uart"):
             peripheral_probe(probe, args.probe)
-        elif args.probe == "synthesis-min":
-            synthesis_probe(probe)
+        elif args.probe.startswith("synthesis-"):
+            synthesis_probe(probe, args.probe.removeprefix("synthesis-"))
         elif args.probe == "walker":
             walker_probe(probe, args.mutant)
         elif args.probe == "parameters":
