@@ -198,7 +198,10 @@ module hammer_v3_core #(
          ((w.mret || w.sret) && return_illegal));
     wire [63:0] sync_cause = w.fault ? {60'b0,w.cause} : 64'd2;
     wire [63:0] sync_tval = w.fault ? w.tval : {32'b0,w.insn};
-    wire wb_commit = rst_n && running && w_v && !wb_sync;
+    wire satp_write_wait = rst_n && running && w_v && w.csr &&
+        csr_write && w.insn[31:20] == 12'h180 && !wb_sync;
+    wire wb_commit = rst_n && running && w_v && !wb_sync &&
+        (!satp_write_wait || (sfence_valid && sfence_ready));
     wire [63:0] wb_data = w.csr ? csr_data : w.result;
     wire wb_we = wb_commit && w.we && w.rd != 0;
     wire [63:0] wb_next = w.mret || w.sret ? return_pc : w.next_pc;
@@ -357,12 +360,14 @@ module hammer_v3_core #(
         (m.insn[31:27] == 2 ? 2'd1 : m.insn[31:27] == 3 ? 2'd2 : 2'd3) : 2'b0;
     assign at_rsp_ready = rst_n && running && m_v && m.atomic &&
         m.translate_sent && !m.translated && !trap_enter;
-    assign sfence_valid = rst_n && running && m_v && m.sfence &&
+    wire instruction_sfence = rst_n && running && m_v && m.sfence &&
         !m.fault && !fetch_busy && !w_v;
-    assign sfence_va_valid = sfence_valid && m.insn[19:15] != 0;
-    assign sfence_asid_valid = sfence_valid && m.insn[24:20] != 0;
-    assign sfence_va = sfence_valid ? m.fence_va : 64'b0;
-    assign sfence_asid = sfence_valid ? m.fence_asid[15:0] : 16'b0;
+    assign sfence_valid = instruction_sfence ||
+        (satp_write_wait && !fetch_busy);
+    assign sfence_va_valid = instruction_sfence && m.insn[19:15] != 0;
+    assign sfence_asid_valid = instruction_sfence && m.insn[24:20] != 0;
+    assign sfence_va = instruction_sfence ? m.fence_va : 64'b0;
+    assign sfence_asid = instruction_sfence ? m.fence_asid[15:0] : 16'b0;
     wire mem_advance;
     hammer_v3_atomic #(.DMEM_WORDS(DMEM_WORDS)) u_atomic (
         .clk(clk), .rst_n(rst_n), .start(atom_start), .ready(atom_ready),
@@ -650,7 +655,7 @@ module hammer_v3_core #(
                 id_page_fault <= queue_head.page_fault;
             end
             if (running) begin
-                w_v <= 1'b0;
+                w_v <= satp_write_wait && !wb_commit;
                 if (halt_req) stopping <= 1'b1;
                 if (sleeping && trap_wake) sleeping <= 1'b0;
                 if (halt_clean) begin

@@ -115,6 +115,13 @@ The core outputs `mmu_satp[63:0]`, `mmu_priv[1:0]`, `mmu_mstatus[63:0]`,
 The source-valid qualifiers describe the instruction's register numbers, not
 whether their values are nonzero. Fence retirement waits for the handshake.
 satp/CSR/return/context changes serialize outstanding translations and fetch.
+Each legal satp write attempt uses this same handshake with both source-valid
+qualifiers and operand payloads zero, requesting full invalidation of both TLBs.
+The core holds the instruction in WB without CSR, register or retirement effects
+until acknowledgement, then commits the write and discards younger fetch state.
+This includes unchanged values and WARL-ignored unsupported MODE writes; the
+latter still leave the entire satp CSR unchanged. Read-only CSRRS/CSRRC forms
+with source register x0 do not request this write invalidation.
 Translate once before each atomic operation; reservations use physical addresses.
 Even an unsuccessful SC must check translation/permission.
 
@@ -200,8 +207,12 @@ No helper port is test-only or hierarchical control.
 not a software translation-disable input. Fetch ignores MPRV; data uses MPP when
 MPRV is set in M mode. The MMU captures all context at acceptance. A satp change
 automatically blocks new requests, drains work and invalidates both TLBs; an
-explicit fence may be combined with this conservative invalidation. The system
-must serialize a satp write with older memory effects before changing the port.
+explicit fence may be combined with this conservative invalidation. Value-change
+detection alone cannot observe same-value writes: the core requests an all/all
+fence before every legal satp write attempt and commits only at acknowledgement.
+A changed value then triggers the MMU's additional conservative full invalidation
+before new-context admission; an unchanged value needs no second invalidation.
+The system serializes the write with older memory effects before changing the port.
 MMU physical output does not certify target-map permissions: routing must still
 check physical regions and original access type.
 
@@ -431,6 +442,7 @@ and their functional state remain within that generate block.
 | PTW PTE | memory response captured P | classify P+1; next read no earlier than P+2; final result has extra register |
 | Trap | precise WB fault or legal interrupt boundary | CSR entry and younger annul; no faulting retirement |
 | SFENCE | first sampled valid F blocks admission | drain; registered invalidation; acknowledge only after effective |
+| satp write | legal write attempt held in WB; all/all fence asserted | drain/invalidate/ack before CSR update and retirement, including same-value writes; reset aborts waiting WB |
 | satp change | value differs from latched context | same drain and full invalidation; admission resumes with new context |
 | Accelerator | burst admitted | stop/drain CPU, D clean-invalidate, I invalidate, exclusive burst, resume |
 | FIFO push/pop | accept and dequeue sampled together | preserve order/count; full replacement only with same-edge dequeue |

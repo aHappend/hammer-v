@@ -70,7 +70,15 @@ perform ordered cleaning before the walker reads backing RAM.
 
 Fences immediately block new admission, drain pre-fence client/walker activity,
 invalidate both TLBs on a registered edge and acknowledge afterward. satp changes
-use the same path with full invalidation. Completion cannot race a late refill.
+use the same path with full invalidation. Because value comparison cannot detect
+same-value writes, every legal satp write attempt first requests an all/all fence
+through the existing core/MMU handshake. WB holds the instruction until the
+acknowledgement; only then may the CSR, destination register and retirement
+update. Illegal accesses trap without requesting this fence, and source-x0
+read-only CSR forms do not request write invalidation. Unsupported MODE writes
+remain WARL-ignored but conservatively fence. Changed values additionally invoke
+the MMU's value-change invalidation before new-context requests are admitted.
+Completion cannot race a late refill.
 The core discards outstanding wrong-path fetch results and serializes context
 commits with this boundary. Fetch queue entries retain a distinct page-fault bit
 through ID/EX/MEM/WB. Data faults retain their original virtual address while

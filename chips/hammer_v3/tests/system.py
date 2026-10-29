@@ -12,9 +12,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import probe
 from axi_vectors import AxiScoreboard, READ_ERROR, WRITE_ERROR, vectors, write_vectors
-from oracle import (ArchitecturalTrap, MASK64, SystemMachine, i_type, load_constant,
+from oracle import (ArchitecturalTrap, MASK64, SystemMachine, TranslationCache, i_type, load_constant,
                     s_type, sv39)
 from scenarios import branch
+from system_directed import fault_workload, isa_workload, fence_workload
 
 
 CONFIGURATIONS = (
@@ -198,6 +199,7 @@ class IntegratedMachine(SystemMachine):
         self.timer_interrupts = 0
         self.delegated_interrupts = 0
         self.clint_compares = 0
+        self.translation_caches = None
 
     def csr_read(self, address):
         if address == 0x104:
@@ -215,6 +217,9 @@ class IntegratedMachine(SystemMachine):
             self.csrs[0x344] = (self.csrs[0x344] & ~mask) | (value & mask)
         else:
             super().csr_write(address, value)
+        if address == 0x180 and self.translation_caches:
+            for cache in self.translation_caches:
+                cache.invalidate()
 
     def read_memory(self, address, size):
         if 0x02004000 <= address and address + size <= 0x02004008:
@@ -259,7 +264,10 @@ class IntegratedMachine(SystemMachine):
 
     def physical(self, address, access):
         status, satp = self.csrs[0x300], self.csrs[0x180]
-        result = sv39(address, access, self.priv, satp, status, self.read_pte)
+        result = (self.translation_caches[int(access != 0)].translate(
+            address, access, self.priv, satp, status, self.read_pte)
+            if self.translation_caches else
+            sv39(address, access, self.priv, satp, status, self.read_pte))
         effective = ((status >> 11) & 3
                      if access != 0 and self.priv == 3 and status & (1 << 17) else self.priv)
         key = (address, access, self.priv, effective, satp, status)
@@ -278,6 +286,8 @@ class IntegratedMachine(SystemMachine):
         return result.pa
 
     def fetch(self):
+        if self.pc & 3:
+            raise ArchitecturalTrap(0, self.pc)
         physical = self.physical(self.pc, 0)
         if physical < len(self.words) * 4:
             return self.words[physical // 4]
@@ -285,7 +295,15 @@ class IntegratedMachine(SystemMachine):
 
     def step(self):
         self.event_accesses = {}
-        return super().step()
+        event = super().step()
+        if (self.translation_caches and event[0] == "R" and
+                event[2] & 0xFE007FFF == 0x12000073):
+            instruction = event[2]
+            va_source, asid_source = (instruction >> 15) & 31, (instruction >> 20) & 31
+            for cache in self.translation_caches:
+                cache.invalidate(self.regs[va_source] if va_source else None,
+                                 self.regs[asid_source] & 65535 if asid_source else None)
+        return event
 
     def accept_event(self, event):
         for key, result in self.event_accesses.items():
@@ -334,7 +352,173 @@ def compare_retirement(line, expected, number):
             raise AssertionError(f"SYSTEM_LOAD event={number} expected={expected} observed={line}")
 
 
-def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False):
+def run_directed(experiment, configuration, seed, scenario):
+    if scenario in ("fences", "satp"):
+        words, image, metadata = fence_workload(seed, configuration[1], scenario == "satp")
+    else:
+        words, image, metadata = {"faults": fault_workload, "isa": isa_workload}[scenario](seed)
+    folder = experiment.folder / f"{scenario}-seed-{seed}"
+    folder.mkdir()
+    program, external, trace = (folder / name for name in
+                                ("program.hex", "external.hex", "trace.txt"))
+    program.write_text("".join(f"{word:08x}\n" for word in words))
+    external.write_text("".join(
+        f"{address:016x} {sum(image.get(address+b, 0) << (8*b) for b in range(8)):016x}\n"
+        for address in sorted({p & ~7 for p in image})))
+    (folder / "workload.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    experiment.run(f"{scenario}-seed-{seed}", [
+        experiment.relative(experiment.folder / "simulation"), "+directed",
+        f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
+        f"+trace={experiment.relative(trace)}", f"+seed={seed}"])
+    model = IntegratedMachine(words, image, configuration[5])
+    if scenario == "fences":
+        model.translation_caches = [TranslationCache(configuration[0]),
+                                    TranslationCache(configuration[1])]
+    operations = defaultdict(list)
+    repairs = {}
+    witnesses = {}
+    for case in metadata["cases"]:
+        operations[case["operation_pc"]].append(case)
+        witnesses[case["witness_pc"]] = case
+        if "repair_pc" in case:
+            repairs[case["repair_pc"]] = case
+    observed = {}
+    repaired = set()
+    settled = []
+    targets = set()
+    label_counts = Counter()
+    labels = {int(pc): name for pc, name in metadata.get("labels", {}).items()}
+    events = 0
+    for line in trace.read_text().splitlines():
+        if line.startswith("K "):
+            continue
+        expected = model.step()
+        try:
+            compare_retirement(line, expected, events)
+        except AssertionError:
+            experiment.receipt["first_divergence"] = {
+                "scenario": scenario, "configuration": list(configuration), "seed": seed,
+                "event": events, "expected": expected, "observed": line,
+                "trace": experiment.relative(trace),
+                "cases": operations.get(expected[1], []),
+                "completed_witnesses": settled,
+                "oracle": "cached architectural mappings" if model.translation_caches else
+                          "independent uncached Sv39 walk and ISA rules",
+            }
+            experiment.persist()
+            raise
+        model.accept_event(expected)
+        events += 1
+        pc = expected[1]
+        if expected[0] == "R" and pc in labels:
+            label_counts[labels[pc]] += 1
+        if expected[0] == "T" and expected[2] == 3:
+            targets.add(pc)
+        candidates = [case for case in operations.get(pc, ()) if case["number"] not in observed]
+        if candidates:
+            case = candidates[0]
+            observed[case["number"]] = expected
+        if pc in repairs:
+            if expected[0] != "R":
+                raise AssertionError(f"SYSTEM_AD_REPAIR_FAILED case={repairs[pc]} event={expected}")
+            repaired.add(repairs[pc]["number"])
+        if pc in witnesses:
+            case = witnesses[pc]
+            if expected[0] != "R" or case["number"] not in observed:
+                raise AssertionError(f"SYSTEM_FAULT_WITNESS_MISSING {case}")
+            settled.append(case["number"])
+    if not model.stopped or set(settled) != set(range(len(metadata["cases"]))):
+        raise AssertionError(f"SYSTEM_DIRECTED_INCOMPLETE: {len(settled)}/{len(metadata['cases'])}")
+    bins = Counter()
+    permission_outcomes = set()
+    privilege_combinations = set()
+    records = []
+    required_faults = {
+        "invalid-v", "write-only", "reserved-upper", "nonleaf-u", "nonleaf-a", "nonleaf-d",
+        "root-read-error", "middle-read-error", "bottom-read-error", "superpage-misalignment",
+        "noncanonical", "root-high-rejection", "failed-sc-permission",
+    }
+    for case in metadata["cases"]:
+        event = observed[case["number"]]
+        name, access = case["name"], case.get("access")
+        faulted = event[0] == "T" and event[2] in (1, 5, 7, 12, 13, 15)
+        if "expected_cause" in case:
+            if event[0] != "T" or event[2] != case["expected_cause"]:
+                raise AssertionError(f"SYSTEM_EXCEPTION_NOT_EXERCISED {case}: {event}")
+            bins[name] += 1
+        if name == "wrong-path-fault-suppression":
+            if event[0] != "R" or case["target_pc"] not in targets:
+                raise AssertionError(f"SYSTEM_WRONG_PATH_TARGET_MISSING {case}: {event}")
+            bins[name] += 1
+        if "required_result" in case:
+            required = case["required_result"]
+            if required == "fault":
+                if not faulted:
+                    raise AssertionError(f"SYSTEM_FENCE_EXPECTED_FAULT {case}: {event}")
+            elif event[0] != "R" or event[6] != required:
+                raise AssertionError(f"SYSTEM_FENCE_EXPECTED_VALUE {case}: {event}")
+            for bin_name in case["bins"]:
+                bins[bin_name] += 1
+        if name in required_faults and not faulted:
+            raise AssertionError(f"SYSTEM_FAULT_SCENARIO_NOT_EXERCISED {case}: {event}")
+        if name in required_faults:
+            bins[name] += 1
+        if faulted:
+            bins["precise-fault-no-side-effect"] += 1
+        if name in ("accessed-clear-repair", "dirty-clear-repair") and faulted:
+            if case["number"] not in repaired:
+                raise AssertionError(f"SYSTEM_MISSING_AD_RETRY {case}")
+            bins[name] += 1
+        if name == "page-edges" and not faulted:
+            bins[name] += 1
+        if name in ("permission", "fetch-permission", "execute-only", "read-only"):
+            # A legal fetch reaches EBREAK, proving the instruction was fetched/executed.
+            succeeded = event[0] == "R" or access == 0 and event[2] == 3
+            permission_outcomes.add((access, succeeded))
+            if name == "permission":
+                privilege_combinations.add((case["privilege"], case["sum"], case["mxr"],
+                                            bool(case["flags"] & 16), access))
+        records.append(dict(case, observed=event, faulted=faulted,
+                            repaired=case["number"] in repaired))
+    if permission_outcomes == {(access, outcome) for access in range(4) for outcome in (False, True)}:
+        bins["permissions-fetch-load-store-amo"] = len(permission_outcomes)
+    if len(privilege_combinations) == 3 * 2 * 2 * 2 * 3:
+        bins["sum-mxr-mprv"] = len(privilege_combinations)
+    if scenario == "isa":
+        if label_counts["jump-skipped"]:
+            raise AssertionError("SYSTEM_ISA_WRONG_PATH_INSTRUCTION_RETIRED")
+        for label in set(labels.values()) - {"jump-skipped"}:
+            if not label_counts[label]:
+                raise AssertionError(f"SYSTEM_ISA_MISSING_COMPARISON: {label}")
+        bins["rv64i-classes"] = sum(count for label, count in label_counts.items()
+                                   if label.startswith(("rv64i-", "shift-", "load-", "store-")))
+        bins["all-m-and-word"] = sum(count for label, count in label_counts.items()
+                                    if label.startswith("rv64m-"))
+        bins["all-amo-word-double"] = sum(count for label, count in label_counts.items()
+                                         if label.startswith("amo-"))
+        bins["lr-sc-success-failure"] = sum(count for label, count in label_counts.items()
+                                           if label.startswith(("lr-", "sc-")))
+        bins["forwarding-load-use"] = min(label_counts[label] for label in
+                                          ("hazard-load", "hazard-load-use", "hazard-forward",
+                                           "hazard-store-forward", "hazard-witness"))
+        bins["branches-fences"] = min(label_counts[label] for label in
+                                      ("branch-0", "branch-1", "branch-4", "branch-5",
+                                       "branch-6", "branch-7", "fence", "fence-i", "jal", "jalr"))
+    result = {"scenario": scenario, "configuration": list(configuration), "seed": seed,
+              "compared_events": events, "directed_bins": dict(bins),
+              "cases": records, "instruction_bins": dict(label_counts),
+              "trace": experiment.relative(trace),
+              "translation_cache_observations": (
+                  [cache.observations for cache in model.translation_caches]
+                  if model.translation_caches else [])}
+    experiment.receipt.setdefault("directed_runs", []).append(result)
+    experiment.receipt["assertions"].append(
+        {"id": "integrated-directed-" + scenario, "passed": True, **result})
+    experiment.persist()
+    return bins
+
+
+def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False, scenario=None):
     configuration = tuple(configuration)
     experiment.run("version-verilator", ["verilator", "--version"])
     parameters = dict(zip(PARAMETERS, configuration))
@@ -354,6 +538,11 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
             "-GPROGRAM_WORDS=256", "-GCONTINUE_TRAPS=1", "-GMAX_CYCLES=5000000", "tests/top_probe.sv",
             *[str(p.relative_to(probe.ROOT)) for p in sorted(experiment.rtl_folder.glob("*.sv"))]])
         for seed in seeds:
+            directed_bins = Counter()
+            for directed_scenario in ((scenario,) if scenario else ("faults", "isa", "fences")):
+                directed_bins.update(run_directed(experiment, configuration, seed, directed_scenario))
+            if scenario:
+                continue
             folder = experiment.folder / f"seed-{seed}"
             folder.mkdir()
             words, image, metadata = workload(seed)
@@ -474,6 +663,7 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
                 "axi": axi_result,
                 "required_axi_transactions": len(commands),
                 "directed_bins": {
+                    **directed_bins,
                     "accessed-clear-repair": model.trap_counts.get(13, 0),
                     "mret": mret_comparisons,
                     "wfi": wfi_comparisons,
@@ -510,6 +700,8 @@ def main():
     parser.add_argument("--configuration", type=int, choices=range(4), default=0)
     parser.add_argument("--seed", type=int, choices=SEEDS)
     parser.add_argument("--accelerator", action="store_true")
+    parser.add_argument("--scenario", choices=("faults", "isa", "fences", "satp"),
+                        help="Bounded top-level directed program only; no coverage-closure claim")
     parser.add_argument("--repair-of", help="Project-relative retained diagnostic being repaired")
     args = parser.parse_args()
     experiment = probe.Probe("verifier-integrated-system")
@@ -521,7 +713,7 @@ def main():
         experiment.persist()
     try:
         run_configuration(experiment, CONFIGURATIONS[args.configuration],
-                          (args.seed,) if args.seed else SEEDS, args.accelerator)
+                          (args.seed,) if args.seed else SEEDS, args.accelerator, args.scenario)
     except Exception as error:
         experiment.finish(f"{type(error).__name__}: {error}")
         print(str(error), file=sys.stderr)

@@ -17,6 +17,29 @@ class Translation:
     fault: str = ""
     level: int = -1
     global_mapping: bool = False
+    leaf_pte: int = 0
+
+
+def translate_leaf(va, access, priv, mstatus, pte, level, global_mapping):
+    """Architectural leaf rules shared by walking and cached-mapping comparisons."""
+    readable, writable, executable, user, accessed, dirty = (
+        bool(pte & (1 << bit)) for bit in (1, 2, 3, 4, 6, 7))
+    ppn = (pte >> 10) & ((1 << 44) - 1)
+    if ppn & ((1 << (9 * level)) - 1):
+        return Translation(fault="page")
+    if priv == 0 and not user:
+        return Translation(fault="page")
+    if priv == 1 and user and (access == 0 or not mstatus & (1 << 18)):
+        return Translation(fault="page")
+    permitted = (
+        executable if access == 0 else
+        readable or (executable and bool(mstatus & (1 << 19))) if access == 1 else
+        writable if access == 2 else readable and writable)
+    if not permitted or not accessed or access in (2, 3) and not dirty:
+        return Translation(fault="page")
+    span = 1 << (12 + 9 * level)
+    return Translation((ppn << 12) | (va & (span - 1)), level=level,
+                       global_mapping=global_mapping, leaf_pte=pte)
 
 
 def sv39(va, access, priv, satp, mstatus, read_pte):
@@ -53,24 +76,57 @@ def sv39(va, access, priv, satp, mstatus, read_pte):
                 return Translation(fault="page")
             table = ppn << 12
             continue
-        if ppn & ((1 << (9 * level)) - 1):
-            return Translation(fault="page")
-        if priv == 0 and not flags["U"]:
-            return Translation(fault="page")
-        if priv == 1 and flags["U"] and (
-                access == 0 or not (mstatus & (1 << 18))):
-            return Translation(fault="page")
-        permitted = (
-            flags["X"] if access == 0 else
-            flags["R"] or (flags["X"] and bool(mstatus & (1 << 19))) if access == 1 else
-            flags["W"] if access == 2 else flags["R"] and flags["W"]
-        )
-        if not permitted or not flags["A"] or (access in (2, 3) and not flags["D"]):
-            return Translation(fault="page")
-        span = 1 << (12 + 9 * level)
-        return Translation((ppn << 12) | (va & (span - 1)),
-                           level=level, global_mapping=inherited_global)
+        return translate_leaf(va, access, priv, mstatus, pte, level, inherited_global)
     raise AssertionError("all page-table levels must terminate")
+
+
+class TranslationCache:
+    """Abstract finite mapping set with the frozen deterministic eviction policy.
+
+    It models retained architectural PTEs, not RTL control states or cycle timing.
+    Cached permissions are rechecked using the current architectural context.
+    """
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.entries = {}
+        self.next_victim = 0
+        self.observations = {"hit": 0, "miss": 0, "replacement": 0}
+
+    def invalidate(self, va=None, asid=None):
+        self.entries = {
+            slot: mapping for slot, mapping in self.entries.items()
+            if not ((va is None or mapping["base"] <= va < mapping["end"]) and
+                    (asid is None or not mapping["global"] and mapping["asid"] == asid))
+        }
+        self.next_victim = 0
+
+    def translate(self, va, access, priv, satp, status, read_pte):
+        effective = ((status >> 11) & 3
+                     if access != 0 and priv == 3 and status & (1 << 17) else priv)
+        if effective == 3 or satp >> 60 == 0 or signed(va, 64) != signed(va, 39):
+            return sv39(va, access, priv, satp, status, read_pte)
+        asid = (satp >> 44) & 65535
+        for mapping in self.entries.values():
+            if (mapping["base"] <= va < mapping["end"] and
+                    (mapping["global"] or mapping["asid"] == asid)):
+                self.observations["hit"] += 1
+                return translate_leaf(va, access, effective, status, mapping["pte"],
+                                      mapping["level"], mapping["global"])
+        self.observations["miss"] += 1
+        result = sv39(va, access, priv, satp, status, read_pte)
+        if not result.fault:
+            span = 1 << (12 + 9 * result.level)
+            free = next((slot for slot in range(self.capacity) if slot not in self.entries), None)
+            slot = self.next_victim if free is None else free
+            self.observations["replacement"] += int(free is None)
+            self.entries[slot] = {
+                "base": va & ~(span - 1), "end": (va & ~(span - 1)) + span,
+                "level": result.level, "pte": result.leaf_pte,
+                "global": result.global_mapping, "asid": asid,
+            }
+            self.next_victim = (slot + 1) % self.capacity
+        return result
 
 
 class BareMachine:
@@ -188,7 +244,10 @@ class BareMachine:
             imm = signed(((instruction >> 25) << 5) | ((instruction >> 7) & 31), 12)
             addr = (a + imm) & MASK64
             size = 1 << funct3
-            assert funct3 <= 3 and addr % size == 0
+            if funct3 > 3:
+                raise ArchitecturalTrap(2, instruction)
+            if addr % size:
+                raise ArchitecturalTrap(6, addr)
             physical = self.physical(addr, 2)
             self.write_memory(physical, size, b)
             memory = (1, addr, ((1 << size) - 1) << (addr & 7),
@@ -197,7 +256,10 @@ class BareMachine:
         elif opcode == 0x03:
             addr = (a + signed(instruction >> 20, 12)) & MASK64
             size = 1 << (funct3 & 3)
-            assert funct3 != 7 and addr % size == 0
+            if funct3 == 7:
+                raise ArchitecturalTrap(2, instruction)
+            if addr % size:
+                raise ArchitecturalTrap(4, addr)
             physical = self.physical(addr, 1)
             raw = self.read_memory(physical, size)
             value = raw if funct3 >= 4 else signed(raw, 8 * size)
@@ -275,6 +337,8 @@ class BareMachine:
             return ("T", pc, {0: 8, 1: 9, 3: 11}[self.priv], 0, 3, 0)
         else:
             raise NotImplementedError(f"instruction {instruction:08x} at {pc:x}")
+        if next_pc & 3:
+            raise ArchitecturalTrap(0, next_pc)
         write = value is not None and rd != 0
         if write:
             self.regs[rd] = value & MASK64
@@ -560,6 +624,8 @@ class SystemMachine(FaultMachine):
                 return BareMachine.step(self)
             if instruction == 0x73:
                 return self.trap({0: 8, 1: 9, 3: 11}[self.priv], 0)
+            if instruction == 0x00100073:
+                return self.trap(3, self.pc)
             rd, rs1 = (instruction >> 7) & 31, (instruction >> 15) & 31
             operation = (instruction >> 12) & 7
             next_pc = pc + 4
