@@ -160,6 +160,13 @@ def prerequisite_receipt_checks():
 
 def compiler_selection_checks():
     cases = (
+        ({}, {"riscv64-unknown-elf-gcc-16": "/fixture/riscv64-unknown-elf-gcc-16",
+              "riscv64-linux-gnu-gcc-12": "/fixture/riscv64-linux-gnu-gcc-12"},
+         ["/fixture/riscv64-unknown-elf-gcc-16", "/fixture/riscv64-linux-gnu-gcc-12"]),
+        ({}, {"riscv64-unknown-elf-gcc": "/fixture/riscv64-unknown-elf-gcc",
+              "riscv64-unknown-elf-gcc-16": "/fixture/riscv64-unknown-elf-gcc",
+              "clang": "/fixture/clang"},
+         ["/fixture/riscv64-unknown-elf-gcc", "/fixture/clang"]),
         ({}, {"clang": "/fixture/clang", "clang-23": "/fixture/clang",
               "clang-18": "/fixture/clang-18"},
          ["/fixture/clang", "/fixture/clang-18"]),
