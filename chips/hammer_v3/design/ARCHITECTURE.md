@@ -13,11 +13,11 @@ The parent CSR returns zero for satp, lacks SUM/MXR and page-fault delegation,
 and the core/atomic unit reject non-legacy physical addresses before memory
 issue. Those are explicit derivation points, not accepted V3 behavior.
 
-Current delivery increment supplies the translation subsystem, extended cache
-variants, CSR, PLIC, UART, external AXI master and buffered accelerator bridge.
-The integrated V3 core/fabric/top and top-level coherence/fairness controller
-remain unfinished. These leaves are not a completed processor handoff. No
-functional, synthesis or hardware result is claimed.
+The delivery connects the V2-derived V3 core, translation subsystem, extended
+caches, CSR, PLIC, UART, external AXI master and buffered accelerator bridge.
+Registered integration helpers preserve request/response ownership through
+translation, physical routing, arbitration and maintenance. No functional,
+synthesis or hardware result is claimed by this implementation description.
 
 ## Parent provenance
 
@@ -71,10 +71,12 @@ perform ordered cleaning before the walker reads backing RAM.
 Fences immediately block new admission, drain pre-fence client/walker activity,
 invalidate both TLBs on a registered edge and acknowledge afterward. satp changes
 use the same path with full invalidation. Completion cannot race a late refill.
-The core must discard outstanding wrong-path fetch results and serialize context
-commits with this boundary.
+The core discards outstanding wrong-path fetch results and serializes context
+commits with this boundary. Fetch queue entries retain a distinct page-fault bit
+through ID/EX/MEM/WB. Data faults retain their original virtual address while
+translation and routing use separately latched physical addresses.
 
-The proposed coherent PTE path arbitrates walker reads at the D-cache request
+The coherent PTE path arbitrates walker reads at the D-cache request
 side, not its backing-memory side. This naturally observes dirty PTE bytes.
 An ordinary data translation must finish before its data-cache request is
 admitted, allowing a walker miss to use that cache without waiting on the
@@ -83,7 +85,7 @@ consumed, not merely until its request is accepted.
 
 ## Coherence and ownership
 
-The intended physical fabric arbitrates cache backing, coherent PTE reads,
+The physical fabric arbitrates cache backing, coherent PTE reads,
 uncached peripheral traffic and accelerator ownership. A PTE read is not allowed
 to bypass a preceding dirty CPU store. Accelerator admission stops new CPU
 transactions, drains accepted traffic, cleans/invalidates D and invalidates I,
@@ -95,10 +97,31 @@ The accelerator bridge collects and checks all write beats before maintenance
 or memory issue. Thus a malformed final strobe or LAST cannot leave earlier
 write effects. It consumes unsupported AWLEN bursts through the declared count,
 without allocating beyond 16 buffered beats. Reads return the declared count
-even for rejected geometry. The bridge's `exclusive` and `quiesce_valid` are
-integration obligations, not a claim that the currently unfinished top already
-performs coherence. `allow_transaction` must be connected to CPU-progress
-fairness rather than tied high without analysis.
+even for rejected geometry. The bridge's `exclusive` requests precise core drain. Its `quiesce_valid` is
+acknowledged only after both caches complete maintenance. `allow_transaction`
+is connected to a retirement/trap progress token; exclusivity consumes that
+token and a resumed running core must make architectural progress before the
+next burst. An already stopped processor does not require a progress token.
+
+`hammer_v3_atomic` is separately derived from the unchanged parent atomic unit.
+The core first submits its virtual address and LR/SC/AMO access kind through
+the real data MMU. Permission or bus faults complete the instruction precisely
+without starting the atomic engine, including a failed SC. A successful
+preflight latches the physical address before `u_atomic` starts; subsequent
+read/modify/write requests use that physical address without a second walk.
+Reservations therefore compare physical addresses across aliases. Traps,
+context changes, halt/coherent maintenance and CPU stores conservatively clear
+them. Ordinary loads/stores are serialized at the memory-stage boundary;
+arithmetic forwarding and the original pipeline boundaries remain intact.
+
+The physical data router decodes after translation, including MMIO; no virtual
+address is rejected because it resembles an unmapped physical region. The
+backing fabric arbitrates I-cache/D-cache/accelerator traffic round-robin,
+retains the grant through the response handshake and checks the full address
+and originating client before reaching RAM or AXI. The walker instead uses
+the D-cache frontend to observe dirty PTE data. Host accesses use the RAM host
+ports only after precise halt, and acknowledgements for successful host writes
+wait for ordered invalidation of both caches.
 
 The external-memory master is a full AXI4 single-beat subset. Separate AW/W
 completion bits handle arbitrary independent acceptance. The caches retain the

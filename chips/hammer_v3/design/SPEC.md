@@ -8,9 +8,9 @@ M/S/U modes, IALIGN=32, Sv39, PLIC, 16550A console and serialized coherent
 accelerator access. No C/F/D/H extensions are included. Linux capability is an
 architectural target, not a Linux boot result.
 
-Implementation is in progress. Completed translation/peripheral leaves do not
-constitute an integrated processor. No functional, synthesis, timing, board or
-Linux-boot result is implied by this document. Independent verification owns
+The integrated RTL is supplied for independent verification. No functional,
+synthesis, timing, board or Linux-boot result is implied by this document.
+Independent verification owns
 `tests/*`; engineering acceptance precedes the independently reviewed product PDF.
 
 ## Compatibility, parameters and public interface
@@ -351,7 +351,7 @@ oversample ticks and the current programmed character format.
 `hammer_v3_axi_master` uses an internal single-beat bus:
 inputs `clk,rst_n,req_valid,req_write,req_addr[63:0],req_wdata[63:0],
 req_wstrb[7:0],req_prot[2:0],rsp_ready`; outputs
-`req_ready,rsp_valid,rsp_rdata[63:0],rsp_error`.
+`req_ready,rsp_valid,rsp_rdata[63:0],rsp_error,rsp_decerr`.
 Its outbound ports have the exact `m_mem_axi_*` names above.
 One naturally aligned 64-bit INCR beat, ID=0, LEN=0, SIZE=3, BURST=1,
 LOCK=0, CACHE=0xf, QOS=0, LAST=1; PROT reflects originating privilege/access.
@@ -414,6 +414,13 @@ All externally active valid/ready/IRQ/retire/trap controls are zero in reset
 except parent halted=1 and UART TX=1. Reset aborts outstanding protocol state.
 The first post-reset edge may release ready; no old response may reappear.
 
+Ready outputs are reset-gated combinational decodes of reset state. They are
+zero while reset is asserted and become eligible when reset is deasserted;
+the first subsequent rising edge is the first acceptance opportunity.
+The legal top hierarchy is inside `g_legal`, protecting invalid array
+dimensions before the explicit parameter diagnostic. Required named instances
+and their functional state remain within that generate block.
+
 | Operation | Pre-edge event | Post-edge state / earliest next event |
 |---|---|---|
 | Fetch | request accepted at N | latch VA/context; hold busy until response; wrong-path result discarded |
@@ -434,6 +441,35 @@ The first post-reset edge may release ready; no old response may reappear.
 | Flush/refill/reset | coincident controls | reset > invalidation > refill; no stale post-fence refill |
 | PLIC completion | valid owner completes | in-service clears; held synchronized source pends next edge |
 | PLIC claim/pending | pending source selected | claim wins over level set for that source |
+
+### Loader, start and accelerator ordering
+
+Hold reset low across a rising clock edge, release it, then load initialized
+IMEM/DMEM through host requests while `halted` is high. A host transfer is
+accepted only on `host_valid && host_ready`. Deassert valid after that edge;
+wait for the one-cycle `host_rsp_valid` pulse and reject `host_rsp_error`.
+There is no host response-ready pin. IMEM writes use low 32 data bits and low
+four strobes, with a four-byte-aligned byte offset. DMEM uses eight-byte-aligned
+byte offsets and eight byte strobes. Writes update selected bytes only.
+Successful writes wait for cache maintenance before host acknowledgement;
+invalid requests never modify RAM. A maintenance failure is sticky until reset,
+is returned as a host error and prevents start rather than executing stale data.
+
+Pulse `start` only after host completion. Reset entry PC is zero; software may
+jump from the loaded legacy instruction RAM to initialized external executable
+RAM. Halt drains previously fetched instructions and accepted translations,
+cleans D and preserves the committed next PC for restart. Host is never
+accepted during accelerator exclusivity. The externally visible `halted` does
+not falsely announce an internal accelerator pause as a host-loading window.
+
+An admitted valid accelerator burst requests the same drain path without
+changing architectural state. Completed drain is followed by explicit D
+clean-invalidate, I invalidate and reservation clear, then the exclusive burst.
+Responses may backpressure completion; CPU resumes only after the final response
+handshake. `halt_req` cancels automatic resumption. A burst while already stopped
+leaves the CPU stopped. Running software must retire or trap after resumption
+before another burst is admitted. No fixed latency is promised under a stalled
+AXI peer, a full UART or software that cannot reach a precise halt boundary.
 
 ## Timing, software and independent acceptance
 

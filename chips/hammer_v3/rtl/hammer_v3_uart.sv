@@ -19,8 +19,8 @@ module hammer_v3_uart (
     reg [15:0] divisor;
     reg fifo_enabled;
     reg [1:0] trigger_level;
-    reg [7:0] tx_fifo [0:15];
-    reg [7:0] rx_fifo [0:15];
+    (* nomem2reg *) reg [7:0] tx_fifo [0:15];
+    (* nomem2reg *) reg [7:0] rx_fifo [0:15];
     reg [2:0] rx_errors [0:15];
     reg [3:0] tx_head, tx_tail, rx_head, rx_tail;
     reg [4:0] tx_count, rx_count;
@@ -352,11 +352,6 @@ module hammer_v3_uart (
         end else if (rx_clock != 0) rx_clock <= rx_clock - 1'b1;
         else begin
             rx_clock <= rx_divisor - 1'b1;
-            if (rx_state == RX_TAIL && rx_format[2] &&
-                rx_ticks == (rx_format[1:0] == 0 ? 6'd4 : 6'd8)) begin
-                if (!rx_line) rx_frame_error <= 1'b1;
-                if (rx_line) rx_all_low <= 1'b0;
-            end
             if (rx_ticks != 0) rx_ticks <= rx_ticks - 1'b1;
             else begin
                 rx_ticks <= 6'd15;
@@ -383,12 +378,17 @@ module hammer_v3_uart (
                     RX_STOP: begin
                         rx_frame_error <= !rx_line;
                         if (rx_line) rx_all_low <= 1'b0;
-                        rx_ticks <= rx_format[2] ?
-                            (rx_format[1:0] == 0 ? 6'd15 : 6'd23) : 6'd7;
-                        rx_state <= RX_TAIL;
+                        if (rx_format[2]) begin
+                            rx_ticks <= rx_format[1:0] == 0 ? 6'd11 : 6'd15;
+                            rx_state <= RX_TAIL;
+                        end else begin
+                            rx_break_error <= rx_all_low && !rx_line;
+                            rx_state <= RX_COMMIT;
+                        end
                     end
                     RX_TAIL: begin
-                        rx_break_error <= rx_all_low;
+                        rx_frame_error <= rx_frame_error || !rx_line;
+                        rx_break_error <= rx_all_low && !rx_line;
                         rx_state <= RX_COMMIT;
                     end
                     default: rx_state <= RX_IDLE;

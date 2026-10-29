@@ -58,8 +58,8 @@ module hammer_v3_accel_bridge #(
     reg [7:0] len_q, beat_q;
     reg [2:0] size_q;
     reg [1:0] status_q;
-    reg [63:0] write_data [0:15];
-    reg [7:0] write_strobe [0:15];
+    (* nomem2reg *) reg [63:0] write_data [0:15];
+    (* nomem2reg *) reg [7:0] write_strobe [0:15];
     reg [63:0] write_data_q;
     reg [7:0] write_strobe_q;
     wire aw_geometry_error, aw_address_error, ar_geometry_error, ar_address_error;
