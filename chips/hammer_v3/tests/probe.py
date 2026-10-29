@@ -65,6 +65,14 @@ class Probe:
         (self.folder / "receipt.json").write_text(json.dumps(self.receipt, indent=2) + "\n")
 
     def run(self, label, argv, timeout=3600, accepted_exits=(0,)):
+        if argv[0] == "verilator" and "--binary" in argv:
+            for tool in ("g++", "make"):
+                if not any(record["argv"] == [tool, "--version"]
+                           for record in self.receipt["commands"]):
+                    self.run("version-" + tool, [tool, "--version"])
+        if argv[0] == "vvp" and argv != ["vvp", "-V"] and not any(
+                record["argv"] == ["vvp", "-V"] for record in self.receipt["commands"]):
+            self.run("version-vvp", ["vvp", "-V"])
         record = {"argv": argv, "cwd": ".", "started_at": now(), "timeout_s": timeout}
         stdout = self.folder / f"{label}.stdout.txt"
         stderr = self.folder / f"{label}.stderr.txt"
@@ -92,7 +100,8 @@ class Probe:
         print(self.relative(self.folder / "receipt.json"))
 
 
-def generate_top_wiring(top, source, folder, dmem_words, parameters=None, extra_driven=()):
+def generate_top_wiring(top, source, folder, dmem_words, parameters=None, extra_driven=(),
+                        responding_memory=False):
     header = source.read_text().split(");", 1)[0].split(") (", 1)[1]
     ports = []
     for declaration in header.split(","):
@@ -109,6 +118,10 @@ def generate_top_wiring(top, source, folder, dmem_words, parameters=None, extra_
     driven = {"clk", "rst_n", "start", "host_valid", "host_write", "host_imem",
               "host_addr", "host_wdata", "host_wstrb", "dbg_raddr"}
     driven.update(extra_driven)
+    if responding_memory:
+        driven.update(name for direction, _, name in ports
+                      if direction == "input" and
+                      name.startswith(("m_mem_axi_", "m_axi_")))
     declarations = []
     for direction, width, name in ports:
         if direction == "output":
@@ -477,7 +490,7 @@ def fault_probe(probe):
             shutil.rmtree(objects)
 
 
-def coherence_probe(probe, simulator="verilator", exchanges=100):
+def coherence_probe(probe, simulator="verilator", exchanges=100, reset_abort=False):
     probe.run(f"version-{simulator}", [simulator, "--version" if simulator == "verilator" else "-V"])
     top = probe.rtl_folder / "hammer_v3_top.sv"
     header = top.read_text().split(");", 1)[0]
@@ -498,19 +511,28 @@ def coherence_probe(probe, simulator="verilator", exchanges=100):
             compile_argv = ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
                             "--top-module", "coherence_probe", "--Mdir", probe.relative(objects),
                             "-o", "../simulation", "-I" + probe.relative(probe.folder),
-                            f"-GEXCHANGES={exchanges}", "tests/coherence_probe.sv", *sources]
+                            f"-GEXCHANGES={exchanges}", f"-GRESET_ABORT={int(reset_abort)}",
+                            "tests/coherence_probe.sv", *sources]
             execute = [probe.relative(binary)]
         else:
             binary = probe.folder / "simulation.vvp"
             compile_argv = ["iverilog", "-g2012", "-Wall", "-s", "coherence_probe",
                             f"-Pcoherence_probe.EXCHANGES={exchanges}",
+                            f"-Pcoherence_probe.RESET_ABORT={int(reset_abort)}",
                             "-I", probe.relative(probe.folder), "-o", probe.relative(binary),
                             "tests/coherence_probe.sv", *sources]
             execute = ["vvp", probe.relative(binary)]
         probe.run("compile", compile_argv)
-        probe.run("simulation", [*execute,
-                                 f"+program={probe.relative(program)}",
-                                 f"+trace={probe.relative(trace)}"])
+        output = probe.run("simulation", [*execute,
+                                          f"+program={probe.relative(program)}",
+                                          f"+trace={probe.relative(trace)}"])
+        if reset_abort:
+            if not re.search(r"RESET_ABORT_COMPLETE cases=2 cycles=\d+", output):
+                raise AssertionError("RESET_ABORT_COVERAGE missing actual abort comparisons")
+            probe.receipt["assertions"].append({
+                "id": "public-top-outstanding-reset-abort", "passed": True, "cases": 2,
+                "scope": "stalled accelerator read response and address-before-write-data epochs"})
+            return
         model = BareMachine(words)
         model.memory = {0x10000000 + offset: 0 for offset in range(32)}
         model.memory.update({0x10000100 + offset: 0 for offset in range(32)})
@@ -606,6 +628,34 @@ def console_probe(probe):
     probe.receipt["assertions"].append({
         "id": "public-top-sv39-console", "passed": True, "serial_bytes": model.console,
         "serial_frames": compared, "scope": "compact real S-mode console; not Linux boot"})
+
+
+def boundary_probe(probe):
+    probe.run("version-iverilog", ["iverilog", "-V"])
+    for iwords, dwords in ((1, 1), (1, 3), (3, 1), (3, 3)):
+        folder = probe.folder / f"tuple-{iwords}-{dwords}"
+        folder.mkdir()
+        generate_top_wiring("hammer_v3_top", probe.rtl_folder / "hammer_v3_top.sv", folder,
+                            dwords, parameters={"IMEM_WORDS": iwords})
+        binary = folder / "simulation.vvp"
+        identity = f"tuple-{iwords}-{dwords}"
+        probe.run(identity + "-compile",
+                  ["iverilog", "-g2012", "-Wall", "-s", "boundary_probe",
+                   f"-Pboundary_probe.IWORDS={iwords}", f"-Pboundary_probe.DWORDS={dwords}",
+                   "-I", probe.relative(folder), "-o", probe.relative(binary),
+                   "tests/boundary_probe.sv",
+                   *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+        output = probe.run(identity + "-simulation", ["vvp", probe.relative(binary)])
+        match = re.search(
+            r"BOUNDARY_COMPARE_COMPLETE imem=(\d+) dmem=(\d+) comparisons=(\d+) cycles=(\d+)",
+            output)
+        if not match or (int(match[1]), int(match[2])) != (iwords, dwords) or int(match[3]) == 0:
+            raise AssertionError(f"BOUNDARY_COVERAGE missing completed tuple {identity}")
+        probe.receipt["assertions"].append({
+            "id": "singleton-odd-top-behavior", "passed": True, "imem_words": iwords,
+            "dmem_words": dwords, "comparisons": int(match[3]), "cycles": int(match[4]),
+            "scope": "host byte writes/bounds, reachable singleton fetch and odd partial-line load"})
+        probe.persist()
 
 
 def context_probe(probe):
@@ -812,7 +862,7 @@ def main():
                                           "synthesis-default", "synthesis-odd",
                                           "parameters", "plic", "uart", "faults", "coherence",
                                           "context", "isa", "shootdown", "mutants", "console",
-                                          "coherence-compact"],
+                                          "coherence-compact", "boundaries", "reset-abort"],
                         default="top-bare")
     parser.add_argument("--parent", action="store_true")
     parser.add_argument("--mutant", choices=sorted({**WALKER_MUTANTS, **SYSTEM_MUTANTS}))
@@ -832,6 +882,8 @@ def main():
                   "verifier-top-context" if args.probe == "context" else
                   "verifier-top-shootdown" if args.probe == "shootdown" else
                   f"verifier-top-{args.probe}" if args.probe in ("console", "coherence-compact") else
+                  "verifier-top-boundaries" if args.probe == "boundaries" else
+                  "verifier-top-reset-abort" if args.probe == "reset-abort" else
                   ("verifier-parent-isa" if args.parent else "verifier-top-isa")
                   if args.probe == "isa" else
                   f"verifier-{args.probe}" if args.probe.startswith("synthesis-") else
@@ -846,7 +898,11 @@ def main():
         probe.receipt["repair_of"] = args.repair_of
         probe.persist()
     try:
-        if args.probe == "console":
+        if args.probe == "reset-abort":
+            coherence_probe(probe, "iverilog", 2, True)
+        elif args.probe == "boundaries":
+            boundary_probe(probe)
+        elif args.probe == "console":
             console_probe(probe)
         elif args.probe == "coherence-compact":
             coherence_probe(probe, "iverilog", 2)
