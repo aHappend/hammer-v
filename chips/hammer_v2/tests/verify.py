@@ -2092,7 +2092,8 @@ def cache_case(run, name, lines, words, readonly, simulator="verilator", source_
     ], timeout=60 if simulator == "iverilog" else 3600)
     counts = compare_cache(events, vectors, lines, words, readonly)
     required_counts = ("read_hits", "misses", "refill_beats", "maintenance",
-                       "responses", "memory_stalled_edges", "response_stalled_edges")
+                       "responses", "memory_stalled_edges", "response_stalled_edges",
+                       "idle_isolation_edges")
     if not focused_invalidation:
         required_counts += ("errors", "reset_outstanding", "invalid_requests")
     for required in required_counts:

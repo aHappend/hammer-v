@@ -60,11 +60,10 @@ module hammer_v2_cache #(
         wire [63:0] refill_addr = wanted_base + {59'b0,beat,3'b0};
         wire wb_present = wb_addr >= BASE && wb_addr < LIMIT;
         wire refill_present = refill_addr >= BASE && refill_addr < LIMIT;
-        wire lookup = (accept && !req_cmd[1]) || state == RELOOK ||
-            state == MLOOK;
-        wire [IW-1:0] lookup_index = accept ? req_index :
+        wire lookup = state == IDLE || state == RELOOK || state == MLOOK;
+        wire [IW-1:0] lookup_index = state == IDLE ? req_index :
             (state == MLOOK ? scan : index_q);
-        wire [1:0] lookup_beat = accept ? req_addr[4:3] : addr_q[4:3];
+        wire [1:0] lookup_beat = state == IDLE ? req_addr[4:3] : addr_q[4:3];
         wire [AW-1:0] lookup_addr = {lookup_index,lookup_beat};
         wire [AW-1:0] victim_addr = {active_index,beat};
         wire [AW-1:0] read_addr = state == WB_READ ? victim_addr : lookup_addr;
@@ -123,11 +122,9 @@ module hammer_v2_cache #(
                 maintenance <= 1'b0;
                 for (n = 0; n < LINES; n = n + 1) line_base[n] <= 64'b0;
             end else begin
-                if (lookup) begin
-                    tag_q <= line_base[lookup_index];
-                    valid_q <= valid[lookup_index];
-                    dirty_q <= dirty[lookup_index];
-                end
+                tag_q <= line_base[lookup_index];
+                valid_q <= valid[lookup_index];
+                dirty_q <= dirty[lookup_index];
                 case (state)
                     IDLE: if (accept) begin
                         addr_q <= req_addr;

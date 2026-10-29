@@ -183,6 +183,9 @@ def compare_cache(path, vectors, lines, words, readonly):
                 elif kind == "S":
                     oracle.counts["memory_stalled_edges"] = int(fields[1])
                     oracle.counts["response_stalled_edges"] = int(fields[2])
+                    oracle.counts["idle_isolation_edges"] = int(fields[3])
+                    if oracle.counts["idle_isolation_edges"] != 3 * len(vectors):
+                        raise AssertionError("idle speculative-read isolation checks missing")
                 elif kind == "DONE":
                     done = True
                     if int(fields[1]) != len(vectors) or tx != len(vectors) or oracle.pending:

@@ -149,13 +149,34 @@ Metadata and controller phases are unchanged.
 | Post-E0 backing acceptance | Both applicable instruction banks or the data lanes have captured the requested beat |
 | Post-E1 backing response | Existing pending/response controller publishes the captured beat and holds it under backpressure |
 | Read and write at the same address | Nonblocking full-byte writes preserve read-before-write sampling, including untouched lanes |
-| Active reset/first nonreset edge | Port writes disabled during reset; unreset read registers hidden by reset/valid gates; no unsolicited access after release |
+| Active reset/first nonreset edge | Port writes disabled during reset; unreset read registers hidden by reset/valid gates; speculative local cache reads may resume, but no unsolicited architectural or backing access |
 | WORDS=1 | Row index is constant zero; instruction odd bank omitted and upper beat word zero |
 | Odd/non-power-of-two WORDS | Full-width range checks precede port enables; absent upper final word is not read and is returned as zero |
 | Cache singleton/partial final line | Original indexing and maintenance sequence retained; refill padding and skipped writeback lanes unchanged |
 
 Cache lookup has a synchronous data/tag capture followed by a registered
-decision. Dirty victim and refill beats advance 0,1,2,3 explicitly.
+decision. While IDLE, the local read port speculatively samples the request
+address on each nonreset edge, independently of request valid, command and
+acceptance. Other states select the registered request index/beat, except
+MLOOK selects the registered maintenance scan index and WB_READ selects the
+registered victim index/beat. RAM read enables depend only on reset and local
+IDLE/RELOOK/MLOOK/WB_READ state; metadata samples the selected lookup index on
+every nonreset edge. Neither metadata sampling nor lookup address selection
+uses the upstream acceptance signal. Only an accepted request captures command
+and architectural context or leaves IDLE, so unused samples have no effects.
+
+| Lookup scheduling boundary | Local sampling and architectural qualification |
+|---|---|
+| IDLE edge without acceptance | Speculative tag/data samples only; no response, metadata mutation or backing request |
+| Ordinary acceptance E0 | Request context and matching speculative tag/data snapshot captured together |
+| LOOK edge E1 | Consume the E0 snapshot; hit response appears after E1, without an added stage |
+| Maintenance acceptance E0 | Capture command and initialize scan; ignore the speculative request-address sample |
+| MLOOK then MCHECK | Snapshot the registered scan index, then consume that snapshot on the next edge |
+| Final refill store then RELOOK | Install the completed line, then resample it before LOOK decides |
+| Backpressured response/writeback | Response registers and victim RAM read register hold their payloads; speculative metadata samples cannot alter them |
+| Singleton/non-power-of-two backing | Constant-zero singleton index and exact backing range/padding rules remain unchanged |
+
+Dirty victim and refill beats advance 0,1,2,3 explicitly.
 Cache data uses synchronous unreset RAM; metadata reset invalidates all lines.
 Victim addresses are reconstructed from the stored aligned line base, not
 the replacing request tag. Failed dirty writeback preserves valid/dirty state;
