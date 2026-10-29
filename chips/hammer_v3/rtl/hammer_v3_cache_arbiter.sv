@@ -24,6 +24,7 @@ module hammer_v3_cache_arbiter (
     reg [7:0] mask_q;
     reg error_q, found;
     reg [1:0] select;
+    genvar n;
     always @* begin
         found = |req_valid;
         select = next_owner;
@@ -42,9 +43,11 @@ module hammer_v3_cache_arbiter (
     assign req_ready = rst_n && state == IDLE && found ? 3'b001 << select : 3'b0;
     assign rsp_valid = rst_n && state == RESPONSE ? 3'b001 << owner : 3'b0;
     assign rsp_error = rsp_valid & {3{error_q}};
-    for (genvar n = 0; n < 3; n = n + 1) begin : g_response
-        assign rsp_rdata[n*64 +: 64] = rsp_valid[n] && !error_q ? read_q : 64'b0;
-    end
+    generate
+        for (n = 0; n < 3; n = n + 1) begin : g_response
+            assign rsp_rdata[n*64 +: 64] = rsp_valid[n] && !error_q ? read_q : 64'b0;
+        end
+    endgenerate
     assign out_valid = rst_n && state == ISSUE;
     assign out_cmd = out_valid ? cmd_q : 2'b0;
     assign out_addr = out_valid ? addr_q : 64'b0;

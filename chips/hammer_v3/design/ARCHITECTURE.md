@@ -19,6 +19,10 @@ Registered integration helpers preserve request/response ownership through
 translation, physical routing, arbitration and maintenance. No functional,
 synthesis or hardware result is claimed by this implementation description.
 
+The cache arbiter and physical fabric response-lane loops use module-scope
+`genvar` declarations and explicit `generate/endgenerate` regions for Quartus
+17.1 parsing compatibility, preserving their `g_response` hierarchy and logic.
+
 ## Parent provenance
 
 The intake supplied 19 RTL files, but no linked source index, parent

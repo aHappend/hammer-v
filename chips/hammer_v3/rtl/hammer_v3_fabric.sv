@@ -34,6 +34,7 @@ module hammer_v3_fabric #(
     reg [2:0] prot_q;
     reg write_enable, error_q, decerr_q;
     reg [1:0] select;
+    genvar n;
     wire [63:0] selected_addr = req_addr[select*64 +: 64];
     wire selected_write = req_write[select];
     wire selected_instruction = select == 0;
@@ -71,9 +72,11 @@ module hammer_v3_fabric #(
     assign rsp_valid = rst_n && state == RESPONSE ? 3'b001 << owner : 3'b0;
     assign rsp_error = rsp_valid & {3{error_q}};
     assign rsp_decerr = rsp_valid & {3{decerr_q}};
-    for (genvar n = 0; n < 3; n = n + 1) begin : g_response
-        assign rsp_rdata[n*64 +: 64] = rsp_valid[n] && !error_q ? read_q : 64'b0;
-    end
+    generate
+        for (n = 0; n < 3; n = n + 1) begin : g_response
+            assign rsp_rdata[n*64 +: 64] = rsp_valid[n] && !error_q ? read_q : 64'b0;
+        end
+    endgenerate
     assign mem_valid = rst_n && state == ISSUE && target == 2;
     assign mem_write = mem_valid && write_enable;
     assign mem_addr = mem_valid ? addr_q : 64'b0;
