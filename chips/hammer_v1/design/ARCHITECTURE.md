@@ -106,16 +106,22 @@ description or generic synthesis, determines whether the target closes.
 Scratchpads use byte strobes and registered reads with held data. Dmem requests
 occur exactly on MEM-to-WB transfer. Address classification and alignment are
 resolved before requests; full 64-bit comparisons prevent high-address aliasing.
-Each scratchpad describes its CPU and host ports in separate clock-only
-processes, with each port's synchronous read and any byte-enabled write kept
-together. This is the inferred dual-port M20K structure; there is no cross-port
-write-priority network. Top-level halted/running ownership excludes simultaneous
-CPU and host requests, so cross-port collisions are outside the internal
-interface contract. Within a port, a write captures the old word in its read
-register; host write responses do not expose that data. Port data holds when
-that port has no request. Reset gates access and clears response validity
-separately, without resetting either RAM contents or RAM read registers.
-No additional response or pipeline stage is introduced.
+Instruction RAM has a CPU read port and a host read/write port. Data RAM has
+a CPU read port and a shared write port: halted/running ownership multiplexes
+CPU and host write address, data and byte enables before a single clock-only
+array-writing process. The host registered read uses that shared port's address.
+This keeps at most two memory addresses and one procedural writer, including
+depth one, rather than relying on synthesis to resolve independent writers to
+a singleton word. Both RAMs retain the M20K inference attribute and clock-only
+registered reads; no storage is reset or deliberately expanded to registers.
+Top-level ownership excludes simultaneous CPU and host requests. Host selection
+has priority at the shared write port; simultaneous requests remain outside the
+internal interface contract. A write captures the old word in the requesting
+port's read register; host write responses do not expose that data. Each read
+register holds when its port has no request. Reset gates access and clears
+response validity separately, without resetting RAM contents or read registers.
+No additional response or pipeline stage is introduced. Quartus inference and
+setup/hold timing must be checked independently on this implementation.
 MMIO uses aligned eight-byte addresses and lane-shifted stores. The adapter
 retains request payload, independently retires AW/W, and completes only on B/R.
 FENCE drains naturally through the in-order single-outstanding pipeline.

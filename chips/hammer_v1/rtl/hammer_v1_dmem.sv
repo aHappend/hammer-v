@@ -19,25 +19,21 @@ module hammer_v1_dmem #(
     reg d_valid, h_valid;
     wire [IW-1:0] di = N == 1 ? {IW{1'b0}} : d_addr[IW+2:3];
     wire [IW-1:0] hi = N == 1 ? {IW{1'b0}} : h_addr[IW+2:3];
-    integer d_lane, h_lane;
-    // Independent RAM ports; top-level ownership excludes host/CPU collisions.
+    wire [IW-1:0] write_index = h_req ? hi : di;
+    wire [63:0] write_data = h_req ? h_wdata : d_wdata;
+    wire [7:0] write_strobe = h_req ? h_wstrb : d_wstrb;
+    wire write_enable = rst_n && (h_req ? h_write : (d_req && d_write));
+    integer lane;
+    // Top-level ownership lets both writers share one physical RAM port.
     always @(posedge clk) begin
-        if (rst_n && d_req) begin
-            dq <= mem[di];
-            if (d_write)
-                for (d_lane = 0; d_lane < 8; d_lane = d_lane + 1)
-                    if (d_wstrb[d_lane])
-                        mem[di][d_lane*8 +: 8] <= d_wdata[d_lane*8 +: 8];
-        end
+        if (rst_n && d_req) dq <= mem[di];
     end
     always @(posedge clk) begin
-        if (rst_n && h_req) begin
-            hq <= mem[hi];
-            if (h_write)
-                for (h_lane = 0; h_lane < 8; h_lane = h_lane + 1)
-                    if (h_wstrb[h_lane])
-                        mem[hi][h_lane*8 +: 8] <= h_wdata[h_lane*8 +: 8];
-        end
+        if (rst_n && h_req) hq <= mem[write_index];
+        if (write_enable)
+            for (lane = 0; lane < 8; lane = lane + 1)
+                if (write_strobe[lane])
+                    mem[write_index][lane*8 +: 8] <= write_data[lane*8 +: 8];
     end
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
