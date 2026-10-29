@@ -693,6 +693,25 @@ def integer_directed_cases(run, name, config):
     return result
 
 
+def validate_jalr_encoding(prefix, start_pc, operand, target, instruction):
+    model = Machine([ri(0, 0, 0)] * (start_pc // 4) + [
+        *prefix, instruction, store(20, 1), 0x00100073], 1)
+    model.pc = start_pc
+    for index in range(len(prefix)):
+        event = model.step()
+        if event.next_pc != start_pc + (index + 1) * 4:
+            raise AssertionError("JALR prefix is not straight-line constant setup")
+    pc = start_pc + len(prefix) * 4
+    if model.regs[1] != operand or target != pc + 8 or target & 3:
+        raise AssertionError(f"JALR generated operand/target mismatch at {pc:#x}: "
+                             f"operand={model.regs[1]:#x}, expected={operand:#x}, "
+                             f"target={target:#x}")
+    event = model.step()
+    if (event.insn != 0x000081E7 or event.pc != pc or event.next_pc != target or
+            event.rd != 3 or event.rd_data != pc + 4):
+        raise AssertionError(f"JALR generated encoding/link/target mismatch at {pc:#x}")
+
+
 def memory_control_directed_cases(run, name, config):
     snippets = []
     for f3 in range(7):
@@ -741,20 +760,33 @@ def memory_control_directed_cases(run, name, config):
         obligations.append((operation, len(program) * 4, operands))
         program.extend((instruction, *suffix))
         denominator[operation] = denominator.get(operation, 0) + 1
-    # JALR targets depend on the packed image position.
+    jalr_targets = []
+    # AUIPC/ADDI uses a fixed-size prefix, independent of the packed absolute PC.
     for index in range(8):
-        if len(program) + 4 > config["IMEM_WORDS"]:
+        prefix_words = 2
+        if len(program) + prefix_words + 3 > config["IMEM_WORDS"]:
             execute()
             program, obligations = [0x10000A37], []
-        target = (len(program) + 3) * 4
-        program.append(ri(1, 0, target | (index & 1)))
-        obligations.append(("JALR", len(program) * 4, [target | (index & 1)]))
-        program.extend((ri(3, 1, 0, 0, 0x67), store(20, 1)))
+        start_pc = len(program) * 4
+        target = start_pc + (prefix_words + 2) * 4
+        operand = target | (index & 1)
+        prefix = [0x00000097, ri(1, 1, (prefix_words + 2) * 4 | (index & 1))]
+        instruction = ri(3, 1, 0, 0, 0x67)
+        if target >= config["IMEM_WORDS"] * 4:
+            raise AssertionError(f"{name}: generated JALR target outside instruction memory")
+        validate_jalr_encoding(prefix, start_pc, operand, target, instruction)
+        program.extend(prefix)
+        obligations.append(("JALR", len(program) * 4, [operand]))
+        jalr_targets.append({"image": part, "pc": len(program) * 4,
+                             "operand": operand, "target": target,
+                             "prefix_words": len(prefix)})
+        program.extend((instruction, store(20, 1)))
         denominator["JALR"] = denominator.get("JALR", 0) + 1
     execute()
     if compared != denominator or any(value < 8 for value in compared.values()):
         raise AssertionError(f"{name}: memory/control directed denominator not met")
-    result = {"required": denominator, "compared": compared, "images": part}
+    result = {"required": denominator, "compared": compared, "images": part,
+              "validated_jalr_targets": jalr_targets}
     run.receipt["coverage"][name] = result
     run.save()
     return result
@@ -1766,7 +1798,15 @@ def model_selfcheck():
         if event.rd_data != expected:
             raise AssertionError(f"independent model analytical self-check: {insn:08x}, "
                                  f"expected={expected:#x}, observed={event.rd_data:#x}")
-    return len(cases)
+    # Preserve the signed-immediate truncation counterexample from failure-0001.
+    try:
+        validate_jalr_encoding([ri(1, 0, 0x1988)], 0x197C, 0x1988, 0x1988,
+                               ri(3, 1, 0, 0, 0x67))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("JALR generation validator accepted truncated absolute ADDI")
+    return len(cases) + 1
 
 
 def portable_case(run):
@@ -2362,7 +2402,9 @@ def main():
         elif args.probe in ("directed-memory", "atomic-denominators", "precise-store"):
             run.tools(("python3", "verilator", "make", "g++"))
             if args.probe == "directed-memory":
-                memory_control_directed_cases(run, "B-memory-control", configuration("B"))
+                for name in ("A", "B"):
+                    memory_control_directed_cases(run, name + "-memory-control",
+                                                  configuration(name))
             elif args.probe == "atomic-denominators":
                 atomic_directed_cases(run, "B-atomic-directed", configuration("B"))
             else:
