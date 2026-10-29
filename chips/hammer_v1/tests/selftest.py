@@ -11,11 +11,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True
 from compiler import compile_benchmark, discover, load_elf
 from benchmarks import run_benchmarks
-from cycle import equal
+from cycle import ComparisonFailure, equal
 from encoding import i, r
 from iss import MASK, arithmetic, decode
 from portable import run_portable
 from retention import ROOT, Evidence, ToolFailure
+from synthesis import check_multiplier
+
+
+def synthesis_multiplier_checks():
+    cases = (
+        ("$mul", 64, 64, "hammer_v1_top.u_core.product", True),
+        ("$mul", 65, 64, "hammer_v1_top.u_core.product", True),
+        ("$mul", 64, 65, "hammer_v1_top.u_core.product", True),
+        ("$mul", 32, 32, "hammer_v1_top.u_core.u_muldiv.product", True),
+        ("$mul", 1, 64, "hammer_v1_top.u_core.u_muldiv.product", True),
+        ("$mul", 32, 32, "hammer_v1_top.other.product", False),
+        ("$add", 65, 65, "hammer_v1_top.u_core.u_muldiv.sum", False),
+    )
+    for kind, a, b, path, rejected in cases:
+        for binary in (False, True):
+            parameters = {key: format(value, "032b") if binary else value
+                          for key, value in (("A_WIDTH", a), ("B_WIDTH", b))}
+            try:
+                check_multiplier(kind, parameters, path)
+            except ComparisonFailure as error:
+                equal(rejected, True, "legal bounded arithmetic is not rejected")
+                equal(path in str(error), True, "forbidden multiplier identifies cell")
+            else:
+                equal(rejected, False, "wide or M-engine multiplier cannot pass synthesis")
+    print("SYNTHESIS_MULTIPLIER_FIXTURES compared=14; synthetic netlist cells, not RTL execution")
 
 
 def benchmark_ledger_checks():
@@ -438,6 +463,7 @@ def compiler_elf_checks():
 
 
 def main():
+    synthesis_multiplier_checks()
     benchmark_ledger_checks()
     portable_prerequisite_checks()
     interrupted_command_checks()

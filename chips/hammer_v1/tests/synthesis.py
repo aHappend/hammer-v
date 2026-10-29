@@ -10,6 +10,15 @@ def integer(value):
     return int(value, 2) if isinstance(value, str) else value
 
 
+def check_multiplier(kind, parameters, path):
+    if kind != "$mul":
+        return
+    widths = tuple(integer(parameters[key]) for key in ("A_WIDTH", "B_WIDTH"))
+    if ".u_muldiv." in path or min(widths) >= 64:
+        raise ComparisonFailure(
+            f"forbidden combinational multiplier {path}: operand widths={widths}")
+
+
 def run_synthesis(evidence, configurations=((16384, 8192, 1, 16), (1, 1, 0, 1), (769, 257, 1, 64))):
     require("yosys")
     results = []
@@ -83,6 +92,7 @@ def run_synthesis(evidence, configurations=((16384, 8192, 1, 16), (1, 1, 0, 1), 
                     continue
                 if not kind.startswith("$"):
                     raise ComparisonFailure(f"unresolved module {kind}")
+                check_multiplier(kind, cell["parameters"], path + "." + instance)
                 lower = kind.lower()
                 counts["latches"] += int("latch" in lower)
                 counts["divide_modulo"] += int(lower in ("$div", "$mod", "$divfloor", "$modfloor"))
