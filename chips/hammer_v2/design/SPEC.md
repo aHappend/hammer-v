@@ -6,8 +6,9 @@ The admitted work order is a single-hart, little-endian RV64IMA+Zicsr
 extension of the supplied HAMMER-V1 five-stage processor. This document fixes
 the design contract; it is not evidence of functional or physical acceptance.
 The immutable compatibility inputs are `hammer_v1_reference/rtl/*.sv`.
-Implementation is incremental: the extension leaves are implemented first;
-core and top-level integration remain required before a ready handoff.
+The RTL includes the pipeline, extension leaves and top-level integration.
+Functional correctness, coverage, synthesis, timing and hardware acceptance
+remain independent verification obligations.
 
 ## Platform
 

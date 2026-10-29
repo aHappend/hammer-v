@@ -67,21 +67,22 @@ module hammer_v2_ram #(
         end
         if (INSTRUCTION) begin : g_imem
             (* ramstyle = "M20K", nomem2reg *) reg [31:0] mem [0:WORDS-1];
-            reg [31:0] low_q, high_q, host_q;
+            reg [31:0] low_q, high_q;
             reg upper_q;
             wire [IW-1:0] ri = WORDS == 1 ? {IW{1'b0}} : offset[IW+1:2];
             wire [IW-1:0] hi = WORDS == 1 ? {IW{1'b0}} : h_addr[IW+1:2];
             wire upper_present = offset + 64'd4 < BYTES;
             wire [IW-1:0] ri_upper = ri + {{(IW-1){1'b0}},1'b1};
+            wire [IW-1:0] port_index = host_accept ? hi : ri;
             integer lane;
             always @(posedge clk) begin
+                if (host_accept || (rst_n && accept && !bad))
+                    low_q <= mem[port_index];
                 if (rst_n && accept && !bad) begin
-                    low_q <= mem[ri];
                     upper_q <= upper_present;
                     if (upper_present) high_q <= mem[ri_upper];
                 end
                 if (host_accept) begin
-                    host_q <= mem[hi];
                     if (h_write)
                         for (lane = 0; lane < 4; lane = lane + 1)
                             if (h_wstrb[lane])
@@ -89,10 +90,10 @@ module hammer_v2_ram #(
                 end
             end
             assign read_data = {upper_q ? high_q : 32'b0,low_q};
-            assign host_data = {32'b0,host_q};
+            assign host_data = {32'b0,low_q};
         end else begin : g_dmem
             (* ramstyle = "M20K", nomem2reg *) reg [63:0] mem [0:WORDS-1];
-            reg [63:0] read_q, host_q;
+            reg [63:0] read_q;
             wire [IW-1:0] ri = WORDS == 1 ? {IW{1'b0}} : offset[IW+2:3];
             wire [IW-1:0] hi = WORDS == 1 ? {IW{1'b0}} : h_addr[IW+2:3];
             wire host_write = host_accept && h_write;
@@ -100,16 +101,17 @@ module hammer_v2_ram #(
             wire [IW-1:0] wi = host_write ? hi : ri;
             wire [63:0] wd = host_write ? h_wdata : req_wdata;
             wire [7:0] ws = host_write ? h_wstrb : req_wstrb;
+            wire [IW-1:0] read_index = host_accept ? hi : ri;
             integer lane;
             always @(posedge clk) begin
-                if (rst_n && accept && !bad) read_q <= mem[ri];
-                if (host_accept) host_q <= mem[hi];
+                if (host_accept || (rst_n && accept && !bad))
+                    read_q <= mem[read_index];
                 if (host_write || core_write)
                     for (lane = 0; lane < 8; lane = lane + 1)
                         if (ws[lane]) mem[wi][lane*8 +: 8] <= wd[lane*8 +: 8];
             end
             assign read_data = read_q;
-            assign host_data = host_q;
+            assign host_data = read_q;
         end
     end else begin : g_bad
         assign req_ready = 1'b0;

@@ -127,6 +127,19 @@ module hammer_v2_core #(
     reg id_v, id_error, x_v, m_v, w_v;
     reg [63:0] id_pc, id_pred;
     reg [31:0] id_insn;
+    typedef struct packed {
+        logic [63:0] pc, pred;
+        logic [31:0] insn;
+        logic error;
+    } fetch_t;
+    fetch_t fetch_queue [0:3];
+    wire [160:0] queue_head_bits;
+    fetch_t queue_head;
+    reg [1:0] queue_read, queue_write;
+    reg [2:0] queue_count;
+    reg queue_release;
+    reg redirect_event;
+    reg [63:0] redirect_event_pc;
     execute_t x;
     memory_t m;
     writeback_t w;
@@ -192,9 +205,11 @@ module hammer_v2_core #(
     wire trap_enter, trap_is_interrupt, trap_wake;
     wire [1:0] trap_destination;
     wire [63:0] entry_epc, entry_cause, entry_tval, entry_vector;
-    wire pipeline_empty = !id_v && !x_v && !m_v && !w_v;
+    wire pipeline_empty = !id_v && !x_v && !m_v && !w_v && queue_count == 0;
     wire interrupt_boundary = running && pipeline_empty && !fetch_busy &&
         !stopping && !halt_req && !legacy_stop;
+    wire halt_clean_fault = rst_n && running && stopping && pipeline_empty &&
+        !fetch_busy && halt_phase == 2 && d_rsp_valid && d_rsp_error;
     hammer_v2_csr u_csr (
         .clk(clk), .rst_n(rst_n), .csr_valid(running && w_v && w.csr),
         .csr_commit(wb_commit && w.csr), .csr_addr(w.insn[31:20]),
@@ -215,8 +230,10 @@ module hammer_v2_core #(
         .rst_n(rst_n), .priv(current_priv), .mstatus(status),
         .mie(csr_mie), .mip(csr_mip), .medeleg(csr_medeleg),
         .mideleg(csr_mideleg), .mtvec(csr_mtvec), .stvec(csr_stvec),
-        .sync_valid(wb_sync), .sync_pc(w.pc), .sync_cause(sync_cause),
-        .sync_tval(sync_tval), .boundary_valid(interrupt_boundary),
+        .sync_valid(wb_sync || halt_clean_fault),
+        .sync_pc(halt_clean_fault ? committed_next : w.pc),
+        .sync_cause(halt_clean_fault ? 64'd7 : sync_cause),
+        .sync_tval(halt_clean_fault ? 64'b0 : sync_tval), .boundary_valid(interrupt_boundary),
         .boundary_pc(committed_next), .enter(trap_enter),
         .interrupt(trap_is_interrupt), .target_priv(trap_destination),
         .epc(entry_epc), .cause(entry_cause), .tval(entry_tval),
@@ -406,13 +423,21 @@ module hammer_v2_core #(
         !(x_v && x_serial) && !(m_v && m.special) && !(w_v && w.special) &&
         (!id_special || (!x_v && !m_v && !w_v));
     wire serial_commit = wb_commit && w.special;
-    wire fetch_request = rst_n && running && !fetch_busy && !stopping &&
+    wire fetch_request = rst_n && running && !fetch_busy && queue_count < 4 && !stopping &&
         !halt_req && !sleeping && !irq_stop && !serial_active &&
-        !older_fault && !branch_redirect && !fault_transfer && !serial_commit &&
-        (!id_v || id_advance);
+        !older_fault && !branch_redirect && !fault_transfer && !serial_commit;
     wire fetch_discard = fetch_kill || stopping || halt_req || irq_stop ||
-        serial_active || older_fault || branch_redirect || serial_commit;
+        serial_active || older_fault || branch_redirect || fault_transfer || serial_commit;
     wire fetch_response = fetch_busy && i_rsp_valid && i_rsp_ready;
+    wire queue_push = fetch_response && !fetch_discard;
+    wire queue_pop = rst_n && running && queue_count != 0 &&
+        (queue_release || stopping || halt_req || irq_stop) &&
+        (!id_v || id_advance) && !serial_active && !older_fault &&
+        !branch_redirect && !fault_transfer && !serial_commit;
+    wire queue_flush = trap_enter || serial_commit || branch_redirect ||
+        fault_transfer || mem_fault_now;
+    assign queue_head_bits = fetch_queue[queue_read];
+    always @* queue_head = queue_head_bits;
     wire [63:0] predicted_next;
     hammer_v2_predictor #(.PRED_MODE(PRED_MODE), .BTB_ENTRIES(BTB_ENTRIES))
     u_predictor (
@@ -433,7 +458,7 @@ module hammer_v2_core #(
     assign i_req_cmd = fence_i_request ? 2'b11 : 2'b0;
     assign i_req_addr = fetch_request ? fetch_pc : 64'b0;
     assign i_rsp_ready = rst_n && ((fetch_busy &&
-        (fetch_discard || !id_v || id_advance)) ||
+        (fetch_discard || queue_count < 4)) ||
         (running && m_v && m.fence_i && m.phase == 3));
     assign d_req_valid = halt_d_request || fence_d_request ||
         (rst_n && running && m_v && m.atomic && atom_req_valid) || normal_d_request;
@@ -471,15 +496,45 @@ module hammer_v2_core #(
     assign stall_mem = rst_n && running && m_v && !mem_advance && !trap_enter;
     assign stall_muldiv = rst_n && running && x_v && x.muldiv &&
         !ex_complete && !older_fault;
-    assign redirect_valid = rst_n && (trap_enter || serial_commit || branch_redirect);
-    assign redirect_pc = !redirect_valid ? 64'b0 :
-        trap_enter ? entry_vector : serial_commit ? wb_next : actual_next;
+    assign redirect_valid = rst_n && redirect_event;
+    assign redirect_pc = redirect_valid ? redirect_event_pc : 64'b0;
     assign ex_valid = rst_n && running && x_v && !older_fault;
     assign ex_pc = ex_valid ? x.pc : 64'b0;
     assign ex_rs1_sel = ex_valid && !x.fault ? sel1 : 2'b0;
     assign ex_rs2_sel = ex_valid && !x.fault ? sel2 : 2'b0;
     assign ex_store_sel = ex_valid && x.store && !x.fault ? store_sel : 2'b0;
 
+    integer queue_slot;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            queue_read <= 2'b0;
+            queue_write <= 2'b0;
+            queue_count <= 3'b0;
+            queue_release <= 1'b0;
+            for (queue_slot = 0; queue_slot < 4; queue_slot = queue_slot + 1)
+                fetch_queue[queue_slot] <= '0;
+        end else if (!running || queue_flush) begin
+            queue_read <= 2'b0;
+            queue_write <= 2'b0;
+            queue_count <= 3'b0;
+            queue_release <= 1'b0;
+        end else begin
+            case ({queue_push,queue_pop})
+                2'b10: queue_count <= queue_count + 3'd1;
+                2'b01: queue_count <= queue_count - 3'd1;
+                default: begin end
+            endcase
+            if (queue_count == 4) queue_release <= 1'b1;
+            if (queue_count == 1 && queue_pop && !queue_push)
+                queue_release <= 1'b0;
+            if (queue_push) begin
+                fetch_queue[queue_write] <=
+                    {fetch_context,predicted_next,i_rsp_rdata[31:0],i_rsp_error};
+                queue_write <= queue_write + 2'd1;
+            end
+            if (queue_pop) queue_read <= queue_read + 2'd1;
+        end
+    end
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             running <= 1'b0;
@@ -503,6 +558,8 @@ module hammer_v2_core #(
             x <= '0;
             m <= '0;
             w <= '0;
+            redirect_event <= 1'b0;
+            redirect_event_pc <= 64'b0;
             trap_valid <= 1'b0;
             trap_pc <= 64'b0;
             trap_cause <= 64'b0;
@@ -524,6 +581,9 @@ module hammer_v2_core #(
             retire_mem_wdata <= 64'b0;
             retire_mem_rdata <= 64'b0;
         end else begin
+            redirect_event <= trap_enter || serial_commit || branch_redirect;
+            redirect_event_pc <= trap_enter ? entry_vector :
+                serial_commit ? wb_next : branch_redirect ? actual_next : 64'b0;
             retire_valid <= 1'b0;
             retire_pc <= 64'b0;
             retire_next_pc <= 64'b0;
@@ -575,14 +635,14 @@ module hammer_v2_core #(
             if (fetch_response) begin
                 fetch_busy <= 1'b0;
                 fetch_kill <= 1'b0;
-                if (!fetch_discard) begin
-                    id_v <= 1'b1;
-                    id_pc <= fetch_context;
-                    id_pred <= predicted_next;
-                    id_insn <= i_rsp_rdata[31:0];
-                    id_error <= i_rsp_error;
-                    fetch_pc <= predicted_next;
-                end
+                if (!fetch_discard) fetch_pc <= predicted_next;
+            end
+            if (queue_pop) begin
+                id_v <= 1'b1;
+                id_pc <= queue_head.pc;
+                id_pred <= queue_head.pred;
+                id_insn <= queue_head.insn;
+                id_error <= queue_head.error;
             end
             if (running) begin
                 w_v <= 1'b0;
@@ -687,7 +747,7 @@ module hammer_v2_core #(
                 end
                 if (md_start) x.md_started <= 1'b1;
                 if (id_advance) begin
-                    id_v <= 1'b0;
+                    id_v <= queue_pop;
                     x_v <= 1'b1;
                     x <= '0;
                     x.pc <= id_pc;
@@ -780,6 +840,8 @@ module hammer_v2_core #(
                     m_v <= 1'b0;
                     w_v <= 1'b0;
                     sleeping <= 1'b0;
+                    halt_phase <= 2'b0;
+                    if (halt_clean_fault) stopping <= 1'b0;
                     if (fetch_busy && !fetch_response) fetch_kill <= 1'b1;
                     if (LEGACY_TRAPS) begin
                         stopping <= 1'b1;

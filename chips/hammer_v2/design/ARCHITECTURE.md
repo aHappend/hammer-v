@@ -141,6 +141,13 @@ MTIME/MTIMECMP each have eight. Holes, crossings and misalignment error.
 
 Fetch uses one outstanding I-cache transaction with a captured PC and redirect
 epoch/kill qualification; stale responses must drain without entering IF/ID.
+An internal four-entry prefetch FIFO collects cache responses and releases
+instruction batches into IF/ID. This decouples the single-outstanding cache's
+lookup latency from consecutive pipeline issue, preserving real EX/MEM and
+MEM/WB forwarding opportunities. A full FIFO starts a batch; halt or eligible
+interrupt drains a partial batch. Redirects, precise faults and serializing
+commit flush all younger queued entries. FIFO occupancy is included in drain
+completion, and no new architectural/debug port is introduced.
 IF/ID stores the instruction and fault with its PC rather than depending on a
 changing RAM output. Decode-to-execute forwarding retains 00=register,
 10=EX/MEM,01=MEM/WB, EX/MEM priority, x0 excluded.
@@ -156,6 +163,17 @@ needed. Host writes and resume cannot race outstanding maintenance.
 Interrupt entry uses the next architectural PC, never a speculative fetch PC.
 WFI is a committed waiting state, not an unretired pipeline occupant.
 halt_req remains latched through drain/clean; no half atomic/MMIO completion.
+Diagnostic redirect outputs are registered pulses at the redirect decision
+edge, aligned with the trap event for trap entry. Internal fetch annulment uses
+the decision directly, without waiting for the diagnostic pulse.
+Host invalidations coalesce while loading. An accepted start immediately lowers
+top-level halted and reserves launch; if invalidation is still active, execution
+waits internally for it to finish. This preserves pulse-start acceptance without
+executing stale cache contents or delaying the fixed host E0/E1 response.
+A halt-clean backing error emits a store-access trap at the saved next PC with
+zero tval and does not assert halted or discard the dirty victim. Unexpected
+halted host-maintenance errors latch a launch interlock and cause subsequent
+host requests to return errors until reset.
 
 ## Dependencies and reset priority
 

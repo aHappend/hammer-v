@@ -80,6 +80,6 @@ module hammer_v2_predictor #(
             end
         end
     end else begin : g_bad
-        always @* next_pc = 64'b0;
+        assign next_pc = 64'b0;
     end endgenerate
 endmodule
