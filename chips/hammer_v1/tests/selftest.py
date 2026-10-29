@@ -158,6 +158,53 @@ def prerequisite_receipt_checks():
     print("PREREQUISITE_RECEIPT_FIXTURES compared=1; no compiler or RTL executed")
 
 
+def missing_log_checks():
+    for status, missing in (("passed", None), ("passed", "stdout"),
+                            ("passed", "stderr"), ("failed", "stderr")):
+        with tempfile.TemporaryDirectory(prefix="hammer-log-fixture-") as directory:
+            root = Path(directory)
+            probe = Evidence.__new__(Evidence)
+            probe.directory = root / "fixture"
+            probe.directory.mkdir()
+            probe.commands = ["fixture/child.json"]
+            probe.hashes = {}
+            probe.start = "synthetic fixture"
+            probe.tool_versions = {}
+            child = {"stdout": "fixture/stdout.log", "stderr": "fixture/stderr.log"}
+            (root / probe.commands[0]).write_text(json.dumps(child))
+            for field, path in child.items():
+                if field != missing:
+                    (root / path).write_bytes(b"")
+            with patch("retention.ROOT", root):
+                try:
+                    result = probe.finish(status, error="original fixture diagnostic")
+                except ToolFailure as error:
+                    equal(status == "passed" and missing is not None, True,
+                          "only a requested pass with missing evidence raises")
+                    equal(child[missing] in str(error), True,
+                          "missing raw log identified in failure")
+                    equal((probe.directory / "receipt.json").exists(), False,
+                          "rejected pass does not create an intermediate receipt")
+                    probe.finish("failed", error="original fixture diagnostic")
+                else:
+                    equal(status != "passed" or missing is None, True,
+                          "missing raw evidence cannot finalize a pass")
+                    equal(result, "fixture/receipt.json", "summary receipt identity")
+            receipt = json.loads((probe.directory / "receipt.json").read_text())
+            expected = "failed" if missing is not None else status
+            equal(receipt["status"], expected, "evidence completeness controls status")
+            equal(receipt["exit_code"], 0 if expected == "passed" else 1,
+                  "missing raw evidence cannot retain a success-shaped exit")
+            equal(receipt["error"], "original fixture diagnostic",
+                  "retention failure preserves original diagnostic")
+            if missing is not None:
+                equal(child[missing] in str(receipt["retention_errors"]), True,
+                      "summary retains exact missing log path")
+                equal((root / child[missing]).exists(), False,
+                      "missing raw logs are never reconstructed")
+    print("RAW_LOG_FIXTURES compared=4; synthetic only; no compiler or RTL executed")
+
+
 def compiler_selection_checks():
     cases = (
         ({}, {"riscv64-unknown-elf-gcc-16": "/fixture/riscv64-unknown-elf-gcc-16",
@@ -395,6 +442,7 @@ def main():
     portable_prerequisite_checks()
     interrupted_command_checks()
     prerequisite_receipt_checks()
+    missing_log_checks()
     compiler_selection_checks()
     compiler_fallback_checks()
     compiler_failure_propagation_checks()

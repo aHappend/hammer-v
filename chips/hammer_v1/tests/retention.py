@@ -134,6 +134,17 @@ class Evidence:
         commands = [json.loads((ROOT / path).read_text()) for path in self.commands]
         record["stdout"] = [command["stdout"] for command in commands]
         record["stderr"] = [command["stderr"] for command in commands]
+        missing_logs = [path for field in ("stdout", "stderr") for path in record[field]
+                        if not (ROOT / path).is_file()]
+        if missing_logs:
+            record["status"] = "failed"
+            record["exit_code"] = 1
+            record["retention_errors"] = [
+                f"RAW_LOG_MISSING: {path}" for path in missing_logs]
+        if missing_logs and status == "passed":
+            raise ToolFailure(
+                f"evidence finalization failed: {record['retention_errors']!r}; "
+                f"receipt={(self.directory / 'receipt.json').relative_to(ROOT)}")
         (self.directory / "receipt.json").write_text(json.dumps(record, indent=2) + "\n")
         return str((self.directory / "receipt.json").relative_to(ROOT))
 
