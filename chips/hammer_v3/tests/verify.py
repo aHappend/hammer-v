@@ -65,6 +65,8 @@ class Suite:
         self.execute("plic", experiments.peripheral_probe, "plic")
         self.execute("uart", experiments.peripheral_probe, "uart")
         self.execute("walker", experiments.walker_probe)
+        for itlb, dtlb, *_ in integrated.CONFIGURATIONS:
+            self.execute(f"mmu-cycle-{itlb}-{dtlb}", experiments.mmu_probe, itlb, dtlb)
         self.run.receipt["required_system_matrix"] = [
             {"configuration": list(configuration), "seed": seed,
              "required_translation_comparisons": 1000, "required_context_round_trips": 20,

@@ -1,6 +1,6 @@
 """CPU-executed peripheral recipes, compared independently at public retirement."""
 
-from oracle import i_type, s_type
+from oracle import ArchitecturalTrap, i_type, s_type, load_constant
 from peripherals import character_cycles, plic_vectors, uart_vectors
 from scenarios import branch
 from system_directed import Program, csr
@@ -131,7 +131,6 @@ def peripheral_workload(unit):
         program.constant(1, (1 << 11) | 2)
         program.emit(csr(0x300, 1))
         target = program.pc + 13 * 4
-        from oracle import load_constant
         recipe = load_constant(1, target)
         program.emit(*recipe, *([0x13] * (11 - len(recipe))), csr(0x341, 1), 0x30200073)
         external_interrupt = dict(pc=program.pc, cause=(1 << 63) | 9, handler=handler)
@@ -173,7 +172,6 @@ def peripheral_machine(base):
             operation = self.operations.get(self.pc) if access != 0 else None
             if operation is not None and address == operation["address"]:
                 if operation["error"]:
-                    from oracle import ArchitecturalTrap
                     raise ArchitecturalTrap(7 if operation["write"] else 5, address)
                 return address
             return super().physical(address, access)

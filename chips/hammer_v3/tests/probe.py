@@ -14,7 +14,7 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from oracle import (BareMachine, StartupMachine, FaultMachine, bare_program, startup_program,
-                    SystemMachine, ConsoleMachine, i_type, s_type, load_constant)
+                    SystemMachine, ConsoleMachine, i_type, s_type, load_constant, sv39)
 from scenarios import (walker_cases, fault_programs, context_program, isa_program,
                        shootdown_program)
 from peripherals import plic_vectors, uart_vectors, compare_waveform
@@ -800,6 +800,51 @@ SYSTEM_MUTANTS = {
 }
 
 
+def mmu_probe(probe, itlb=1, dtlb=1):
+    probe.run("version-iverilog", ["iverilog", "-V"])
+    ptes = {
+        0x80000000: (0x80001 << 10) | 1,
+        0x80001000: (0x80002 << 10) | 1,
+        0x80002008: (0x80010 << 10) | 0xCB,
+        0x80002010: (0x80011 << 10) | 0xC7,
+    }
+    expected = []
+    for bank in (0, 1):
+        if bank:
+            ptes[0x80002008] = (0x80030 << 10) | 0xCB
+            ptes[0x80002010] = (0x80031 << 10) | 0xC7
+        for address, access in ((0x1000, 0), (0x2000, 1)):
+            result = sv39(address, access, 1, (8 << 60) | 0x80000, 0, ptes.__getitem__)
+            if result.fault:
+                raise AssertionError(f"MMU_ORACLE: unexpected reference fault {result}")
+            expected.append(result.pa)
+    binary, trace = probe.folder / "simulation", probe.folder / "pte-trace.txt"
+    probe.run("compile", [
+        "iverilog", "-g2012", "-Wall", "-s", "mmu_probe",
+        f"-Pmmu_probe.ITLB_ENTRIES={itlb}", f"-Pmmu_probe.DTLB_ENTRIES={dtlb}",
+        "-o", probe.relative(binary), "tests/mmu_probe.sv",
+        *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+    output = probe.run("simulation", [
+        "vvp", probe.relative(binary), f"+trace={probe.relative(trace)}",
+        *[f"+{name}={pa:x}" for name, pa in zip(
+            ("old_i", "old_d", "new_i", "new_d"), expected)]])
+    summary = re.search(r"MMU_SUMMARY pairs=(\d+) comparisons=(\d+) fences=(\d+) resets=(\d+) reads=(\d+)", output)
+    if not summary or tuple(map(int, summary.groups()[:4])) != (6, 12, 2, 1):
+        raise AssertionError("MMU_COVERAGE: concurrent, fence, hit and reset comparisons missing")
+    leaves = [int(line.split()[1], 16) for line in trace.read_text().splitlines()
+              if int(line.split()[1], 16) in (0x80002008, 0x80002010)]
+    if leaves != [0x80002008, 0x80002010] * 2:
+        raise AssertionError(f"MMU_ARBITRATION: expected alternating instruction/data walks: {leaves}")
+    probe.receipt["assertions"].append({
+        "id": "public-mmu-cycle-fence-reset", "passed": True, "itlb": itlb, "dtlb": dtlb,
+        "response_comparisons": int(summary[2]), "completed_pairs": int(summary[1]),
+        "fences": int(summary[3]), "reset_aborts": int(summary[4]),
+        "pte_reads": int(summary[5]), "leaf_order": leaves, "oracle_pas": expected,
+        "scope": "registered minimum latency, independent held responses, concurrent misses, "
+                 "captured privilege, hit permission reevaluation, fence during walk, "
+                 "drain held responses, stale-refill exclusion, reset during walk"})
+
+
 def system_mutant_probe(probe, mutant):
     filename, changes, experiment, intended = SYSTEM_MUTANTS[mutant]
     copied = probe.folder / "mutant-rtl"
@@ -865,9 +910,11 @@ def main():
                                           "synthesis-default", "synthesis-odd",
                                           "parameters", "plic", "uart", "faults", "coherence",
                                           "context", "isa", "shootdown", "mutants", "console",
-                                          "coherence-compact", "boundaries", "reset-abort"],
+                                          "coherence-compact", "boundaries", "reset-abort", "mmu"],
                         default="top-bare")
     parser.add_argument("--parent", action="store_true")
+    parser.add_argument("--itlb", type=int, choices=(1, 4, 8, 16), default=1)
+    parser.add_argument("--dtlb", type=int, choices=(1, 4, 8, 16), default=1)
     parser.add_argument("--mutant", choices=sorted({**WALKER_MUTANTS, **SYSTEM_MUTANTS}))
     parser.add_argument("--repair-of", help="Project-relative retained diagnostic being repaired")
     args = parser.parse_args()
@@ -887,6 +934,7 @@ def main():
                   f"verifier-top-{args.probe}" if args.probe in ("console", "coherence-compact") else
                   "verifier-top-boundaries" if args.probe == "boundaries" else
                   "verifier-top-reset-abort" if args.probe == "reset-abort" else
+                  "verifier-mmu" if args.probe == "mmu" else
                   ("verifier-parent-isa" if args.parent else "verifier-top-isa")
                   if args.probe == "isa" else
                   f"verifier-{args.probe}" if args.probe.startswith("synthesis-") else
@@ -901,7 +949,9 @@ def main():
         probe.receipt["repair_of"] = args.repair_of
         probe.persist()
     try:
-        if args.probe == "reset-abort":
+        if args.probe == "mmu":
+            mmu_probe(probe, args.itlb, args.dtlb)
+        elif args.probe == "reset-abort":
             coherence_probe(probe, "iverilog", 2, True)
         elif args.probe == "boundaries":
             boundary_probe(probe)
