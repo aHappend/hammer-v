@@ -204,6 +204,7 @@ def compiler_fallback_checks():
         loaded = object()
         with patch("compiler.ROOT", root), \
                 patch("compiler.discover", return_value=candidates), \
+                patch("compiler.shutil.which", return_value=None), \
                 patch("compiler.load_elf", return_value=loaded) as loader:
             equal(compile_benchmark(evidence, 5) is loaded, True,
                   "fallback returns validated ELF rather than failed candidate")
@@ -291,6 +292,34 @@ def compiler_failure_propagation_checks():
     print("COMPILER_FAILURE_FIXTURES compared=3; synthetic only; no compiler or RTL executed")
 
 
+def compiler_versioned_linker_checks():
+    cases = (
+        ("/fixture/clang-18", {"ld.lld-18": "/fixture/ld.lld-18"},
+         "-fuse-ld=/fixture/ld.lld-18"),
+        ("/fixture/clang-18", {"ld.lld-17": "/fixture/ld.lld-17"}, "-fuse-ld=lld"),
+        ("/fixture/clang", {"ld.lld-18": "/fixture/ld.lld-18"}, "-fuse-ld=lld"),
+        ("/fixture/clang-18", {}, "-fuse-ld=lld"),
+    )
+    with tempfile.TemporaryDirectory(prefix="hammer-linker-fixture-") as directory:
+        root = Path(directory)
+        for driver, available, expected in cases:
+            evidence = Mock(directory=root)
+            evidence.command.return_value = (root / "compile", {"exit_code": 0})
+            loaded = object()
+            with patch("compiler.ROOT", root), \
+                    patch("compiler.discover", return_value=[driver]), \
+                    patch("compiler.shutil.which", side_effect=available.get), \
+                    patch("compiler.load_elf", return_value=loaded):
+                equal(compile_benchmark(evidence, 5) is loaded, True,
+                      "versioned linker still requires validated ELF")
+            argv = evidence.command.call_args.args[0]
+            equal([flag for flag in argv if flag.startswith("-fuse-ld=")], [expected],
+                  "matching versioned clang linker selection")
+            for flag in ("--target=riscv64-unknown-elf", "-march=rv64im", "-mabi=lp64"):
+                equal(flag in argv, True, "versioned linker preserves RV64IM target")
+    print(f"COMPILER_LINKER_FIXTURES compared={len(cases)}; synthetic only; no compiler or RTL executed")
+
+
 def compiler_elf_checks():
     image = bytearray(528)
     ident = b"\x7fELF\x02\x01\x01" + bytes(9)
@@ -369,6 +398,7 @@ def main():
     compiler_selection_checks()
     compiler_fallback_checks()
     compiler_failure_propagation_checks()
+    compiler_versioned_linker_checks()
     compiler_elf_checks()
     cases = (
         ("ADD", MASK, 1, 0), ("SUB", 0, 1, MASK),

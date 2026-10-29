@@ -38,7 +38,11 @@ def compile_benchmark(evidence, number):
         output = directory / "benchmark.elf"
         argv = [compiler]
         if "clang" in Path(compiler).name:
-            argv += ["--target=riscv64-unknown-elf", "-fuse-ld=lld"]
+            linker = "lld"
+            name, separator, version = Path(compiler).name.rpartition("-")
+            if name == "clang" and separator and version.isdecimal():
+                linker = shutil.which(f"ld.lld-{version}") or linker
+            argv += ["--target=riscv64-unknown-elf", f"-fuse-ld={linker}"]
         argv += ["-march=rv64im", "-mabi=lp64", "-mcmodel=medany", "-mno-relax",
                  "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-msmall-data-limit=0", "-nostdlib",
                  "-static", "-O1", "-Wl,--no-relax", "-Wl,-T,tests/link.ld",
