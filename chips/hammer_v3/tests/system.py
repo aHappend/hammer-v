@@ -16,6 +16,8 @@ from oracle import (ArchitecturalTrap, MASK64, SystemMachine, TranslationCache, 
                     s_type, sv39)
 from scenarios import branch
 from system_directed import fault_workload, isa_workload, fence_workload
+from system_peripherals import peripheral_workload, peripheral_machine, MAILBOX
+from peripherals import compare_waveform
 
 
 CONFIGURATIONS = (
@@ -173,6 +175,9 @@ def workload(seed, rounds=20, iterations=64):
     loop = 0x11000 + len(user) * 4
     user += [i_type(0x03, 6, 3, 5, 0), i_type(0x13, 6, 0, 6, 1),
              s_type(3, 5, 6, 0),
+             (2 << 27) | (5 << 15) | (3 << 12) | (8 << 7) | 0x2F]
+    user += [0x13] * 16
+    user += [(3 << 27) | (6 << 20) | (5 << 15) | (3 << 12) | (8 << 7) | 0x2F,
              (9 << 20) | (5 << 15) | (3 << 12) | (8 << 7) | 0x2F,
              i_type(0x03, 19, 3, 16, 0), i_type(0x03, 18, 3, 17, 0),
              i_type(0x03, 19, 3, 28, 0), i_type(0x67, 30, 0, 27, 0),
@@ -200,6 +205,7 @@ class IntegratedMachine(SystemMachine):
         self.delegated_interrupts = 0
         self.clint_compares = 0
         self.translation_caches = None
+        self.observed_context_mappings = defaultdict(dict)
 
     def csr_read(self, address):
         if address == 0x104:
@@ -316,13 +322,15 @@ class IntegratedMachine(SystemMachine):
             if mode == "Sv39":
                 self.checked_accesses["upper" if address >> 63 else "lower"] += 1
                 self.checked_accesses[f"leaf-{result.level}"] += int(not result.fault)
+                if not result.fault:
+                    self.observed_context_mappings[(address, access)][(satp >> 44) & 65535] = result.pa
             if result.fault:
                 self.checked_accesses[result.fault + "-fault"] += 1
-        if event[0] == "R" and event[2] == 0x10200073 and self.priv == 0:
+        if event[0] == "R" and event[2] in (0x10200073, 0x30200073) and self.priv == 0:
             self.in_user = True
         if event[0] == "T" and event[2] == 8:
             if not self.in_user:
-                raise AssertionError("SYSTEM_CONTEXT user ECALL without checked SRET")
+                raise AssertionError("SYSTEM_CONTEXT user ECALL without checked privilege return")
             self.contexts[(self.csrs[0x180] >> 44) & 65535] += 1
             self.completed_round_trips += 1
             self.in_user = False
@@ -353,7 +361,10 @@ def compare_retirement(line, expected, number):
 
 
 def run_directed(experiment, configuration, seed, scenario):
-    if scenario in ("fences", "satp"):
+    peripheral = scenario in ("plic", "uart")
+    if peripheral:
+        words, image, metadata = peripheral_workload(scenario)
+    elif scenario in ("fences", "satp"):
         words, image, metadata = fence_workload(seed, configuration[1], scenario == "satp")
     else:
         words, image, metadata = {"faults": fault_workload, "isa": isa_workload}[scenario](seed)
@@ -366,11 +377,21 @@ def run_directed(experiment, configuration, seed, scenario):
         f"{address:016x} {sum(image.get(address+b, 0) << (8*b) for b in range(8)):016x}\n"
         for address in sorted({p & ~7 for p in image})))
     (folder / "workload.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    peripheral_arguments = []
+    waveform = folder / "uart-waveform.txt"
+    if peripheral:
+        script = folder / "peripheral-script.txt"
+        script.write_text("\n".join(metadata["script"]) + "\n")
+        peripheral_arguments = [f"+peripheral_script={experiment.relative(script)}",
+                                f"+waveform={experiment.relative(waveform)}"]
+    if metadata.get("overlap_pte") is not None:
+        peripheral_arguments.append(f"+overlap_pte={metadata['overlap_pte']:x}")
     experiment.run(f"{scenario}-seed-{seed}", [
         experiment.relative(experiment.folder / "simulation"), "+directed",
         f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
-        f"+trace={experiment.relative(trace)}", f"+seed={seed}"])
-    model = IntegratedMachine(words, image, configuration[5])
+        f"+trace={experiment.relative(trace)}", f"+seed={seed}", *peripheral_arguments])
+    model = (peripheral_machine(IntegratedMachine)(words, image, configuration[5], metadata)
+             if peripheral else IntegratedMachine(words, image, configuration[5]))
     if scenario == "fences":
         model.translation_caches = [TranslationCache(configuration[0]),
                                     TranslationCache(configuration[1])]
@@ -389,10 +410,36 @@ def run_directed(experiment, configuration, seed, scenario):
     label_counts = Counter()
     labels = {int(pc): name for pc, name in metadata.get("labels", {}).items()}
     events = 0
+    acknowledgements = []
+    peripheral_observed = set()
+    interrupt_observed = set()
+    overlapping_walks = []
+    memory_stalls = previous_memory_stalls = 0
+    blocked_stores = []
     for line in trace.read_text().splitlines():
         if line.startswith("K "):
+            memory_stalls = int(line.split()[2])
             continue
-        expected = model.step()
+        if line.startswith("O "):
+            address, cycle = line.split()[1:]
+            if int(address, 16) != metadata.get("overlap_pte"):
+                raise AssertionError("SYSTEM_UNEXPECTED_OVERLAP_PTE")
+            overlapping_walks.append({"instruction_pte_address": int(address, 16),
+                                      "data_stalled_cycle": int(cycle)})
+            continue
+        if peripheral and line.startswith("E "):
+            identity = int(line.split()[1], 16)
+            if identity != len(acknowledgements) + 1:
+                raise AssertionError(f"SYSTEM_PERIPHERAL_ACK_ORDER {line}")
+            acknowledgements.append(identity)
+            model.write_memory(MAILBOX + 8, 8, identity)
+            continue
+        if peripheral and line.startswith("H "):
+            model.mailbox_responses.append(int(line.split()[1], 16))
+            continue
+        expected = (model.take_interrupt(int(line.split()[2], 16), 0)
+                    if peripheral and line.startswith("T ") and int(line.split()[5], 16)
+                    else model.step())
         try:
             compare_retirement(line, expected, events)
         except AssertionError:
@@ -410,6 +457,26 @@ def run_directed(experiment, configuration, seed, scenario):
         model.accept_event(expected)
         events += 1
         pc = expected[1]
+        if peripheral and pc in metadata["operations"]:
+            operation = metadata["operations"][pc]
+            if operation["error"]:
+                if expected[0] != "T" or expected[2] != (7 if operation["write"] else 5):
+                    raise AssertionError(f"SYSTEM_PERIPHERAL_ERROR_NOT_EXERCISED pc={pc:x}")
+            elif expected[0] != "R":
+                raise AssertionError(f"SYSTEM_PERIPHERAL_OPERATION_TRAPPED pc={pc:x}")
+            required_stalls = operation.get("minimum_blocked", 0)
+            if required_stalls:
+                actual_stalls = memory_stalls - previous_memory_stalls
+                if actual_stalls < required_stalls:
+                    raise AssertionError(f"SYSTEM_UART_TX_FULL_NOT_OBSERVED "
+                                         f"pc={pc:x} required={required_stalls} actual={actual_stalls}")
+                blocked_stores.append({"pc": pc, "required_memory_stall_cycles": required_stalls,
+                                       "actual_memory_stall_cycles": actual_stalls})
+            peripheral_observed.add(pc)
+        if peripheral and pc in metadata["interrupt_reads"]:
+            if expected[0] != "R":
+                raise AssertionError(f"SYSTEM_PERIPHERAL_IRQ_READ_TRAPPED pc={pc:x}")
+            interrupt_observed.add(pc)
         if expected[0] == "R" and pc in labels:
             label_counts[labels[pc]] += 1
         if expected[0] == "T" and expected[2] == 3:
@@ -427,9 +494,54 @@ def run_directed(experiment, configuration, seed, scenario):
             if expected[0] != "R" or case["number"] not in observed:
                 raise AssertionError(f"SYSTEM_FAULT_WITNESS_MISSING {case}")
             settled.append(case["number"])
+        previous_memory_stalls = memory_stalls
     if not model.stopped or set(settled) != set(range(len(metadata["cases"]))):
         raise AssertionError(f"SYSTEM_DIRECTED_INCOMPLETE: {len(settled)}/{len(metadata['cases'])}")
     bins = Counter()
+    if scenario == "fences":
+        if not overlapping_walks:
+            raise AssertionError("SYSTEM_OVERLAPPING_WALKS_NOT_OBSERVED")
+        bins["overlapping-walk-context"] = len(overlapping_walks)
+    if peripheral:
+        if (len(peripheral_observed) != len(metadata["operations"]) or
+                len(interrupt_observed) != len(metadata["interrupt_reads"]) or
+                len(acknowledgements) != sum(line.startswith("C ") for line in metadata["script"])):
+            raise AssertionError("SYSTEM_PERIPHERAL_INCOMPLETE: missing software operation or stimulus")
+        serial_comparisons = compare_waveform(waveform, metadata["frames"], metadata["streams"])
+        if scenario == "plic":
+            bins.update({
+                "plic-all-ids-priorities-contexts": len(peripheral_observed),
+                "plic-claims-completion-ownership": len(interrupt_observed),
+                "plic-held-level": len(acknowledgements),
+            })
+        else:
+            if model.external_interrupts != 1:
+                raise AssertionError("SYSTEM_UART_EXTERNAL_INTERRUPT_NOT_TAKEN")
+            if serial_comparisons != len(metadata["frames"]) + sum(
+                    len(stream["values"]) for stream in metadata["streams"]):
+                raise AssertionError("SYSTEM_UART_SERIAL_COVERAGE")
+            bins.update({
+                "uart-all-registers-dlab-triggers": sum(
+                    count for name, count in metadata["recipe_bins"].items() if name.startswith("trigger-")),
+                "uart-all-serial-formats": len(metadata["frames"]),
+                "uart-divisors": len({frame["divisor"] for frame in metadata["frames"]}),
+                "uart-timeout-errors-overrun": sum(
+                    count for name, count in metadata["recipe_bins"].items() if name.startswith("line-error-")),
+                "uart-full-backpressure": len(blocked_stores),
+                "uart-loopback-modem": sum(
+                    operation["address"] in (0x10010004, 0x10010006)
+                    for operation in metadata["operations"].values()),
+                "uart-plic-integration": model.external_interrupts,
+                "exact-software-console": len(metadata["streams"][-1]["values"]),
+            })
+        experiment.receipt.setdefault("peripheral_runs", []).append({
+            "scenario": scenario, "configuration": list(configuration), "seed": seed,
+            "operations": len(peripheral_observed), "interrupt_reads": len(interrupt_observed),
+            "sideband_acknowledgements": len(acknowledgements),
+            "blocked_stores": blocked_stores,
+            "serial_comparisons": serial_comparisons,
+            "recipe_bins": metadata["recipe_bins"], "leaf_only_commands": metadata["leaf_only_commands"],
+            "waveform": experiment.relative(waveform)})
     permission_outcomes = set()
     privilege_combinations = set()
     records = []
@@ -508,6 +620,7 @@ def run_directed(experiment, configuration, seed, scenario):
               "compared_events": events, "directed_bins": dict(bins),
               "cases": records, "instruction_bins": dict(label_counts),
               "trace": experiment.relative(trace),
+              "overlapping_walks": overlapping_walks,
               "translation_cache_observations": (
                   [cache.observations for cache in model.translation_caches]
                   if model.translation_caches else [])}
@@ -523,9 +636,10 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
     experiment.run("version-verilator", ["verilator", "--version"])
     parameters = dict(zip(PARAMETERS, configuration))
     top = experiment.rtl_folder / "hammer_v3_top.sv"
-    extra_driven = re.findall(r"\bs_acc_axi_\w+", top.read_text().split(");", 1)[0])
+    extra_driven = (re.findall(r"\bs_acc_axi_\w+", top.read_text().split(");", 1)[0])
+                    if accelerator else []) + ["uart_rx", "plic_sources"]
     probe.generate_top_wiring("hammer_v3_top", top, experiment.folder, configuration[5],
-                              parameters=parameters, extra_driven=extra_driven if accelerator else (),
+                              parameters=parameters, extra_driven=extra_driven,
                               responding_memory=True)
     objects = experiment.folder / "compile-obj"
     records = []
@@ -539,7 +653,7 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             *[str(p.relative_to(probe.ROOT)) for p in sorted(experiment.rtl_folder.glob("*.sv"))]])
         for seed in seeds:
             directed_bins = Counter()
-            for directed_scenario in ((scenario,) if scenario else ("faults", "isa", "fences")):
+            for directed_scenario in ((scenario,) if scenario else ("faults", "isa", "fences", "plic", "uart")):
                 directed_bins.update(run_directed(experiment, configuration, seed, directed_scenario))
             if scenario:
                 continue
@@ -572,6 +686,9 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             cycle = 0
             mret_comparisons = 0
             wfi_comparisons = 0
+            interfered_reservation = None
+            completed_interference = False
+            reservation_comparisons = 0
             for line in trace.read_text().splitlines():
                 fields = line.split()
                 if fields[0] == "K":
@@ -579,12 +696,17 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                     continue
                 if fields[0] == "V":
                     axi.accept(fields)
+                    if int(fields[6], 16):
+                        model.reservation = None
                     continue
                 if fields[0] == "N":
                     retired = int(fields[3])
                     if retired <= last_admission:
                         raise AssertionError(f"SYSTEM_CPU_STARVATION: {line}")
                     last_admission = retired
+                    if model.reservation is not None:
+                        interfered_reservation = model.reservation
+                        completed_interference = False
                     model.reservation = None
                     progress += 1
                     continue
@@ -609,6 +731,8 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                         if value != expected:
                             raise AssertionError(f"SYSTEM_ACCEL_DIRTY_READ expected={expected:x} observed={line}")
                         accelerator_reads += 1
+                    if interfered_reservation is not None:
+                        completed_interference = True
                     continue
                 if fields[0] == "T" and int(fields[5], 16):
                     expected = model.take_interrupt(int(fields[2], 16), cycle)
@@ -620,6 +744,13 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                     mret_comparisons += int(expected[2] == 0x30200073)
                     wfi_comparisons += int(expected[2] == 0x10500073)
                     memory = expected[7]
+                    if (expected[2] & 127 == 0x2F and expected[2] >> 27 == 3 and
+                            completed_interference and interfered_reservation is not None):
+                        if expected[6] != 1:
+                            raise AssertionError("SYSTEM_RESERVATION_INTERFERENCE: SC succeeded")
+                        reservation_comparisons += 1
+                        interfered_reservation = None
+                        completed_interference = False
                     if (pending_data is not None and memory and not memory[0] and
                             memory[1] in (0x80062000, 0x40262000) and memory[4] == pending_data):
                         observed_data += 1
@@ -642,6 +773,15 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                     raise AssertionError(f"SYSTEM_TRANSLATION_COVERAGE missing {item}")
             if counts["total"] < 1000 or set(model.contexts) != {1, 2}:
                 raise AssertionError("SYSTEM_TRANSLATION_CONTEXT_THRESHOLDS")
+            asid_witnesses = [
+                {"va": address, "access": access, "mappings": mapping}
+                for (address, access), mapping in model.observed_context_mappings.items()
+                if len(mapping) >= 2 and len(set(mapping.values())) >= 2]
+            if not asid_witnesses:
+                raise AssertionError("SYSTEM_SAME_VPN_ASIDS: no distinct checked physical mappings")
+            if accelerator and reservation_comparisons < 100:
+                raise AssertionError(
+                    f"SYSTEM_RESERVATION_INTERFERENCE: required 100, observed {reservation_comparisons}")
             if accelerator and (
                     (accelerator_reads, accelerator_data_writes, accelerator_code_writes,
                      observed_data, observed_code, progress) != (100, 100, 100, 100, 100, 300) or
@@ -664,6 +804,8 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                 "required_axi_transactions": len(commands),
                 "directed_bins": {
                     **directed_bins,
+                    "same-vpn-asids": len(asid_witnesses),
+                    "coherent-reservation-interference": reservation_comparisons,
                     "accessed-clear-repair": model.trap_counts.get(13, 0),
                     "mret": mret_comparisons,
                     "wfi": wfi_comparisons,
@@ -676,14 +818,17 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                     "host-halted-validation": int(host_summary[2]),
                 },
                 "translation_bins": counts, "context_asids": dict(model.contexts),
+                "asid_mapping_witnesses": asid_witnesses,
                 "compared_events": events, "trap_counts": model.trap_counts,
                 "memory": dict(zip(("reads", "writes", "lite_reads", "lite_writes", "stalls",
                                     "independent_aw_w", "read_errors", "write_errors"),
                                    map(int, summary.groups()))),
                 "trace": experiment.relative(trace),
-                "remaining": ([] if accelerator else ["coherence"]) +
-                             ["selective-fences", "interrupts", "full-directed-matrix"],
             }
+            record["remaining"] = ([] if accelerator else ["coherence"]) + [
+                group for group, requirements in DIRECTED_REQUIREMENTS.items()
+                if any(record["directed_bins"].get(item, 0) <= 0 for item in requirements)]
+            record["status"] = "passed" if not record["remaining"] else "executed-partial"
             records.append(record)
             experiment.receipt["system_runs"] = records
             experiment.receipt["assertions"].append({
@@ -700,7 +845,7 @@ def main():
     parser.add_argument("--configuration", type=int, choices=range(4), default=0)
     parser.add_argument("--seed", type=int, choices=SEEDS)
     parser.add_argument("--accelerator", action="store_true")
-    parser.add_argument("--scenario", choices=("faults", "isa", "fences", "satp"),
+    parser.add_argument("--scenario", choices=("faults", "isa", "fences", "satp", "plic", "uart"),
                         help="Bounded top-level directed program only; no coverage-closure claim")
     parser.add_argument("--repair-of", help="Project-relative retained diagnostic being repaired")
     args = parser.parse_args()

@@ -25,9 +25,10 @@ def atomic(operation, size=3, destination=6):
 
 
 class Program:
-    def __init__(self):
+    def __init__(self, limit=ROOT):
         self.code = []
         self.image = {}
+        self.limit = limit
 
     @property
     def pc(self):
@@ -69,8 +70,8 @@ class Program:
         target = self.pc + 13 * 4
         recipe = load_constant(1, target)
         self.emit(*recipe, *([0x13] * (11 - len(recipe))), csr(0x341, 1), 0x30200073, 0x73)
-        if self.pc >= ROOT:
-            raise AssertionError("directed program overlaps its page tables")
+        if self.pc >= self.limit:
+            raise AssertionError("directed program exceeds its executable region")
         for index, word in enumerate(self.code):
             self.put(ENTRY + index * 4, word, 4)
         boot = load_constant(1, 0x200) + [csr(0x305, 1)]
@@ -467,7 +468,30 @@ def fence_workload(seed, capacity, only_satp=False):
         program.constant(5, VA + capacity * 0x1000)
         observation("first-invalid-refill-survived", ["tlb-first-invalid-round-robin"],
                     old_pages[capacity])
+        context(19, flags=0xD7)
+        program.write(LEAF + 7 * 8, (0x80004000 >> 12) << 10 | 0xDB)
+        program.write(LEAF + 8 * 8, (0x80005000 >> 12) << 10 | 0xDB)
+        program.put(0x80004FFC, i_type(0x03, 6, 3, 5, 0), 4)
+        program.put(0x80005000, i_type(0x13, 11, 0, 6, 0), 4)
+        program.put(0x80005004, 0x73, 4)
+        program.emit(0x0000000F)
+        # Evict all three relevant PTE lines without altering their contents.
+        # The 2048-byte offset conflicts for every frozen direct-mapped cache.
+        for offset in (0, 32, 64):
+            program.constant(7, LEAF + 2048 + offset)
+            program.emit(i_type(0x03, 8, 3, 7, 0))
+        program.constant(5, VA)
+        patch = program.resume_patch()
+        program.constant(1, 0)
+        program.emit(csr(0x300, 1))
+        program.constant(1, 0x40007FFC)
+        program.emit(csr(0x341, 1), 0x30200073)
+        program.resume_at(patch, program.pc)
+        cases.append(dict(number=len(cases), name="overlap-page-boundary-load",
+                          operation_pc=0x40007FFC, witness_pc=0x40008000,
+                          required_result=old_value, bins=[]))
     words, image = program.finish()
     return words, image, {"scenario": "satp" if only_satp else "fences", "cases": cases,
                           "dtlb_entries": capacity, "old_value": old_value,
-                          "new_value": new_value, "old_pa": DATA, "new_pa": DATA + 0x10000}
+                          "new_value": new_value, "old_pa": DATA, "new_pa": DATA + 0x10000,
+                          "overlap_pte": None if only_satp else LEAF + 8 * 8}
