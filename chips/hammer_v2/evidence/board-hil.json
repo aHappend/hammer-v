@@ -1,0 +1,54 @@
+{
+  "gate": "board-hil",
+  "timestamp_utc": "2026-10-29T21:02:41.477867+00:00",
+  "chip_id": "23645547322997765",
+  "heartbeat": {
+    "alive": true,
+    "age_s": 0.12,
+    "host": null,
+    "user": null,
+    "detail": "Bridge healthy"
+  },
+  "reg57_probe": {
+    "exit_code": 0,
+    "stdout": "Read register 57 (0x00000039): 178 (0x000000b2)\nFPGA diagnostics total time: 0.15 seconds"
+  },
+  "requested_runs": 3,
+  "deterministic_across_runs": true,
+  "status": "passed",
+  "runs": [
+    {
+      "run_index": 1,
+      "exit_code": 0,
+      "duration_s": 6.732,
+      "passed": true,
+      "missing_expected_tokens": [],
+      "forbidden_tokens_found": [],
+      "stdout": "Read register 57 (0x00000039): 178 (0x000000b2)\nFPGA diagnostics total time: 0.04 seconds\n",
+      "stderr": ""
+    },
+    {
+      "run_index": 2,
+      "exit_code": 0,
+      "duration_s": 6.58,
+      "passed": true,
+      "missing_expected_tokens": [],
+      "forbidden_tokens_found": [],
+      "stdout": "Read register 57 (0x00000039): 178 (0x000000b2)\nFPGA diagnostics total time: 0.04 seconds\n",
+      "stderr": ""
+    },
+    {
+      "run_index": 3,
+      "exit_code": 0,
+      "duration_s": 6.581,
+      "passed": true,
+      "missing_expected_tokens": [],
+      "forbidden_tokens_found": [],
+      "stdout": "Read register 57 (0x00000039): 178 (0x000000b2)\nFPGA diagnostics total time: 0.04 seconds\n",
+      "stderr": ""
+    }
+  ],
+  "detail": "All 3 physical FPGA HIL run(s) passed deterministically on chip 23645547322997765.",
+  "source_sha256": "b36650198cbd03daf9165ae2c9ded6cc0c4f6e39236382babc1ca5f32b3b4f1e",
+  "applicable": true
+}
