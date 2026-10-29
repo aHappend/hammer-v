@@ -121,6 +121,39 @@ the response valid after the following edge, never at the acceptance edge.
 Instruction RAM packs adjacent 32-bit words into one 64-bit refill beat,
 zero-filling a missing upper final word. Host reads remain 32-bit.
 
+### Physical RAM ports and inference boundaries
+
+Backing and cache data storage is split into generated eight-bit lane arrays.
+Each lane has one unreset rising-edge process containing a synchronous read
+and a full-byte write; byte enables select lanes rather than variable slices
+of stored words. `ramstyle` is only a target hint, not proof of RAM inference.
+No backing contents are reset or forced into registers.
+
+Instruction words are banked by word parity: even and odd banks have
+`(WORDS+1)>>1` and `WORDS>>1` rows respectively. A core refill is eight-byte
+aligned and reads one row from each populated bank. A host access selects
+one bank with address bit 2 and a row with the remaining word-address bits.
+Each bank multiplexes host/core ownership before its single read/write port.
+The host bank selector is registered alongside the synchronous read, without
+adding an interface cycle. An absent singleton odd bank has no storage.
+Data backing RAM similarly multiplexes host/core ownership onto one address
+per lane. Cache lookup and victim reads share one muxed synchronous read
+port per lane; hit/refill writes share one synchronous write port.
+Metadata and controller phases are unchanged.
+
+| Cycle/degenerate boundary | Physical-port behavior |
+|---|---|
+| Pre-edge host/core acceptance | Select address, read enable and per-lane write enables before the edge; host excludes core acceptance |
+| Post-E0 host acceptance | Selected bank/lane read registers contain pre-write bytes; enabled writes have occurred once |
+| Post-E1 host response | Existing top-level response samples that read result; no added latency |
+| Post-E0 backing acceptance | Both applicable instruction banks or the data lanes have captured the requested beat |
+| Post-E1 backing response | Existing pending/response controller publishes the captured beat and holds it under backpressure |
+| Read and write at the same address | Nonblocking full-byte writes preserve read-before-write sampling, including untouched lanes |
+| Active reset/first nonreset edge | Port writes disabled during reset; unreset read registers hidden by reset/valid gates; no unsolicited access after release |
+| WORDS=1 | Row index is constant zero; instruction odd bank omitted and upper beat word zero |
+| Odd/non-power-of-two WORDS | Full-width range checks precede port enables; absent upper final word is not read and is returned as zero |
+| Cache singleton/partial final line | Original indexing and maintenance sequence retained; refill padding and skipped writeback lanes unchanged |
+
 Cache lookup has a synchronous data/tag capture followed by a registered
 decision. Dirty victim and refill beats advance 0,1,2,3 explicitly.
 Cache data uses synchronous unreset RAM; metadata reset invalidates all lines.

@@ -1743,7 +1743,7 @@ def synthesis_case(run, name, config):
                 totals["memory_bits"] += width * size
                 state += width * size
                 memory_inference.append({
-                    "module": original_name(key, module), "type": typ,
+                    "module": original_name(key, module), "specialization": key, "type": typ,
                     "width": width, "size": size,
                     "read_ports": int(parameters.get("RD_PORTS", "0"), 2),
                     "read_clock_enable": parameters.get("RD_CLK_ENABLE"),
@@ -1771,8 +1771,67 @@ def synthesis_case(run, name, config):
         if module_state.get(module, 0) < minimum:
             raise AssertionError(f"{name}: {module} state bits required>={minimum}, "
                                  f"observed={module_state.get(module, 0)}")
+    inferred_storage = {}
+    storage_sizes = {
+        "u_imem.u_ram": config["IMEM_WORDS"] * 32,
+        "u_dmem.u_ram": config["DMEM_WORDS"] * 64,
+        "u_icache.u_cache": config["ICACHE_LINES"] * 256,
+        "u_dcache.u_cache": config["DCACHE_LINES"] * 256,
+    }
+    for path, required_bits in storage_sizes.items():
+        module = netlist["hammer_v2_top"]
+        for instance in path.split("."):
+            module = netlist[module["cells"][instance]["type"]]
+        memories = [cell for cell in module["cells"].values()
+                    if cell["type"].startswith("$mem")]
+        bits = 0
+        read_registers = []
+        for cell in memories:
+            parameters = cell["parameters"]
+            bits += int(parameters["WIDTH"], 2) * int(parameters["SIZE"], 2)
+            for parameter in ("RD_PORTS", "WR_PORTS", "WR_CLK_ENABLE"):
+                if int(parameters[parameter], 2) != 1:
+                    raise AssertionError(f"{name}: {path}: expected one synchronous "
+                                         f"read/write port, {parameter}={parameters[parameter]}")
+            clock = module["ports"]["clk"]["bits"]
+            if cell["connections"]["WR_CLK"] != clock:
+                raise AssertionError(f"{name}: {path}: write port not on the system clock")
+            if int(parameters["WR_CLK_POLARITY"], 2) != 1:
+                raise AssertionError(f"{name}: {path}: write port not rising-edge clocked")
+            if int(parameters["RD_CLK_ENABLE"], 2) == 1:
+                if cell["connections"]["RD_CLK"] != clock:
+                    raise AssertionError(f"{name}: {path}: read port not on the system clock")
+                if int(parameters["RD_CLK_POLARITY"], 2) != 1:
+                    raise AssertionError(f"{name}: {path}: read port not rising-edge clocked")
+                read_registers.append("absorbed")
+                continue
+            data = cell["connections"]["RD_DATA"]
+            registered = False
+            for flop in module["cells"].values():
+                if (flop["type"] != "$dff" or flop["connections"]["CLK"] != clock or
+                        int(flop["parameters"]["CLK_POLARITY"], 2) != 1):
+                    continue
+                ports = flop["connections"]
+                if ports["D"] == data:
+                    registered = True
+                for mux in module["cells"].values():
+                    if mux["type"] == "$mux" and mux["connections"]["Y"] == ports["D"]:
+                        inputs = (mux["connections"]["A"], mux["connections"]["B"])
+                        if inputs in ((data, ports["Q"]), (ports["Q"], data)):
+                            registered = True
+            if not registered:
+                raise AssertionError(f"{name}: {path}: memory read lacks a synchronous "
+                                     "output register or register-enable feedback mux")
+            read_registers.append("external")
+        if bits != required_bits:
+            raise AssertionError(f"{name}: {path}: inferred memory bits required="
+                                 f"{required_bits}, observed={bits}; registers do not qualify")
+        inferred_storage[path] = {"required_bits": required_bits, "inferred_bits": bits,
+                                  "memories": len(memories), "synchronous_ports": True,
+                                  "read_registers": read_registers}
     result = {"configuration": config, **totals, "state_by_original_module": module_state,
-              "state_bits_required": minimum_state, "memory_inference": memory_inference}
+              "state_bits_required": minimum_state, "memory_inference": memory_inference,
+              "inferred_storage": inferred_storage}
     (case / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     run.receipt["comparisons"][name] = result
     run.save()
@@ -2337,7 +2396,7 @@ def main():
                                            "advanced-privilege", "predictors", "mmio",
                                            "stalled-interrupts", "atomic-faults", "reservation-epochs",
                                            "final-leaves", "host-coherence", "integrated-clint",
-                                           "control-faults"),
+                                           "control-faults", "ram-inference"),
                         help="bounded preparation only; never full-suite acceptance")
     parser.add_argument("--repair-of", help="project-relative earlier failed receipt, retained unchanged")
     args = parser.parse_args()
@@ -2495,6 +2554,9 @@ def main():
         elif args.probe == "synthesis":
             run.tools(("python3", "yosys"))
             synthesis_case(run, "C", configuration("C"))
+        elif args.probe == "ram-inference":
+            run.tools(("python3", "yosys"))
+            synthesis_case(run, "A", configuration("A"))
         elif args.probe:
             run.tools(("python3", "verilator", "make", "g++"))
             program = {"integer": integer_program, "atomic": atomic_program,

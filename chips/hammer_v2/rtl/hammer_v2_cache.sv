@@ -43,9 +43,8 @@ module hammer_v2_cache #(
         reg [3:0] state;
         reg [LINES-1:0] valid, dirty;
         reg [63:0] line_base [0:LINES-1];
-        (* ramstyle = "M20K", nomem2reg *)
-        reg [63:0] data [0:LINES*4-1];
-        reg [63:0] addr_q, wdata_q, read_q, fill_q, ram_q;
+        reg [63:0] addr_q, wdata_q, read_q, fill_q;
+        wire [63:0] ram_q;
         reg [63:0] tag_q, victim_q;
         reg [7:0] strb_q;
         reg [1:0] cmd_q, beat;
@@ -68,6 +67,8 @@ module hammer_v2_cache #(
         wire [1:0] lookup_beat = accept ? req_addr[4:3] : addr_q[4:3];
         wire [AW-1:0] lookup_addr = {lookup_index,lookup_beat};
         wire [AW-1:0] victim_addr = {active_index,beat};
+        wire [AW-1:0] read_addr = state == WB_READ ? victim_addr : lookup_addr;
+        wire read_enable = rst_n && (lookup || state == WB_READ);
         wire write_hit = state == LOOK && !bad_q && hit &&
             cmd_q == 2'b01 && !READ_ONLY;
         wire fill_write = state == FILL_STORE;
@@ -75,7 +76,7 @@ module hammer_v2_cache #(
             {index_q,addr_q[4:3]};
         wire [63:0] write_data = fill_write ? fill_q : wdata_q;
         wire [7:0] write_mask = fill_write ? 8'hff : strb_q;
-        integer lane, n;
+        integer n;
         assign req_ready = rst_n && state == IDLE;
         assign rsp_valid = rst_n && state == RESPONSE;
         assign rsp_rdata = rsp_valid ? read_q : 64'b0;
@@ -88,15 +89,16 @@ module hammer_v2_cache #(
         assign mem_wdata = mem_write ? ram_q : 64'b0;
         assign mem_wstrb = mem_write ? 8'hff : 8'b0;
         assign mem_rsp_ready = rst_n && (state == WB_WAIT || state == FILL_WAIT);
-        always @(posedge clk) begin
-            if (rst_n) begin
-                if (lookup) ram_q <= data[lookup_addr];
-                if (state == WB_READ) ram_q <= data[victim_addr];
-                if (write_hit || fill_write)
-                    for (lane = 0; lane < 8; lane = lane + 1)
-                        if (write_mask[lane])
-                            data[write_addr][lane*8 +: 8] <= write_data[lane*8 +: 8];
+        for (genvar lane = 0; lane < 8; lane = lane + 1) begin : g_lane
+            (* ramstyle = "M20K", nomem2reg *)
+            reg [7:0] data [0:LINES*4-1];
+            reg [7:0] byte_q;
+            always @(posedge clk) begin
+                if (read_enable) byte_q <= data[read_addr];
+                if (rst_n && (write_hit || fill_write) && write_mask[lane])
+                    data[write_addr] <= write_data[lane*8 +: 8];
             end
+            assign ram_q[lane*8 +: 8] = byte_q;
         end
         always @(posedge clk or negedge rst_n) begin
             if (!rst_n) begin
