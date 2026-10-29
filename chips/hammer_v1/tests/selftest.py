@@ -208,9 +208,8 @@ def missing_log_checks():
                           "only a requested pass with missing evidence raises")
                     equal(child[missing] in str(error), True,
                           "missing raw log identified in failure")
-                    equal((probe.directory / "receipt.json").exists(), False,
-                          "rejected pass does not create an intermediate receipt")
-                    probe.finish("failed", error="original fixture diagnostic")
+                    equal((probe.directory / "receipt.json").exists(), True,
+                          "rejected pass retains a failed receipt without caller retry")
                 else:
                     equal(status != "passed" or missing is None, True,
                           "missing raw evidence cannot finalize a pass")

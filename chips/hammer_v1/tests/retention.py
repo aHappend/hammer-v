@@ -141,11 +141,11 @@ class Evidence:
             record["exit_code"] = 1
             record["retention_errors"] = [
                 f"RAW_LOG_MISSING: {path}" for path in missing_logs]
+        (self.directory / "receipt.json").write_text(json.dumps(record, indent=2) + "\n")
         if missing_logs and status == "passed":
             raise ToolFailure(
                 f"evidence finalization failed: {record['retention_errors']!r}; "
                 f"receipt={(self.directory / 'receipt.json').relative_to(ROOT)}")
-        (self.directory / "receipt.json").write_text(json.dumps(record, indent=2) + "\n")
         return str((self.directory / "receipt.json").relative_to(ROOT))
 
 
