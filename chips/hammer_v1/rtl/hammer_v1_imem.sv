@@ -23,15 +23,15 @@ module hammer_v1_imem #(
     wire [IW-1:0] hi = N == 1 ? {IW{1'b0}} : h_addr[IW+1:2];
     integer lane;
     always @(posedge clk) begin
-        if (rst_n) begin
-            if (i_req && !i_bad) iq <= mem[ii];
-            if (h_req) begin
-                hq <= mem[hi];
-                if (h_write)
-                    for (lane = 0; lane < 4; lane = lane + 1)
-                        if (h_wstrb[lane])
-                            mem[hi][lane*8 +: 8] <= h_wdata[lane*8 +: 8];
-            end
+        if (rst_n && i_req && !i_bad) iq <= mem[ii];
+    end
+    always @(posedge clk) begin
+        if (rst_n && h_req) begin
+            hq <= mem[hi];
+            if (h_write)
+                for (lane = 0; lane < 4; lane = lane + 1)
+                    if (h_wstrb[lane])
+                        mem[hi][lane*8 +: 8] <= h_wdata[lane*8 +: 8];
         end
     end
     always @(posedge clk or negedge rst_n) begin

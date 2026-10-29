@@ -106,6 +106,16 @@ description or generic synthesis, determines whether the target closes.
 Scratchpads use byte strobes and registered reads with held data. Dmem requests
 occur exactly on MEM-to-WB transfer. Address classification and alignment are
 resolved before requests; full 64-bit comparisons prevent high-address aliasing.
+Each scratchpad describes its CPU and host ports in separate clock-only
+processes, with each port's synchronous read and any byte-enabled write kept
+together. This is the inferred dual-port M20K structure; there is no cross-port
+write-priority network. Top-level halted/running ownership excludes simultaneous
+CPU and host requests, so cross-port collisions are outside the internal
+interface contract. Within a port, a write captures the old word in its read
+register; host write responses do not expose that data. Port data holds when
+that port has no request. Reset gates access and clears response validity
+separately, without resetting either RAM contents or RAM read registers.
+No additional response or pipeline stage is introduced.
 MMIO uses aligned eight-byte addresses and lane-shifted stores. The adapter
 retains request payload, independently retires AW/W, and completes only on B/R.
 FENCE drains naturally through the in-order single-outstanding pipeline.
