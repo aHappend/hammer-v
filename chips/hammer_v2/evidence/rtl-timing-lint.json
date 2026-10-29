@@ -1,6 +1,6 @@
 {
   "gate": "rtl-timing-lint",
-  "timestamp_utc": "2026-10-29T19:11:55.200032+00:00",
+  "timestamp_utc": "2026-10-29T19:18:47.539343+00:00",
   "root": "/data/sufeng/hammer-v2-line/workspace/project",
   "status": "passed",
   "max_comb_div_width": 0,
@@ -10,7 +10,7 @@
     "rtl/hammer_v2_alu.sv": "89b5fe972c11dc15b0b1680b630a1f6b5f19029324e6d20c586e925785c4f939",
     "rtl/hammer_v2_atomic.sv": "91ed2b8c233062538de11e51b795e52e4091ce9348c17a22b43d53cdd4a2c591",
     "rtl/hammer_v2_axi_lite.sv": "5d9a2022d454d56bbb7b01e6f05d49f88f0edb667e5b53792f2dd55d889f8597",
-    "rtl/hammer_v2_cache.sv": "4ab2fe79d0dbb53c71c07848e81ab03337d8cff78d649532e55cc2c3c022d926",
+    "rtl/hammer_v2_cache.sv": "7811808108af822e58cb47ec694971afdcc6a05dca8c4a3c0969ec87d9f72bf2",
     "rtl/hammer_v2_clint.sv": "de7b496c7fbac90143a892071427c78e78e33a2ae71614f04299d6ddd24ee447",
     "rtl/hammer_v2_core.sv": "c160b5683aecf33ecc7bd240e42591fd8865b6f9c9122fac896876f77ef27613",
     "rtl/hammer_v2_csr.sv": "1f16aebac08de73f761aaf15f6153acbb256aa472523c9175c58a4971c047993",
@@ -22,7 +22,7 @@
     "rtl/hammer_v2_imem.sv": "b5c8d22e069804f7eb1e55266762f4ca080d493ab3ef207320b8c62c260c67f1",
     "rtl/hammer_v2_muldiv.sv": "a0abeb501a411ee781b11b5352d70521ec0fd06458055666ae9bdd4da598ce5b",
     "rtl/hammer_v2_predictor.sv": "72b9adaf5781e44ae2f9e58efdcb6a318ab086a4cea12851adf03c395754591a",
-    "rtl/hammer_v2_ram.sv": "29b3cde099a1e096486a255a89d97a44583c13c2ab2e7dc8ed637749b03dbc4c",
+    "rtl/hammer_v2_ram.sv": "cf21ea4cfc813ef61e392c6bdf324e2c41870798cd536dd8828655f04d2e6885",
     "rtl/hammer_v2_regfile.sv": "ccf6176ff0e8c81309bf166c7cce12c741eec5cecf8264b565315ac95fa2ef6b",
     "rtl/hammer_v2_top.sv": "7efe65cceeba03d41fcf4bdb8b801a95a6478742e68c7cb66cc7e98d48384776",
     "rtl/hammer_v2_trap.sv": "cb96f9092b6025697e431681fc4f7649ae796cd47b50b44fabbd959fcfa29f00"
