@@ -1,0 +1,334 @@
+{
+  "gate": "quartus-sta",
+  "timestamp_utc": "2026-10-29T15:49:02.730250+00:00",
+  "project_dir": "/data/sufeng/hammer-v1-line/workspace/project/.vulcan/engineering/run-0001/quartus_sta_work",
+  "revision": "top",
+  "clock_filter": "clk_main",
+  "min_setup_slack_ns": 0.0,
+  "min_hold_slack_ns": 0.0,
+  "status": "passed",
+  "map_summary": {
+    "exists": true,
+    "path": "/data/sufeng/hammer-v1-line/workspace/project/.vulcan/engineering/run-0001/quartus_sta_work/top.map.rpt",
+    "error_count": 0,
+    "errors": [],
+    "lpm_divide_error_count": 0,
+    "lpm_divide_errors": [],
+    "warning_10268_count": 0,
+    "warning_10268": [],
+    "uninferred_ram_count": 0,
+    "uninferred_rams": []
+  },
+  "sta_summary": {
+    "exit_code": 0,
+    "netlist_mode": "post_fit",
+    "clocks": [
+      {
+        "name": "clk_main",
+        "period_ns": 10.0
+      }
+    ],
+    "wns_setup_ns": 0.125,
+    "wns_hold_ns": 0.043,
+    "unconstrained_setup_paths": 0,
+    "unconstrained_functional_endpoints": 0,
+    "unapproved_timing_exceptions": 0,
+    "failing_setup_count": 0,
+    "failing_hold_count": 0,
+    "setup_paths": [
+      {
+        "slack_ns": 0.125,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.125,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.128,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.128,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.131,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.131,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.132,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.132,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.134,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.134,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.138,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.138,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.145,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.145,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.151,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.151,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[51]"
+      },
+      {
+        "slack_ns": 0.151,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[21]"
+      },
+      {
+        "slack_ns": 0.151,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[21]"
+      },
+      {
+        "slack_ns": 0.152,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      },
+      {
+        "slack_ns": 0.152,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_dmem:u_dmem",
+        "to_node": "altsyncram:mem_b6_rtl_0|altsyncram_jvo1:auto_generated|ram_block1a7~reg0|hammer_v1_core:u_core|fetch_pc[47]"
+      }
+    ],
+    "hold_paths": [
+      {
+        "slack_ns": 0.043,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "w_v|hammer_v1_core:u_core|w_v"
+      },
+      {
+        "slack_ns": 0.049,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[13]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[13]"
+      },
+      {
+        "slack_ns": 0.049,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "w_dmem|hammer_v1_core:u_core|w_dmem"
+      },
+      {
+        "slack_ns": 0.05,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[8]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[8]"
+      },
+      {
+        "slack_ns": 0.051,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_muldiv:u_muldiv|done|hammer_v1_core:u_core|hammer_v1_muldiv:u_muldiv|done"
+      },
+      {
+        "slack_ns": 0.052,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[14]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[14]"
+      },
+      {
+        "slack_ns": 0.055,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "fetch_pc[1]|hammer_v1_core:u_core|fetch_pc[1]"
+      },
+      {
+        "slack_ns": 0.061,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "x_m_started|hammer_v1_core:u_core|x_m_started"
+      },
+      {
+        "slack_ns": 0.063,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_axi_lite:u_axi",
+        "to_node": "w_pending|hammer_v1_axi_lite:u_axi|w_pending"
+      },
+      {
+        "slack_ns": 0.066,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[7]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[7]"
+      },
+      {
+        "slack_ns": 0.067,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[3]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[3]"
+      },
+      {
+        "slack_ns": 0.069,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[4]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[4]"
+      },
+      {
+        "slack_ns": 0.07,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[11]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[11]"
+      },
+      {
+        "slack_ns": 0.07,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[6]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[6]"
+      },
+      {
+        "slack_ns": 0.07,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[2]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[2]"
+      },
+      {
+        "slack_ns": 0.07,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[1]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[1]"
+      },
+      {
+        "slack_ns": 0.07,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[0]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[0]"
+      },
+      {
+        "slack_ns": 0.071,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[10]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[10]"
+      },
+      {
+        "slack_ns": 0.071,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_core:u_core",
+        "to_node": "hammer_v1_predictor:u_predictor|valid[9]|hammer_v1_core:u_core|hammer_v1_predictor:u_predictor|valid[9]"
+      },
+      {
+        "slack_ns": 0.071,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v1_imem:u_imem",
+        "to_node": "error_q|hammer_v1_imem:u_imem|error_q"
+      }
+    ],
+    "stderr_tail": []
+  },
+  "detail": "Timing closed: Setup WNS = 0.125 ns",
+  "top_module": "hammer_v1_top",
+  "clock_port": "clk",
+  "clock_period_ns": 10.0,
+  "target_frequency_mhz": 100.0,
+  "fmax_mhz": 101.27,
+  "critical_path_delay_ns": 9.875,
+  "parameters": {},
+  "source_sha256": "14b126e833904f1dd8d7ab0a673456082a19d253380f360e1e1083a4326f2e50",
+  "applicable": true
+}
