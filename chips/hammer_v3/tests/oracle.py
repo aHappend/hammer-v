@@ -503,7 +503,9 @@ class SystemMachine(FaultMachine):
 
     def trap(self, cause, tval):
         pc = self.pc
-        target = 1 if self.priv != 3 and self.csrs[0x302] & (1 << cause) else 3
+        interrupt = int(bool(cause & (1 << 63)))
+        delegation = self.csrs.get(0x303, 0) if interrupt else self.csrs[0x302]
+        target = 1 if self.priv != 3 and delegation & (1 << (cause & 63)) else 3
         status = self.csrs[0x300]
         if target == 1:
             self.csrs[0x141], self.csrs[0x142], self.csrs[0x143] = pc, cause, tval
@@ -517,8 +519,9 @@ class SystemMachine(FaultMachine):
         self.priv = target
         self.pc = self.csrs[0x105 if target == 1 else 0x305] & ~3
         self.trap_counts[cause] = self.trap_counts.get(cause, 0) + 1
-        self.stopped = cause == 9
-        return ("T", pc, cause, tval, target, 0)
+        self.reservation = None
+        self.stopped = not interrupt and cause == 9
+        return ("T", pc, cause, tval, target, interrupt)
 
     def csr_read(self, address):
         if address == 0x100:
@@ -582,6 +585,9 @@ class SystemMachine(FaultMachine):
                 if self.priv < 3:
                     status &= ~(1 << 17)
                 self.csrs[0x300] = status
+            elif instruction == 0x10500073:
+                if self.priv == 0 or self.priv == 1 and self.csrs[0x300] & (1 << 21):
+                    return self.trap(2, instruction)
             elif instruction & 0xFE007FFF == 0x12000073:
                 if self.priv == 0 or self.priv == 1 and self.csrs[0x300] & (1 << 20):
                     return self.trap(2, instruction)

@@ -135,6 +135,9 @@ def generate_top_wiring(top, source, folder, dmem_words, parameters=None, extra_
     configuration = {"IMEM_WORDS": 128, "DMEM_WORDS": dmem_words, "BTB_ENTRIES": 1,
                      "PRED_MODE": 0, "ICACHE_LINES": 1, "DCACHE_LINES": 1}
     configuration.update(parameters or {})
+    if responding_memory:
+        (folder / "system_configuration.svh").write_text(
+            f"localparam integer SYSTEM_DMEM_WORDS = {configuration['DMEM_WORDS']};\n")
     instance = top + " #(" + ", ".join(
         f".{key}({value})" for key, value in configuration.items()) + ") dut (\n"
     instance += ",\n".join(f".{name}({name})" for _, _, name in ports) + ");\n"

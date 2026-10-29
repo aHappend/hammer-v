@@ -22,6 +22,7 @@ CONFIGURATIONS = (
     (8, 8, 64, 64, 16384, 8192), (16, 16, 16, 4, 4096, 4096),
 )
 SEEDS = (17, 29, 43)
+TIMER_DEADLINE = 1000000
 PARAMETERS = ("ITLB_ENTRIES", "DTLB_ENTRIES", "ICACHE_LINES", "DCACHE_LINES",
               "IMEM_WORDS", "DMEM_WORDS")
 
@@ -30,7 +31,9 @@ DIRECTED_REQUIREMENTS = {
     "selective-sfence-survivors-and-overlapping-walks": (
         "fence-all-all", "fence-va-all", "fence-all-asid", "fence-va-asid",
         "fence-zero-register-operand", "fence-global-survivor", "fence-inherited-global",
-        "fence-selective-survivor", "overlapping-walk-context", "dirty-pte-remap"),
+        "fence-selective-survivor", "overlapping-walk-context", "dirty-pte-remap",
+        "fence-no-stale-refill", "tlb-hit-miss-replacement", "tlb-first-invalid-round-robin",
+        "same-vpn-asids", "satp-drain-invalidation", "permission-hit-reevaluation"),
     "timer-preemption-and-interrupt-delegation": (
         "timer-preemption", "delegated-interrupt", "mret", "sret", "wfi"),
     "clint-host-and-legacy-mmio-preservation": (
@@ -40,7 +43,8 @@ DIRECTED_REQUIREMENTS = {
         "root-read-error", "middle-read-error", "bottom-read-error",
         "superpage-misalignment", "accessed-clear-repair", "dirty-clear-repair",
         "noncanonical", "page-edges", "root-high-rejection", "sum-mxr-mprv",
-        "permissions-fetch-load-store-amo", "failed-sc-permission", "precise-fault-no-side-effect"),
+        "permissions-fetch-load-store-amo", "failed-sc-permission", "precise-fault-no-side-effect",
+        "wrong-path-fault-suppression"),
     "complete-isa-csr-hazard-and-reservation-regression": (
         "rv64i-classes", "all-m-and-word", "all-amo-word-double", "lr-sc-success-failure",
         "coherent-reservation-interference", "forwarding-load-use", "csr-permissions",
@@ -54,7 +58,10 @@ DIRECTED_REQUIREMENTS = {
 
 
 def coverage_closure(rows):
-    executed = len(rows) == 12 and all(row.get("actual") is not None for row in rows)
+    identities = {(tuple(row["configuration"]), row["seed"]) for row in rows}
+    expected = {(configuration, seed) for configuration in CONFIGURATIONS for seed in SEEDS}
+    executed = (len(rows) == len(expected) and identities == expected and
+                all(row.get("actual") is not None for row in rows))
     closure = {
         "twelve-seeded-integrated-system-runs": executed and all(
             row["actual"].get("translation_comparisons", 0) >= 1000 and
@@ -118,13 +125,23 @@ def workload(seed, rounds=20, iterations=64):
     boot = load_constant(5, 0x40000000) + load_constant(6, rng.getrandbits(64))
     boot += [s_type(3, 5, 6, 0), i_type(0x03, 7, 3, 5, 0),
              s_type(0, 5, 6, 3), i_type(0x03, 7, 4, 5, 3)]
+    boot += load_constant(25, 0x200) + [csr(0x305, 25)]
+    boot += load_constant(25, (1 << 7) | (1 << 5)) + [csr(0x304, 25)]
+    boot += load_constant(25, 1 << 5) + [csr(0x303, 25)]
+    boot += load_constant(25, 0x02004000) + load_constant(26, TIMER_DEADLINE)
+    boot += [s_type(3, 25, 26, 0), i_type(0x03, 26, 3, 25, 0)]
     boot += load_constant(1, satps[0]) + [csr(0x180, 1)]
     boot += load_constant(2, (1 << 8) | (1 << 13)) + [csr(0x302, 2)]
     boot += load_constant(3, 1 << 11) + [csr(0x300, 3)]
     boot += load_constant(4, 0x10000) + [csr(0x341, 4), 0x30200073]
     if len(boot) > 128:
         raise AssertionError("system bootstrap exceeds compact host image")
-    boot += [0x13] * (128 - len(boot))
+    boot += [0x13] * (256 - len(boot))
+    machine_handler = load_constant(25, 0x02004000) + load_constant(26, MASK64)
+    machine_handler += [s_type(3, 25, 26, 0), i_type(0x13, 31, 0, 31, 1)]
+    machine_handler += load_constant(26, 1 << 5) + [
+        csr(0x344, 26, operation=2), 0x10500073, 0x30200073]
+    boot[128:128 + len(machine_handler)] = machine_handler
 
     supervisor = load_constant(10, 0) + load_constant(11, rounds)
     supervisor += load_constant(12, satps[0]) + load_constant(13, satps[1])
@@ -136,6 +153,8 @@ def workload(seed, rounds=20, iterations=64):
     handler = [csr(0x142, 0, 20, 2), csr(0x141, 0, 21, 2),
                csr(0x143, 0, 22, 2), i_type(0x13, 23, 0, 0, 13)]
     handler += [branch(20, 23, 0, 0x10300 - (0x10200 + len(handler) * 4))]
+    handler += load_constant(23, (1 << 63) | 5)
+    handler += [branch(20, 23, 0, 0x10380 - (0x10200 + len(handler) * 4))]
     handler += [i_type(0x13, 10, 0, 10, 1), csr(0x180, 0, 15, 2)]
     handler += [branch(15, 12, 1, 12), csr(0x180, 13), 0x0080006F, csr(0x180, 12),
                 0x12000073, csr(0x141, 14)]
@@ -145,6 +164,7 @@ def workload(seed, rounds=20, iterations=64):
     repair += [i_type(0x03, 24, 3, 23, 0), i_type(0x13, 24, 6, 24, 0x40),
                s_type(3, 23, 24, 0), 0x12000073, 0x10200073]
     emit(0x10300, repair)
+    emit(0x10380, [csr(0x104, 0), i_type(0x13, 31, 0, 31, 1), 0x10200073])
     user = load_constant(5, 0x40003000) + load_constant(7, iterations)
     user += load_constant(9, 1) + load_constant(16, 0xFFFFFFC040003000)
     user += load_constant(17, 0x80062000) + load_constant(28, 0x40262000)
@@ -173,9 +193,63 @@ class IntegratedMachine(SystemMachine):
         self.contexts = Counter()
         self.completed_round_trips = 0
         self.in_user = False
+        self.csrs.update({0x303: 0, 0x304: 0, 0x344: 0})
+        self.timer_compare = MASK64
+        self.timer_interrupts = 0
+        self.delegated_interrupts = 0
+        self.clint_compares = 0
+
+    def csr_read(self, address):
+        if address == 0x104:
+            return self.csrs[0x304] & self.csrs[0x303] & 0x222
+        if address == 0x144:
+            return self.csrs[0x344] & self.csrs[0x303]
+        return super().csr_read(address)
+
+    def csr_write(self, address, value):
+        if address == 0x104:
+            mask = self.csrs[0x303] & 0x222
+            self.csrs[0x304] = (self.csrs[0x304] & ~mask) | (value & mask)
+        elif address == 0x144:
+            mask = self.csrs[0x303] & 2
+            self.csrs[0x344] = (self.csrs[0x344] & ~mask) | (value & mask)
+        else:
+            super().csr_write(address, value)
 
     def read_memory(self, address, size):
+        if 0x02004000 <= address and address + size <= 0x02004008:
+            self.clint_compares += 1
+            return (self.timer_compare >> (8 * (address - 0x02004000))) & ((1 << (8 * size)) - 1)
         return sum(self.memory[address + byte] << (8 * byte) for byte in range(size))
+
+    def write_memory(self, address, size, value):
+        if 0x02004000 <= address and address + size <= 0x02004008:
+            shift = 8 * (address - 0x02004000)
+            mask = ((1 << (size * 8)) - 1) << shift
+            self.timer_compare = (self.timer_compare & ~mask) | ((value << shift) & mask)
+        else:
+            super().write_memory(address, size, value)
+
+    def take_interrupt(self, cause, cycle):
+        number = cause & 63
+        delegated = bool(self.csrs[0x303] & (1 << number))
+        target = 1 if delegated else 3
+        enabled = (self.priv < target or self.priv == target and
+                   self.csrs[0x300] & (1 << (1 if target == 1 else 3)))
+        if not (cause >> 63 and enabled and self.csrs[0x304] & (1 << number)):
+            raise AssertionError(f"SYSTEM_INTERRUPT_NOT_ENABLED cause={cause:x} cycle={cycle}")
+        if number == 7:
+            if self.priv != 0 or cycle < self.timer_compare + 3 or self.timer_interrupts:
+                raise AssertionError(f"SYSTEM_TIMER_PREEMPTION cycle={cycle} cmp={self.timer_compare}")
+            self.timer_interrupts += 1
+        elif number == 5:
+            if self.priv != 0 or not delegated or not self.csrs[0x344] & (1 << 5):
+                raise AssertionError("SYSTEM_DELEGATED_INTERRUPT_NOT_PENDING")
+            self.delegated_interrupts += 1
+        else:
+            raise AssertionError(f"SYSTEM_UNEXPECTED_INTERRUPT {cause:x}")
+        self.event_accesses = {}
+        return self.trap(cause, 0)
 
     def read_pte(self, address):
         if not (0x80000000 <= address <= 0x800FFFF8 or
@@ -197,6 +271,7 @@ class IntegratedMachine(SystemMachine):
                  0 <= result.pa < len(self.words) * 4 if access == 0 else
                  0x80000000 <= result.pa < 0x80100000 or
                  0x10000000 <= result.pa < 0x10000000 + 8 * self.dmem_words or
+                 0x02004000 <= result.pa < 0x02004008 or
                  0x40000000 <= result.pa < 0x40010000)
         if not legal:
             raise ArchitecturalTrap((1, 5, 7, 7)[access], address)
@@ -276,7 +351,7 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
             "--top-module", "top_probe", "--Mdir", experiment.relative(objects),
             "-o", "../simulation", "-I" + experiment.relative(experiment.folder), "-Itests",
             "-DSYSTEM_MEMORY", *(["-DSYSTEM_ACCEL"] if accelerator else []),
-            "-GCONTINUE_TRAPS=1", "-GMAX_CYCLES=5000000", "tests/top_probe.sv",
+            "-GPROGRAM_WORDS=256", "-GCONTINUE_TRAPS=1", "-GMAX_CYCLES=5000000", "tests/top_probe.sv",
             *[str(p.relative_to(probe.ROOT)) for p in sorted(experiment.rtl_folder.glob("*.sv"))]])
         for seed in seeds:
             folder = experiment.folder / f"seed-{seed}"
@@ -305,8 +380,14 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
             observed_data = observed_code = progress = 0
             pending_data = pending_code = None
             last_admission = -1
+            cycle = 0
+            mret_comparisons = 0
+            wfi_comparisons = 0
             for line in trace.read_text().splitlines():
                 fields = line.split()
+                if fields[0] == "K":
+                    cycle = int(fields[1])
+                    continue
                 if fields[0] == "V":
                     axi.accept(fields)
                     continue
@@ -340,10 +421,15 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
                             raise AssertionError(f"SYSTEM_ACCEL_DIRTY_READ expected={expected:x} observed={line}")
                         accelerator_reads += 1
                     continue
-                expected = model.step()
+                if fields[0] == "T" and int(fields[5], 16):
+                    expected = model.take_interrupt(int(fields[2], 16), cycle)
+                else:
+                    expected = model.step()
                 compare_retirement(line, expected, events)
                 model.accept_event(expected)
                 if expected[0] == "R":
+                    mret_comparisons += int(expected[2] == 0x30200073)
+                    wfi_comparisons += int(expected[2] == 0x10500073)
                     memory = expected[7]
                     if (pending_data is not None and memory and not memory[0] and
                             memory[1] in (0x80062000, 0x40262000) and memory[4] == pending_data):
@@ -353,7 +439,8 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
                         observed_code += 1
                         pending_code = None
                 events += 1
-            if not model.stopped or model.completed_round_trips != metadata["rounds"]:
+            if (not model.stopped or model.completed_round_trips != metadata["rounds"] or
+                    model.timer_interrupts != 1 or model.delegated_interrupts != 1):
                 raise AssertionError("SYSTEM_CONTEXT_INCOMPLETE: terminal software/round trips missing")
             summary = re.search(r"MEMORY_SUMMARY reads=(\d+) writes=(\d+) lite_reads=(\d+) lite_writes=(\d+) stalls=(\d+) independent_aw_w=(\d+) read_errors=(\d+) write_errors=(\d+)", output)
             if not summary or min(int(summary[n]) for n in (1, 2, 5, 6)) == 0:
@@ -374,6 +461,9 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
                                      f"data={accelerator_data_writes}/{observed_data} "
                                      f"code={accelerator_code_writes}/{observed_code} progress={progress}")
             axi_result = axi.finish()
+            host_summary = re.search(r"HOST_SUMMARY comparisons=(\d+) active_blocked=(\d+)", output)
+            if not host_summary or tuple(map(int, host_summary.groups())) != (7, 4):
+                raise AssertionError("SYSTEM_HOST_INCOMPLETE")
             record = {
                 "configuration": list(configuration), "seed": seed, "status": "executed-partial",
                 "actual": {"translation_comparisons": counts["total"],
@@ -385,10 +475,15 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False)
                 "required_axi_transactions": len(commands),
                 "directed_bins": {
                     "accessed-clear-repair": model.trap_counts.get(13, 0),
-                    "mret": sum(1 for line in trace.read_text().splitlines()
-                                if line.startswith("R ") and int(line.split()[2], 16) == 0x30200073),
+                    "mret": mret_comparisons,
+                    "wfi": wfi_comparisons,
                     "sret": model.user_returns,
+                    "timer-preemption": model.timer_interrupts,
+                    "delegated-interrupt": model.delegated_interrupts,
                     "legacy-mmio": min(int(summary[3]), int(summary[4])),
+                    "clint": model.clint_compares,
+                    "host-byte-write": int(host_summary[1]),
+                    "host-halted-validation": int(host_summary[2]),
                 },
                 "translation_bins": counts, "context_asids": dict(model.contexts),
                 "compared_events": events, "trap_counts": model.trap_counts,
@@ -415,8 +510,15 @@ def main():
     parser.add_argument("--configuration", type=int, choices=range(4), default=0)
     parser.add_argument("--seed", type=int, choices=SEEDS)
     parser.add_argument("--accelerator", action="store_true")
+    parser.add_argument("--repair-of", help="Project-relative retained diagnostic being repaired")
     args = parser.parse_args()
     experiment = probe.Probe("verifier-integrated-system")
+    if args.repair_of:
+        prior = probe.ROOT / args.repair_of
+        if not prior.is_file() or probe.ROOT not in prior.resolve().parents:
+            raise ValueError("--repair-of must name an existing project-local receipt")
+        experiment.receipt["repair_of"] = args.repair_of
+        experiment.persist()
     try:
         run_configuration(experiment, CONFIGURATIONS[args.configuration],
                           (args.seed,) if args.seed else SEEDS, args.accelerator)
