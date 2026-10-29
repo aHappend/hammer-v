@@ -191,3 +191,53 @@ def compare_cache(path, vectors, lines, words, readonly):
     if not done:
         raise AssertionError("missing cache completion record")
     return oracle.counts
+
+
+def compare_integrated_cache(path, lines, image, readonly):
+    word_size = 4 if readonly else 8
+    oracle = CacheOracle(lines, len(image) // word_size, readonly)
+    oracle.backing[:] = image
+    accepted_edge = None
+    backing_response = None
+    complete = False
+    with path.open() as stream:
+        for raw in stream:
+            parts = raw.split()
+            kind, edge = parts[0], int(parts[1])
+            if kind not in ("Q", "B", "V", "R", "DONE") or complete:
+                raise AssertionError("invalid integrated cache event")
+            try:
+                if kind == "Q":
+                    fields = (int(parts[2]), int(parts[3], 16), int(parts[4], 16),
+                              int(parts[5], 16))
+                    accepted_edge = edge
+                    oracle.prepare(*fields, 0)
+                elif kind == "B":
+                    write, address, data, strobe = (int(parts[2]), int(parts[3], 16),
+                                                    int(parts[4], 16), int(parts[5], 16))
+                    offset = address - oracle.base
+                    expected = int.from_bytes(oracle.backing[offset:offset + 8], "little")
+                    if backing_response is not None:
+                        raise AssertionError("multiple outstanding backing requests")
+                    backing_response = (expected, 0)
+                    oracle.backing_request((write, address, data, strobe, 0))
+                elif kind == "V":
+                    fields = (int(parts[2], 16), int(parts[3]))
+                    if fields != backing_response:
+                        raise AssertionError(f"backing response expected={backing_response}, observed={fields}")
+                    backing_response = None
+                elif kind == "R":
+                    data, error, first_response = int(parts[2], 16), int(parts[3]), int(parts[4])
+                    if backing_response is not None or accepted_edge is None:
+                        raise AssertionError("premature cache response")
+                    oracle.response(data, error, first_response - accepted_edge)
+                    accepted_edge = None
+                else:
+                    if parts[2:] != ["0"] or oracle.pending or backing_response is not None:
+                        raise AssertionError("cache channel did not drain before completion")
+                    complete = True
+            except AssertionError as error:
+                raise AssertionError(f"integrated cache edge {edge}, event {kind}: {error}") from error
+    if not complete or oracle.counts["responses"] == 0:
+        raise AssertionError("missing integrated cache comparisons/completion")
+    return oracle.counts

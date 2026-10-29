@@ -21,7 +21,8 @@ import uuid
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rv64_model import Fault, Machine
-from cache_model import compare_cache
+from cache_model import compare_cache, compare_integrated_cache
+import clint_model
 
 ROOT = Path(__file__).resolve().parent.parent
 SUITES = ("compatibility", "privileged", "atomic", "cache", "sensitivity", "synthesis", "portable")
@@ -60,7 +61,8 @@ class Run:
         self.receipt = {
             "schema": 1, "suite": suite, "acceptance_evidence": not preparation,
             "argv": [sys.executable, *sys.argv], "cwd": ".",
-            "start": now(), "end": None, "timeout_s": 2700,
+            "start": now(), "end": None, "timeout_s": 86400,
+            "patrol_target_s": 2700, "compact_vvp_limit_s": 60,
             "source_sha256": hashes, "commands": [], "tool_versions": {},
             "coverage": {}, "comparisons": {}, "exit_status": None,
         }
@@ -74,8 +76,11 @@ class Run:
             json.dumps(self.receipt, indent=2) + "\n")
 
     def command(self, label, argv, cwd=ROOT, timeout=3600, expect_exit=0):
-        if time.monotonic() - self.started >= 2650:
-            raise RuntimeError("check safeguard: 2700-second execution budget nearly exhausted")
+        remaining = 2700 - (time.monotonic() - self.started)
+        if remaining <= 50:
+            raise RuntimeError("2700-second patrol scheduling target exhausted; "
+                               "86400-second outer ceiling does not extend it")
+        timeout = min(timeout, remaining - 30)
         stdout = self.directory / f"{label}.stdout.txt"
         stderr = self.directory / f"{label}.stderr.txt"
         record = {"argv": [str(x) for x in argv], "cwd": self.relative(cwd),
@@ -136,6 +141,8 @@ def read_events(path):
         5: ("IQ", ("flags", "pc")),
         6: ("I", ("retirements",)),
         7: ("II", ("meip", "seip")),
+        10: ("IIQI", ("imem", "address", "data", "strobe")),
+        11: ("", ()),
     }
     with path.open("rb") as stream:
         while header := stream.read(12):
@@ -152,7 +159,7 @@ def read_events(path):
             yield kind, edge, dict(zip(fields, struct.unpack("<" + fmt, payload)))
 
 
-def compare_top(run, path, program, dwords, legacy=True, reference=False):
+def compare_top(run, path, program, dwords, legacy=True, reference=False, terminal_cause=3):
     model = Machine(program, dwords)
     counts = {"retirements": 0, "traps": 0, "registers": 0, "memory_beats": 0,
               "host_initial_reads": 0, "ex_mem_forward": 0, "mem_wb_forward": 0,
@@ -164,12 +171,19 @@ def compare_top(run, path, program, dwords, legacy=True, reference=False):
     counts["interrupt_sequence"] = []
     counts["external_input_changes"] = 0
     counts["retire_pc_hits"] = {}
+    counts["operand_samples"] = {}
+    counts["result_samples"] = {}
+    counts["halt_resume_epochs"] = 0
+    counts["host_execution_writes"] = 0
     complete = False
     stopped = False
     for kind, edge, event in read_events(path):
         if kind == 1:
             if stopped:
                 raise AssertionError("retirement after terminal trap")
+            insn = event["insn"]
+            operands = [model.regs[(insn >> 15) & 31],
+                        model.regs[(insn >> 20) & 31]]
             try:
                 expected = dataclasses.asdict(model.step(edge))
             except Fault as fault:
@@ -182,6 +196,13 @@ def compare_top(run, path, program, dwords, legacy=True, reference=False):
                                          f"expected={value:#x}, observed={event[name]:#x}")
             counts["retirements"] += 1
             pc_key = str(event["pc"])
+            samples = counts["operand_samples"].setdefault(pc_key, [])
+            if operands not in samples and len(samples) < 16:
+                samples.append(operands)
+            results = counts["result_samples"].setdefault(pc_key, [])
+            result = [event["rd_we"], event["rd"], event["rd_data"], event["mem_write"]]
+            if result not in results and len(results) < 16:
+                results.append(result)
             counts["retire_pc_hits"][pc_key] = counts["retire_pc_hits"].get(pc_key, 0) + 1
             privilege = str(event["priv"])
             counts["privileges"][privilege] = counts["privileges"].get(privilege, 0) + 1
@@ -207,7 +228,7 @@ def compare_top(run, path, program, dwords, legacy=True, reference=False):
             mismatch = actual[:2] != expected[:2] if reference else actual != expected
             if mismatch:
                 raise AssertionError(f"trap expected={expected}, observed={actual}")
-            stopped = legacy or event["cause"] == 3
+            stopped = legacy or event["cause"] == terminal_cause
             counts["traps"] += 1
             cause = str(event["cause"])
             counts["trap_causes"][cause] = counts["trap_causes"].get(cause, 0) + 1
@@ -246,6 +267,18 @@ def compare_top(run, path, program, dwords, legacy=True, reference=False):
                 raise AssertionError(f"invalid external interrupt input event: {event}")
             model.external_pending = (event["meip"] << 11) | (event["seip"] << 9)
             counts["external_input_changes"] += 1
+        elif kind == 10:
+            if event["imem"]:
+                raise AssertionError("instruction rewrite requires explicit program-epoch model")
+            offset = event["address"]
+            for lane in range(8):
+                if event["strobe"] & (1 << lane):
+                    model.memory[offset + lane] = (event["data"] >> (lane * 8)) & 255
+            model.reservation = None
+            counts["host_execution_writes"] += 1
+        elif kind == 11:
+            model.reservation = None
+            counts["halt_resume_epochs"] += 1
     if not complete or counts["registers"] != 32 or counts["memory_beats"] != dwords:
         raise AssertionError(f"incomplete public comparison: {counts}, complete={complete}")
     if not counts["retirements"] or not counts["traps"]:
@@ -505,8 +538,397 @@ def supervisor_timer_program():
     return code
 
 
+OPERAND_PAIRS = (
+    (0, 0), (1, 1), ((1 << 64) - 1, 1), (1, (1 << 64) - 1),
+    (1 << 63, (1 << 64) - 1), ((1 << 63) - 1, 1 << 63),
+    (1 << 31, 31), ((1 << 32) - 1, 32),
+)
+
+
+def integer_directed_cases(run, name, config):
+    """Pack independently specified operand experiments into legal B-sized images."""
+    snippets = []
+    for word in (False, True):
+        pairs = list(OPERAND_PAIRS)
+        if word:
+            pairs[4:6] = [(1 << 31, (1 << 64) - 1), ((1 << 31) - 1, 1 << 31)]
+        opcode = 0x3B if word else 0x33
+        operations = [(0, 0), (0, 32), (1, 0), (5, 0), (5, 32)]
+        if not word:
+            operations += [(f3, 0) for f3 in (2, 3, 4, 6, 7)]
+        operations += [(f3, 1) for f3 in ((0, 4, 5, 6, 7) if word else range(8))]
+        for f3, f7 in operations:
+            operation = f"R-{opcode:02x}-{f7:02x}-{f3}"
+            for a, b in pairs:
+                prefix = [*constant(1, a), *constant(2, b)]
+                snippets.append((operation, prefix, rr(3, 1, 2, f3, f7, opcode), [a, b]))
+        for f3, high in ((0, 0), (1, 0), (5, 0), (5, 0x400)):
+            operation = f"I-{0x1B if word else 0x13:02x}-{f3}-{high}"
+            for index, (a, _) in enumerate(pairs):
+                immediate = (-2048, -1, 0, 1, 31, 32, 63, 2047)[index]
+                if f3:
+                    immediate &= 31 if word else 63
+                    immediate |= high
+                snippets.append((operation, constant(1, a),
+                                 ri(3, 1, immediate, f3, 0x1B if word else 0x13), [a]))
+    for f3 in (2, 3, 4, 6, 7):
+        for index, (a, _) in enumerate(OPERAND_PAIRS):
+            snippets.append((f"I-13-{f3}", constant(1, a),
+                             ri(3, 1, (-2048, -1, 0, 1, 31, 32, 63, 2047)[index], f3), [a]))
+
+    denominator = {}
+    compared = {}
+    program, obligations = [], []
+    part = 0
+
+    def execute():
+        nonlocal part
+        counts = top_case(run, f"{name}-{part:02d}", [*program, 0x00100073],
+                          "verilator", config)
+        for operation, pc, expected in obligations:
+            actual = counts["operand_samples"].get(str(pc), [])
+            if counts["retire_pc_hits"].get(str(pc)) != 1 or len(actual) != 1:
+                raise AssertionError(f"{name}: directed site {pc:#x} did not retire exactly once")
+            if actual[0][:len(expected)] != expected:
+                raise AssertionError(f"{name}: directed {operation} operand precondition: "
+                                     f"expected={expected}, observed={actual}")
+            compared[operation] = compared.get(operation, 0) + 1
+        part += 1
+
+    for operation, prefix, instruction, operands in snippets:
+        if len(program) + len(prefix) + 2 > config["IMEM_WORDS"]:
+            execute()
+            program, obligations = [], []
+        program.extend(prefix)
+        obligations.append((operation, len(program) * 4, operands))
+        program.append(instruction)
+        denominator[operation] = denominator.get(operation, 0) + 1
+    if program:
+        execute()
+    if compared != denominator or any(value < 8 for value in compared.values()):
+        raise AssertionError(f"{name}: incomplete directed operand denominator: {compared}")
+    result = {"required": denominator, "compared": compared, "images": part,
+              "scope": "RV64 register/immediate integer and M-extension operations"}
+    run.receipt["coverage"][name] = result
+    run.save()
+    return result
+
+
+def memory_control_directed_cases(run, name, config):
+    snippets = []
+    for f3 in range(7):
+        for index, (value, _) in enumerate(OPERAND_PAIRS):
+            offset = (index & 7) & ~((1 << (f3 & 3)) - 1)
+            snippets.append((f"load-{f3}", [*constant(1, value), store(20, 1)],
+                             ri(3, 20, offset, f3, 3), [0x10000000], []))
+    for f3 in range(4):
+        for index, (value, _) in enumerate(OPERAND_PAIRS):
+            offset = (index & 7) & ~((1 << f3) - 1)
+            snippets.append((f"store-{f3}", constant(1, value),
+                             store(20, 1, offset, f3), [0x10000000, value],
+                             [ri(3, 20, 0, 3, 3)]))
+    for f3 in (0, 1, 4, 5, 6, 7):
+        for a, b in OPERAND_PAIRS:
+            snippets.append((f"branch-{f3}", [*constant(1, a), *constant(2, b)],
+                             branch(1, 2, 8, f3), [a, b], [store(20, 1)]))
+    for index, (value, _) in enumerate(OPERAND_PAIRS):
+        imm = (value >> 12) & 0xFFFFF
+        snippets.extend(((f"LUI", [], (imm << 12) | (3 << 7) | 0x37, [], []),
+                         (f"AUIPC", [], (imm << 12) | (3 << 7) | 0x17, [], []),
+                         (f"JAL", [], (8 << 20) | (3 << 7) | 0x6F, [], [store(20, 1)])))
+    program, obligations, denominator, compared = [0x10000A37], [], {}, {}
+    part = 0
+
+    def execute():
+        nonlocal part
+        counts = top_case(run, f"{name}-{part:02d}", [*program, 0x00100073],
+                          "verilator", config)
+        for operation, pc, expected in obligations:
+            actual = counts["operand_samples"].get(str(pc), [])
+            if counts["retire_pc_hits"].get(str(pc)) != 1 or len(actual) != 1 or (
+                    actual[0][:len(expected)] != expected):
+                raise AssertionError(f"{name}: {operation} operand/completion denominator at {pc:#x}")
+            compared[operation] = compared.get(operation, 0) + 1
+        part += 1
+
+    for operation, prefix, instruction, operands, suffix in snippets:
+        if len(program) + len(prefix) + len(suffix) + 2 > config["IMEM_WORDS"]:
+            execute()
+            program, obligations = [0x10000A37], []
+        program.extend(prefix)
+        obligations.append((operation, len(program) * 4, operands))
+        program.extend((instruction, *suffix))
+        denominator[operation] = denominator.get(operation, 0) + 1
+    # JALR targets depend on the packed image position.
+    for index in range(8):
+        if len(program) + 4 > config["IMEM_WORDS"]:
+            execute()
+            program, obligations = [0x10000A37], []
+        target = (len(program) + 3) * 4
+        program.append(ri(1, 0, target | (index & 1)))
+        obligations.append(("JALR", len(program) * 4, [target | (index & 1)]))
+        program.extend((ri(3, 1, 0, 0, 0x67), store(20, 1)))
+        denominator["JALR"] = denominator.get("JALR", 0) + 1
+    execute()
+    if compared != denominator or any(value < 8 for value in compared.values()):
+        raise AssertionError(f"{name}: memory/control directed denominator not met")
+    result = {"required": denominator, "compared": compared, "images": part}
+    run.receipt["coverage"][name] = result
+    run.save()
+    return result
+
+
+def amo(op, rd, rs1=20, rs2=2, width=3, ordering=0):
+    return ((op << 27) | (ordering << 25) | (rs2 << 20) |
+            (rs1 << 15) | (width << 12) | (rd << 7) | 0x2F)
+
+
+def lock_program(width=3):
+    code = [0x10000A37, ri(2, 0, 1), ri(22, 0, 32)]
+    loop = len(code)
+    code.extend((
+        amo(2, 3, rs2=0, width=width, ordering=3),
+        store(20, 0, f3=width),
+        amo(3, 4, width=width, ordering=3),
+        amo(2, 3, rs2=0, width=width, ordering=3),
+        amo(3, 5, width=width, ordering=3),
+        ri(6, 20, 0, width, 3),
+        store(20, 0, f3=width),
+        ri(22, 22, -1),
+        branch(22, 0, (loop - len(code) - 8) * 4, 1),
+        0x0000000F, 0x00100073,
+    ))
+    return code, ((loop + 2) * 4, (loop + 4) * 4)
+
+
+def reservation_program():
+    code = [0x10000A37, ri(21, 20, 4), ri(23, 20, 8), ri(2, 0, 7)]
+    outcomes = []
+
+    def sequence(lr_width, sc_width, intervention=(), sc_address=20, lr_address=20,
+                 success=False):
+        code.append(amo(2, 3, rs1=lr_address, rs2=0, width=lr_width))
+        code.extend(intervention)
+        outcomes.append((len(code) * 4, int(not success)))
+        code.append(amo(3, 4, rs1=sc_address, width=sc_width))
+
+    sequence(2, 3)
+    sequence(3, 2)
+    sequence(2, 2, sc_address=21)
+    sequence(2, 2, sc_address=20, lr_address=21)
+    sequence(3, 3, (amo(2, 3, rs1=23, rs2=0),))
+    for lane in range(8):
+        sequence(3, 3, (store(20, 2, lane, 0),))
+    for width in (2, 3):
+        sequence(width, width, (amo(0, 0, width=width),))
+        sequence(width, width, (store(23, 2),), success=True)
+        outcomes.append((len(code) * 4, 1))
+        code.append(amo(3, 4, width=width))
+        sequence(width, width, success=True)
+        code.append(amo(2, 0, rs2=0, width=width))
+        outcomes.append((len(code) * 4, 0))
+        code.append(amo(3, 0, width=width))
+    code.extend((0x0000000F, 0x00100073))
+    return code, outcomes
+
+
+def counter_program():
+    code = []
+    for address in (0xB00, 0xB02):
+        for value in (0, (1 << 64) - 1, 19):
+            code.extend(constant(1, value))
+            code.extend((csr_insn(address, 2, 1), csr_insn(address, 3, 0, 2),
+                         csr_insn(0xC00 if address == 0xB00 else 0xC02, 4, 0, 2)))
+    for address in (0x301, 0x180, 0x300, 0x302, 0x303, 0x305, 0x105, 0x341, 0x141):
+        code.extend((ri(1, 0, -1), csr_insn(address, 0, 1),
+                     csr_insn(address, 2, 0, 2), csr_insn(address, 0, 0)))
+    # All six CSR forms, zero-source suppression and read-only identity reads.
+    for f3 in (1, 2, 3, 5, 6, 7):
+        code.extend((ri(1, 0, 5), csr_insn(0x340, 3, 1, f3),
+                     csr_insn(0x340, 4, 0, 2), csr_insn(0x340, 5, 0, f3)))
+    for address in (0xF11, 0xF12, 0xF13, 0xF14):
+        code.extend((csr_insn(address, 2, 0, 2), csr_insn(address, 3, 0, 3),
+                     csr_insn(address, 4, 0, 6), csr_insn(address, 5, 0, 7)))
+    code.append(0x00100073)
+    return code
+
+
+def cache_pressure_program(config, seed):
+    rng = random.Random(seed)
+    code = [0x10000A37, *constant(1, config["DCACHE_LINES"] * 32),
+            rr(21, 20, 1), *constant(2, rng.getrandbits(64)), ri(22, 0, 32)]
+    loop = len(code)
+    code.extend((store(20, 2), ri(3, 20, 0, 3, 3), store(20, 3),
+                 store(21, 2), ri(4, 21, 0, 3, 3), ri(5, 20, 0, 3, 3)))
+    for lane in range(8):
+        code.extend((store(20, 2, lane, 0), ri(6, 20, lane, 4, 3)))
+    code.extend((ri(2, 2, 1), 0x0000100F, ri(22, 22, -1)))
+    code.append(branch(22, 0, (loop - len(code)) * 4, 1))
+    code.extend((0x0000000F, 0x00100073))
+    return code
+
+
+def delegated_exception_program():
+    code = [ri(1, 0, 512), csr_insn(0x105, 0, 1),
+            ri(1, 0, 1), ri(1, 1, 8, 1), csr_insn(0x302, 0, 1),
+            ri(1, 0, 64), csr_insn(0x341, 0, 1), 0x30200073]
+    code.extend([0] * (16 - len(code)))
+    code.extend((0x00000073, ri(4, 0, 99), 0x00100073))
+    code.extend([0] * (128 - len(code)))
+    code.extend((csr_insn(0x142, 25, 0, 2), csr_insn(0x143, 26, 0, 2),
+                 csr_insn(0x141, 27, 0, 2), ri(27, 27, 4),
+                 csr_insn(0x141, 0, 27), 0x10200073))
+    return code
+
+
+def precise_store_program():
+    code = [0x10000A37, ri(2, 0, 7), store(20, 2), ri(2, 0, 99),
+            ri(1, 0, 512), csr_insn(0x305, 0, 1), 0xFFFFFFFF,
+            store(20, 2), ri(3, 20, 0, 3, 3), 0x00100073]
+    code.extend([0] * (128 - len(code)))
+    code.extend((ri(4, 20, 0, 3, 3), csr_insn(0x341, 1, 0, 2),
+                 ri(1, 1, 8), csr_insn(0x341, 0, 1), 0x30200073))
+    return code
+
+
+def atomic_directed_cases(run, name, config):
+    compared = {}
+    pairs = OPERAND_PAIRS
+    for width in (2, 3):
+        for op in (0, 1, 4, 8, 12, 16, 20, 24, 28):
+            program = [0x10000A37]
+            obligations = []
+            for index, (old, rhs) in enumerate(pairs):
+                if width == 2 and index in (4, 5):
+                    old, rhs = ((1 << 31, (1 << 64) - 1) if index == 4 else
+                                ((1 << 31) - 1, 1 << 31))
+                program.extend((*constant(1, old), *constant(2, rhs), store(20, 1)))
+                obligations.append((len(program) * 4, rhs))
+                program.extend((amo(op, 3, width=width, ordering=index & 3),
+                                ri(4, 20, 0, 3, 3)))
+            program.extend((amo(op, 0, width=width, ordering=3), 0x00100073))
+            label = f"{name}-amo-{width}-{op}"
+            counts = top_case(run, label, program, "verilator", config)
+            for pc, rhs in obligations:
+                if counts["retire_pc_hits"].get(str(pc)) != 1 or (
+                        counts["operand_samples"].get(str(pc)) != [[0x10000000, rhs]]):
+                    raise AssertionError(f"{label}: required operand pair did not execute at {pc:#x}")
+            compared[f"{width}-{op}"] = len(obligations)
+        program = [0x10000A37]
+        obligations = []
+        for index, (old, rhs) in enumerate(pairs):
+            program.extend((*constant(1, old), *constant(2, rhs), store(20, 1)))
+            lr_pc = len(program) * 4
+            program.extend((amo(2, 3, rs2=0, width=width, ordering=index & 3),
+                            amo(3, 4, width=width, ordering=index & 3),
+                            amo(3, 5, width=width, ordering=index & 3)))
+            obligations.append(lr_pc)
+        program.append(0x00100073)
+        counts = top_case(run, f"{name}-lr-sc-{width}", program, "verilator", config)
+        for pc in obligations:
+            if any(counts["retire_pc_hits"].get(str(site)) != 1 for site in (pc, pc + 4, pc + 8)):
+                raise AssertionError(f"{name}: LR/SC operand denominator did not retire")
+            if counts["result_samples"].get(str(pc + 4)) != [[1, 4, 0, 1]] or (
+                    counts["result_samples"].get(str(pc + 8)) != [[1, 5, 1, 0]]):
+                raise AssertionError(f"{name}: successful/failed SC result denominator")
+        compared[f"{width}-LR"] = compared[f"{width}-SC"] = len(obligations)
+    if len(compared) != 22 or any(value < 8 for value in compared.values()):
+        raise AssertionError(f"{name}: atomic width/operation denominator incomplete")
+    run.receipt["coverage"][name] = {"required": {key: 8 for key in compared},
+                                    "compared": compared, "aq_rl_combinations_per_operation": 4}
+    run.save()
+    return compared
+
+
+def reservation_case(run, name, config):
+    program, outcomes = reservation_program()
+    counts = top_case(run, name, program, "verilator", config)
+    for pc, expected in outcomes:
+        insn = program[pc // 4]
+        rd = (insn >> 7) & 31
+        result = [int(rd != 0), rd, expected if rd else 0, int(expected == 0)]
+        if counts["retire_pc_hits"].get(str(pc)) != 1 or (
+                counts["result_samples"].get(str(pc)) != [result]):
+            raise AssertionError(f"{name}: reservation result at {pc:#x}, "
+                                 f"required={result}, observed={counts['result_samples'].get(str(pc))}")
+    counts["reservation_outcomes_required"] = len(outcomes)
+    counts["reservation_outcomes_compared"] = len(outcomes)
+    run.save()
+    return counts
+
+
+def lock_case(run, name, config, width):
+    program, (failed_pc, successful_pc) = lock_program(width)
+    counts = top_case(run, name, program, "verilator", config)
+    for pc, expected in ((failed_pc, [1, 4, 1, 0]), (successful_pc, [1, 5, 0, 1])):
+        if counts["retire_pc_hits"].get(str(pc)) != 32 or (
+                counts["result_samples"].get(str(pc)) != [expected]):
+            raise AssertionError(f"{name}: 32-lock denominator/result not met at {pc:#x}")
+    counts.update(lock_acquisitions_required=32, lock_acquisitions_compared=32,
+                  sc_retry_failures_compared=32, scope="single-hart competing-store interference")
+    run.save()
+    return counts
+
+
+def cache_pressure_case(run, name, config, seed):
+    counts = top_case(run, name, cache_pressure_program(config, seed), "verilator",
+                      config, cache_traffic=True)
+    thresholds = {"icache": {"read_hits": 16, "misses": 16},
+                  "dcache": {"read_hits": 16, "write_hits": 16,
+                             "misses": 16, "dirty_evictions": 8}}
+    for channel, required in thresholds.items():
+        for item, minimum in required.items():
+            if counts[channel][item] < minimum:
+                raise AssertionError(f"{name}: monitored {channel}.{item}: "
+                                     f"required>={minimum}, observed={counts[channel][item]}")
+    counts["cache_thresholds"] = thresholds
+    counts["seed"] = seed
+    run.save()
+    return counts
+
+
+def clint_case(run, name, seed=17, simulator="verilator"):
+    case = run.directory / name
+    case.mkdir()
+    stimulus = clint_model.vectors(seed)
+    vector_path = case / "vectors.txt"
+    vector_path.write_text("".join(
+        f"{reset} {valid} {write} {size} {address:016x} {data:016x} {strobe:02x} {ready}\n"
+        for reset, valid, write, size, address, data, strobe, ready in stimulus))
+    sources = ["rtl/hammer_v2_clint.sv", "tests/clint_bridge.sv"]
+    if simulator == "iverilog":
+        binary = case / "sim.vvp"
+        run.command(name + "-compile", ["iverilog", "-g2012", "-Wall", "-s", "clint_bridge",
+                                        "-o", run.relative(binary), *sources])
+        executable = ["vvp", run.relative(binary)]
+    else:
+        key = ("clint", simulator)
+        if key in run.build_cache:
+            executable = run.build_cache[key]
+        else:
+            obj = case / "compile-obj"
+            run.command(name + "-compile", ["verilator", "--binary", "--timing", "-Wno-fatal",
+                        "--top-module", "clint_bridge", "--Mdir", run.relative(obj),
+                        "-j", "2", *sources])
+            binary = case / "simulator"
+            shutil.copyfile(obj / "Vclint_bridge", binary)
+            binary.chmod(0o755)
+            shutil.rmtree(obj)
+            executable = [run.relative(binary)]
+            run.build_cache[key] = executable
+    event_path = case / "events.txt"
+    run.command(name + "-simulate", [*executable, f"+vectors={run.relative(vector_path)}",
+                f"+events={run.relative(event_path)}"],
+                timeout=60 if simulator == "iverilog" else 3600)
+    counts = clint_model.compare(event_path, stimulus)
+    run.receipt["comparisons"][name] = counts
+    run.save()
+    return counts
+
+
 def top_case(run, name, program, simulator="iverilog", config=None, reference=False,
-             source_root=ROOT, irq_trigger_pc=None):
+             source_root=ROOT, irq_trigger_pc=None, cache_traffic=False,
+             terminal_cause=3, pause_pc=None, pause_write=False):
     config = config or {"IMEM_WORDS": 256, "DMEM_WORDS": 128, "PRED_MODE": 0,
                         "BTB_ENTRIES": 16, "ICACHE_LINES": 4,
                         "DCACHE_LINES": 4, "LEGACY_TRAPS": 1}
@@ -538,7 +960,8 @@ def top_case(run, name, program, simulator="iverilog", config=None, reference=Fa
         argv += [f"-G{k}={v}" for k, v in config.items()]
         if reference:
             argv.append("-DPARENT_REFERENCE")
-        run.command(f"{name}-compile", [*argv, *rtl, "tests/top_bridge.sv"])
+        observers = [] if reference else ["tests/cache_observer.sv"]
+        run.command(f"{name}-compile", [*argv, *rtl, "tests/top_bridge.sv", *observers])
         binary = case / "simulator"
         shutil.copyfile(obj / "Vtop_bridge", binary)
         binary.chmod(0o755)
@@ -547,13 +970,29 @@ def top_case(run, name, program, simulator="iverilog", config=None, reference=Fa
     run.build_cache[key] = executable
     event_path = case / "events.bin"
     extra_args = [] if irq_trigger_pc is None else [f"+irq_trigger_pc={irq_trigger_pc:x}"]
+    extra_args.append(f"+terminal_cause={terminal_cause:x}")
+    if pause_pc is not None:
+        extra_args += [f"+pause_pc={pause_pc:x}", f"+pause_write={int(pause_write)}"]
+    if cache_traffic:
+        if simulator != "verilator" or reference:
+            raise AssertionError("bound public-cache-pin monitors require V2 compiled simulation")
+        extra_args += [f"+icache_events={run.relative(case / 'icache.txt')}",
+                       f"+dcache_events={run.relative(case / 'dcache.txt')}"]
     run.command(f"{name}-simulate", [
         *executable, f"+program={run.relative(case / 'program.hex')}",
         f"+data={run.relative(case / 'data.hex')}",
         f"+events={run.relative(event_path)}", "+cycles=200000", *extra_args,
     ], timeout=60 if simulator == "iverilog" else 3600)
     counts = compare_top(run, event_path, padded, config["DMEM_WORDS"],
-                         bool(config["LEGACY_TRAPS"]), reference=reference)
+                         bool(config["LEGACY_TRAPS"]), reference=reference,
+                         terminal_cause=terminal_cause)
+    if cache_traffic:
+        for prefix, lines, image, readonly in (
+                ("i", config["ICACHE_LINES"],
+                 b"".join(word.to_bytes(4, "little") for word in padded), True),
+                ("d", config["DCACHE_LINES"], bytes(config["DMEM_WORDS"] * 8), False)):
+            counts[prefix + "cache"] = compare_integrated_cache(
+                case / (prefix + "cache.txt"), lines, image, readonly)
     run.receipt["comparisons"][name] = counts
     run.save()
     return counts
@@ -739,7 +1178,8 @@ def portable_case(run):
     bundle.mkdir()
     copied = {}
     forbidden = (
-        ("private absolute path", re.compile(r"(?:/(?:data|home|Users|root|tmp)/|[~]/)[^\s\"']+")),
+        ("private absolute path", re.compile(
+            r"(?<![\w./-])(?:/(?:data|home|Users|root|tmp)/|[~]/)[^\s\"']+")),
         ("private key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
         ("GitHub credential", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")),
         ("AWS credential", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
@@ -1090,7 +1530,11 @@ def main():
     parser.add_argument("--probe", choices=("smoke", "integer", "atomic", "privilege", "timer", "faults", "memory", "synthesis",
                                            "portable", "clean-copy-child", "parameters", "cache-leaf",
                                            "parent", "mutants", "mutants-remaining",
-                                           "interrupts", "random-matrix"),
+                                           "interrupts", "random-matrix", "parameter-matrix",
+                                           "directed-integer", "reservations", "locks", "counters",
+                                           "delegated-exception", "cache-pressure", "clint",
+                                           "halt-reservation", "boundaries", "directed-memory",
+                                           "atomic-denominators", "precise-store"),
                         help="bounded preparation only; never full-suite acceptance")
     parser.add_argument("--repair-of", help="project-relative earlier failed receipt, retained unchanged")
     args = parser.parse_args()
@@ -1104,7 +1548,58 @@ def main():
             run.save()
         run.receipt["comparisons"]["model_analytical_cases"] = model_selfcheck()
         run.save()
-        if args.probe == "random-matrix":
+        if args.probe in ("directed-memory", "atomic-denominators", "precise-store"):
+            run.tools(("python3", "verilator", "make", "g++"))
+            if args.probe == "directed-memory":
+                memory_control_directed_cases(run, "B-memory-control", configuration("B"))
+            elif args.probe == "atomic-denominators":
+                atomic_directed_cases(run, "B-atomic-directed", configuration("B"))
+            else:
+                top_case(run, "B-precise-store", precise_store_program(), "verilator",
+                         configuration("B"))
+        elif args.probe == "halt-reservation":
+            run.tools(("python3", "verilator", "make", "g++"))
+            program = [0x10000A37, ri(2, 0, 7), amo(2, 3, rs2=0),
+                       amo(3, 4), ri(5, 20, 0, 3, 3), 0x00100073]
+            for write in (False, True):
+                counts = top_case(run, f"B-halt-host-{int(write)}", program, "verilator",
+                                  configuration("B"), pause_pc=8, pause_write=write)
+                if counts["halt_resume_epochs"] != 1 or counts["host_execution_writes"] != int(write):
+                    raise AssertionError("halt/host/resume sequence not observed")
+        elif args.probe == "boundaries":
+            run.tools(("python3", "verilator", "make", "g++"))
+            top_case(run, "C-fetch-end", [ri(1, 0, 7)], "verilator", configuration("C"),
+                     terminal_cause=1)
+            program = [0x10000A37, ri(1, 0, -1), store(20, 1, 128),
+                       ri(2, 20, 128, 3, 3), 0x0000100F, 0x00100073]
+            top_case(run, "D-last-beat", program, "verilator", configuration("D"))
+        elif args.probe == "clint":
+            run.tools(("python3", "iverilog", "vvp", "verilator", "make", "g++"))
+            clint_case(run, "clint-icarus", simulator="iverilog")
+            clint_case(run, "clint-verilator")
+        elif args.probe == "cache-pressure":
+            run.tools(("python3", "verilator", "make", "g++"))
+            for name in ("A", "B"):
+                cache_pressure_case(run, name + "-cache-seed17", configuration(name), 17)
+        elif args.probe in ("directed-integer", "reservations", "locks", "counters",
+                            "delegated-exception"):
+            run.tools(("python3", "verilator", "make", "g++"))
+            config = configuration("B")
+            if args.probe == "directed-integer":
+                integer_directed_cases(run, "B-directed", config)
+            elif args.probe == "reservations":
+                reservation_case(run, "B-reservations", config)
+            elif args.probe == "locks":
+                for width in (2, 3):
+                    lock_case(run, f"B-locks-{width}", config, width)
+            elif args.probe == "counters":
+                top_case(run, "B-counters", counter_program(), "verilator", config)
+            else:
+                counts = top_case(run, "B-delegated-exception", delegated_exception_program(),
+                                  "verilator", config)
+                if counts["trap_causes"].get("8") != 1 or counts["returns"] != 2:
+                    raise AssertionError("delegated ECALL/SRET comparison not reached")
+        elif args.probe == "random-matrix":
             run.tools(("python3", "verilator", "make", "g++"))
             random_case(run, "A-seed17", 17, configuration("A"))
             random_case(run, "B-seed29", 29, configuration("B"))
@@ -1134,9 +1629,9 @@ def main():
             run.tools(("python3", "iverilog", "vvp", "verilator", "make", "g++"))
             cache_case(run, "D-singleton", 1, 17, False, "iverilog")
             cache_case(run, "I-partial", 1, 3, True, "verilator")
-        elif args.probe == "parameters":
+        elif args.probe in ("parameters", "parameter-matrix"):
             run.tools(("python3", "iverilog", "vvp"))
-            parameter_cases(run, compact=True)
+            parameter_cases(run, compact=args.probe == "parameters")
         elif args.probe == "clean-copy-child":
             run.tools(("python3", "iverilog", "vvp", "verilator", "make", "g++", "yosys"))
             top_case(run, "compact-icarus", smoke_program())
