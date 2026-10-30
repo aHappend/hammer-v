@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import dataclass
 import struct
 
-from architecture import signed
+from architecture import branch_condition, signed
 from rv64_reference import Commit, Machine
 from system_execution import Access, Fault, Instruction
 from system_memory import AtomicRequest, MemoryExecution, TranslationRequest
@@ -421,7 +421,11 @@ class Core:
                         (word >> 25 & 63) << 5 | (word >> 8 & 15) << 1
                     target = (x.fetched.pc + signed(displacement, 13)) & MASK
                 self.predictor.resolve(x.fetched.pc, target,
-                                       x.result.next_pc != (x.fetched.pc + 4) & MASK,
+                                       branch_condition(
+                                           x.word >> 12 & 7,
+                                           x.registers[x.word >> 15 & 31],
+                                           x.registers[x.word >> 20 & 31])
+                                       if x.opcode == 0x63 else True,
                                        x.opcode == 0x63)
         discard = self.killed or serial or pending_stop or m_fault or w_fault or \
             redirect is not None or fault_transfer or serial_commit

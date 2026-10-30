@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from architecture import PageFault, XLEN_MASK, amo, leaf, muldiv, signed, walk
+from architecture import PageFault, XLEN_MASK, amo, branch_condition, leaf, muldiv, signed, walk
 
 
 MASK = XLEN_MASK
@@ -496,11 +496,9 @@ class Machine:
             displacement = ((instruction >> 31) << 12) | \
                 ((instruction >> 7 & 1) << 11) | \
                 ((instruction >> 25 & 63) << 5) | (instruction >> 8 & 15) << 1
-            predicates = {0: x == y, 1: x != y, 4: signed(x) < signed(y),
-                          5: signed(x) >= signed(y), 6: x < y, 7: x >= y}
-            if funct3 not in predicates:
+            if funct3 not in (0, 1, 4, 5, 6, 7):
                 illegal()
-            if predicates[funct3]:
+            if branch_condition(funct3, x, y):
                 next_pc = (pc + signed(displacement, 13)) & MASK
         elif opcode in (0x03, 0x23):
             store = opcode == 0x23

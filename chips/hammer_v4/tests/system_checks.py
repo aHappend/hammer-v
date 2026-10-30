@@ -226,6 +226,10 @@ class Execution:
             "--out", (out_relative / "harness-components").as_posix(),
         ], "harness-components")
         self.run(ROOT, [
+            "python3", "tests/system_predictor_checks.py",
+            "--out", (out_relative / "predictor-alias").as_posix(),
+        ], "branch-predicate-alias-checks")
+        self.run(ROOT, [
             "python3", "tests/system_execution_checks.py",
             "--out", (out_relative / "architectural-memory").as_posix(),
         ], "architectural-memory-integration")

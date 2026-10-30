@@ -13,6 +13,17 @@ def signed(value, bits=64):
     return value - (1 << bits) if value & (1 << (bits - 1)) else value
 
 
+def branch_condition(funct3, first, second):
+    """A taken branch may target PC+4; its predicate is still true."""
+    first, second = first & XLEN_MASK, second & XLEN_MASK
+    predicates = {0: first == second, 1: first != second,
+                  4: signed(first) < signed(second), 5: signed(first) >= signed(second),
+                  6: first < second, 7: first >= second}
+    if funct3 not in predicates:
+        raise ValueError(f"Invalid conditional branch function: {funct3}")
+    return predicates[funct3]
+
+
 def canonical(va):
     va &= XLEN_MASK
     return va < (1 << 38) or va >= (1 << 64) - (1 << 38)
