@@ -139,6 +139,7 @@ def peripheral_workload(unit):
     words, image = program.finish()
     return words, image, {
         "scenario": unit, "cases": [], "operations": operations,
+        "final_memory_addresses": sorted(program.final_addresses),
         "interrupt_reads": interrupt_reads, "script": script,
         "frames": vectors.frames, "streams": vectors.streams,
         "recipe_bins": vectors.coverage, "leaf_only_commands": skipped,

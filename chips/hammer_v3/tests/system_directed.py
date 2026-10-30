@@ -29,6 +29,7 @@ class Program:
         self.code = []
         self.image = {}
         self.limit = limit
+        self.final_addresses = set()
 
     @property
     def pc(self):
@@ -41,6 +42,7 @@ class Program:
         self.code.extend(load_constant(register, value))
 
     def write(self, address, value):
+        self.final_addresses.add(address & ~7)
         self.constant(7, address)
         self.constant(8, value)
         self.emit(s_type(3, 7, 8, 0))
@@ -220,7 +222,9 @@ def fault_workload(seed):
                       access=0, operation_pc=0x40004FFC, target_pc=0x40006000,
                       witness_pc=witness_pc))
     words, image = program.finish()
-    return words, image, {"scenario": "faults", "cases": cases}
+    return words, image, {"scenario": "faults", "cases": cases,
+                          "final_memory_addresses": sorted(program.final_addresses |
+                                                           {DATA, DATA + 0xFF8})}
 
 
 def isa_workload(seed):
@@ -291,6 +295,8 @@ def isa_workload(seed):
     program.emit(csr(0x180, 0, 6, 2))
     words, image = program.finish()
     return words, image, {"scenario": "isa", "cases": cases,
+                          "final_memory_addresses": [*range(0x10000000, 0x10000040, 8),
+                                                     DATA, DATA + 8],
                           "labels": {str(pc): name for pc, name in labels.items()}}
 
 
@@ -492,6 +498,16 @@ def fence_workload(seed, capacity, only_satp=False):
                           required_result=old_value, bins=[]))
     words, image = program.finish()
     return words, image, {"scenario": "satp" if only_satp else "fences", "cases": cases,
+                           "final_memory_addresses": sorted(program.final_addresses | {DATA}),
                           "dtlb_entries": capacity, "old_value": old_value,
                           "new_value": new_value, "old_pa": DATA, "new_pa": DATA + 0x10000,
                           "overlap_pte": None if only_satp else LEAF + 8 * 8}
+
+
+def final_state_workload(seed):
+    """Unconsumed final store: retirement alone cannot prove its persistence."""
+    program = Program()
+    program.write(0x8006F000, random.Random(seed).getrandbits(64))
+    words, image = program.finish()
+    return words, image, {"scenario": "final-state", "cases": [],
+                          "final_memory_addresses": sorted(program.final_addresses)}

@@ -16,6 +16,8 @@ from oracle import (ArchitecturalTrap, MASK64, SystemMachine, TranslationCache, 
                     s_type, sv39)
 from scenarios import branch
 from system_directed import fault_workload, isa_workload, fence_workload
+from system_directed import final_state_workload
+from final_state import FinalState, ObservedMemory, write_plan
 from system_peripherals import peripheral_workload, peripheral_machine, MAILBOX
 from peripherals import compare_waveform
 
@@ -77,6 +79,15 @@ def coverage_closure(rows):
             row.get("axi", {}).get("compared_transactions", 0) == row.get("required_axi_transactions", -1)
             and row.get("memory", {}).get("read_errors", 0) > 0
             and row.get("memory", {}).get("write_errors", 0) > 0 for row in rows),
+        "final-architectural-state": executed and all(
+            row.get("final_state", {}).get("register_comparisons") == 32 and
+            row.get("final_state", {}).get("modified_memory_words", 0) > 0 and
+            {item["scenario"] for item in row.get("directed_final_states", [])} ==
+            {"faults", "isa", "fences", "plic", "uart", "final-state"} and
+            all(item.get("register_comparisons") == 32 and
+                item.get("memory_word_comparisons", 0) > 0
+                for item in row.get("directed_final_states", []))
+            for row in rows),
     }
     closure.update({name: executed and all(
         all(row.get("directed_bins", {}).get(item, 0) > 0 for item in requirements)
@@ -185,14 +196,16 @@ def workload(seed, rounds=20, iterations=64):
     user += [branch(7, 0, 1, loop - (0x11000 + len(user) * 4)), 0x73]
     emit(0x11000, user)
     emit(0x12000, [i_type(0x13, 29, 0, 29, 1), i_type(0x67, 0, 0, 30, 0)])
-    metadata.update(rounds=rounds, iterations=iterations, user_loop=loop, satps=satps)
+    metadata.update(rounds=rounds, iterations=iterations, user_loop=loop, satps=satps,
+                    final_memory_addresses=[0x80006018, 0x80060000, 0x80061000,
+                                            0x80062000, 0x80012000])
     return boot, image, metadata
 
 
 class IntegratedMachine(SystemMachine):
     def __init__(self, words, image, dmem_words):
         super().__init__(words, {})
-        self.memory = defaultdict(int, image)
+        self.memory = ObservedMemory(image, dmem_words)
         self.dmem_words = dmem_words
         self.checked_accesses = Counter()
         self.event_accesses = {}
@@ -367,7 +380,8 @@ def run_directed(experiment, configuration, seed, scenario):
     elif scenario in ("fences", "satp"):
         words, image, metadata = fence_workload(seed, configuration[1], scenario == "satp")
     else:
-        words, image, metadata = {"faults": fault_workload, "isa": isa_workload}[scenario](seed)
+        words, image, metadata = {"faults": fault_workload, "isa": isa_workload,
+                                  "final-state": final_state_workload}[scenario](seed)
     folder = experiment.folder / f"{scenario}-seed-{seed}"
     folder.mkdir()
     program, external, trace = (folder / name for name in
@@ -377,6 +391,8 @@ def run_directed(experiment, configuration, seed, scenario):
         f"{address:016x} {sum(image.get(address+b, 0) << (8*b) for b in range(8)):016x}\n"
         for address in sorted({p & ~7 for p in image})))
     (folder / "workload.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    final_plan = folder / "final-memory.txt"
+    final_state = FinalState(write_plan(final_plan, metadata["final_memory_addresses"]))
     peripheral_arguments = []
     waveform = folder / "uart-waveform.txt"
     if peripheral:
@@ -389,7 +405,8 @@ def run_directed(experiment, configuration, seed, scenario):
     experiment.run(f"{scenario}-seed-{seed}", [
         experiment.relative(experiment.folder / "simulation"), "+directed",
         f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
-        f"+trace={experiment.relative(trace)}", f"+seed={seed}", *peripheral_arguments])
+        f"+trace={experiment.relative(trace)}", f"+seed={seed}",
+        f"+final_plan={experiment.relative(final_plan)}", *peripheral_arguments])
     model = (peripheral_machine(IntegratedMachine)(words, image, configuration[5], metadata)
              if peripheral else IntegratedMachine(words, image, configuration[5]))
     if scenario == "fences":
@@ -417,6 +434,10 @@ def run_directed(experiment, configuration, seed, scenario):
     memory_stalls = previous_memory_stalls = 0
     blocked_stores = []
     for line in trace.read_text().splitlines():
+        if final_state.accept(line, model):
+            continue
+        if model.stopped:
+            raise AssertionError(f"FINAL_STATE_POST_TERMINAL_RECORD {line}")
         if line.startswith("K "):
             memory_stalls = int(line.split()[2])
             continue
@@ -497,6 +518,18 @@ def run_directed(experiment, configuration, seed, scenario):
         previous_memory_stalls = memory_stalls
     if not model.stopped or set(settled) != set(range(len(metadata["cases"]))):
         raise AssertionError(f"SYSTEM_DIRECTED_INCOMPLETE: {len(settled)}/{len(metadata['cases'])}")
+    try:
+        final_comparisons = final_state.compare(model)
+    except AssertionError as error:
+        experiment.receipt["first_divergence"] = {
+            "scenario": scenario, "configuration": list(configuration), "seed": seed,
+            "comparison": "final-state", "failure": str(error),
+            "compared_retirement_events": events, "trace": experiment.relative(trace)}
+        experiment.persist()
+        raise
+    experiment.receipt.setdefault("final_state_runs", []).append({
+        "scenario": scenario, "configuration": list(configuration), "seed": seed,
+        **final_comparisons, "trace": experiment.relative(trace)})
     bins = Counter()
     if scenario == "fences":
         if not overlapping_walks:
@@ -618,6 +651,7 @@ def run_directed(experiment, configuration, seed, scenario):
                                        "branch-6", "branch-7", "fence", "fence-i", "jal", "jalr"))
     result = {"scenario": scenario, "configuration": list(configuration), "seed": seed,
               "compared_events": events, "directed_bins": dict(bins),
+              "final_state": final_comparisons,
               "cases": records, "instruction_bins": dict(label_counts),
               "trace": experiment.relative(trace),
               "overlapping_walks": overlapping_walks,
@@ -636,8 +670,8 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
     experiment.run("version-verilator", ["verilator", "--version"])
     parameters = dict(zip(PARAMETERS, configuration))
     top = experiment.rtl_folder / "hammer_v3_top.sv"
-    extra_driven = (re.findall(r"\bs_acc_axi_\w+", top.read_text().split(");", 1)[0])
-                    if accelerator else []) + ["uart_rx", "plic_sources"]
+    extra_driven = re.findall(r"\bs_acc_axi_\w+", top.read_text().split(");", 1)[0])
+    extra_driven += ["uart_rx", "plic_sources", "halt_req"]
     probe.generate_top_wiring("hammer_v3_top", top, experiment.folder, configuration[5],
                               parameters=parameters, extra_driven=extra_driven,
                               responding_memory=True)
@@ -648,12 +682,13 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             "verilator", "--binary", "--timing", "-j", "4", "-Wall", "-Wno-fatal",
             "--top-module", "top_probe", "--Mdir", experiment.relative(objects),
             "-o", "../simulation", "-I" + experiment.relative(experiment.folder), "-Itests",
-            "-DSYSTEM_MEMORY", *(["-DSYSTEM_ACCEL"] if accelerator else []),
+            "-DSYSTEM_MEMORY", "-DFINAL_STATE", *(["-DSYSTEM_ACCEL"] if accelerator else []),
             "-GPROGRAM_WORDS=256", "-GCONTINUE_TRAPS=1", "-GMAX_CYCLES=5000000", "tests/top_probe.sv",
             *[str(p.relative_to(probe.ROOT)) for p in sorted(experiment.rtl_folder.glob("*.sv"))]])
         for seed in seeds:
             directed_bins = Counter()
-            for directed_scenario in ((scenario,) if scenario else ("faults", "isa", "fences", "plic", "uart")):
+            for directed_scenario in ((scenario,) if scenario else
+                                      ("faults", "isa", "fences", "plic", "uart", "final-state")):
                 directed_bins.update(run_directed(experiment, configuration, seed, directed_scenario))
             if scenario:
                 continue
@@ -665,6 +700,14 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             write_vectors(axi_path, commands)
             (folder / "axi-cases.json").write_text(json.dumps(commands, indent=2) + "\n")
             (folder / "workload.json").write_text(json.dumps(metadata, indent=2) + "\n")
+            final_plan = folder / "final-memory.txt"
+            axi_addresses = {
+                (command["address"] + (beat * (1 << command["size"])
+                 if command["burst"] == 1 else 0)) & ~7
+                for command in commands if command["write"] and command["response"] == 0
+                for beat in range(command["length"])}
+            final_state = FinalState(write_plan(
+                final_plan, set(metadata["final_memory_addresses"]) | axi_addresses))
             program, external, trace = (folder / name for name in
                                         ("program.hex", "external.hex", "trace.txt"))
             program.write_text("".join(f"{word:08x}\n" for word in words))
@@ -674,6 +717,7 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                 experiment.relative(experiment.folder / "simulation"),
                 f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
                 f"+trace={experiment.relative(trace)}", f"+seed={seed}",
+                f"+final_plan={experiment.relative(final_plan)}",
                 f"+axi={experiment.relative(axi_path)}",
                 f"+read_error={READ_ERROR:x}", f"+write_error={WRITE_ERROR:x}"])
             model = IntegratedMachine(words, image, configuration[5])
@@ -690,12 +734,18 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             completed_interference = False
             reservation_comparisons = 0
             for line in trace.read_text().splitlines():
+                if final_state.accept(line, model):
+                    continue
+                if model.stopped:
+                    raise AssertionError(f"FINAL_STATE_POST_TERMINAL_RECORD {line}")
                 fields = line.split()
                 if fields[0] == "K":
                     cycle = int(fields[1])
                     continue
                 if fields[0] == "V":
                     axi.accept(fields)
+                    for address, value in axi.memory.items():
+                        model.memory[address] = value
                     if int(fields[6], 16):
                         model.reservation = None
                     continue
@@ -759,6 +809,15 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                         observed_code += 1
                         pending_code = None
                 events += 1
+            try:
+                final_comparisons = final_state.compare(model)
+            except AssertionError as error:
+                experiment.receipt["first_divergence"] = {
+                    "configuration": list(configuration), "seed": seed,
+                    "comparison": "final-state", "failure": str(error),
+                    "compared_retirement_events": events, "trace": experiment.relative(trace)}
+                experiment.persist()
+                raise
             if (not model.stopped or model.completed_round_trips != metadata["rounds"] or
                     model.timer_interrupts != 1 or model.delegated_interrupts != 1):
                 raise AssertionError("SYSTEM_CONTEXT_INCOMPLETE: terminal software/round trips missing")
@@ -795,6 +854,10 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
                 raise AssertionError("SYSTEM_HOST_INCOMPLETE")
             record = {
                 "configuration": list(configuration), "seed": seed, "status": "executed-partial",
+                "final_state": final_comparisons,
+                "directed_final_states": [
+                    item for item in experiment.receipt.get("final_state_runs", [])
+                    if item["seed"] == seed],
                 "actual": {"translation_comparisons": counts["total"],
                            "context_round_trips": model.completed_round_trips,
                            "coherent_exchanges": accelerator_reads},
@@ -845,7 +908,8 @@ def main():
     parser.add_argument("--configuration", type=int, choices=range(4), default=0)
     parser.add_argument("--seed", type=int, choices=SEEDS)
     parser.add_argument("--accelerator", action="store_true")
-    parser.add_argument("--scenario", choices=("faults", "isa", "fences", "satp", "plic", "uart"),
+    parser.add_argument("--scenario", choices=("faults", "isa", "fences", "satp", "plic", "uart",
+                                              "final-state"),
                         help="Bounded top-level directed program only; no coverage-closure claim")
     parser.add_argument("--repair-of", help="Project-relative retained diagnostic being repaired")
     args = parser.parse_args()

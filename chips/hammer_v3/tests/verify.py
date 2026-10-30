@@ -97,6 +97,8 @@ class Suite:
         self.execute("baseline-plic", experiments.peripheral_probe, "plic")
         self.execute("baseline-uart", experiments.peripheral_probe, "uart")
         self.execute("baseline-coherence", experiments.coherence_probe)
+        self.execute("baseline-final-state", integrated.run_configuration,
+                     integrated.CONFIGURATIONS[0], (17,), scenario="final-state")
         completed = []
         for mutant in experiments.WALKER_MUTANTS:
             self.execute("mutant-" + mutant, experiments.walker_probe, mutant)
@@ -104,11 +106,16 @@ class Suite:
         for mutant in experiments.SYSTEM_MUTANTS:
             self.execute("mutant-" + mutant, experiments.system_mutant_probe, mutant)
             completed.append(mutant)
-        if len(set(completed)) != 9:
-            raise AssertionError(f"DEFECT_COVERAGE expected nine independent classes: {completed}")
+        original_classes = [mutant for mutant in completed if mutant != "final-store"]
+        if len(set(original_classes)) != 9 or completed.count("final-store") != 1:
+            raise AssertionError(f"DEFECT_COVERAGE expected nine original classes "
+                                 f"and final-store: {completed}")
         self.run.receipt["assertions"].append({
-            "id": "nine-semantic-mutants", "passed": True, "classes": completed,
-            "required": 9, "actual": len(completed)})
+            "id": "nine-semantic-mutants", "passed": True, "classes": original_classes,
+            "required": 9, "actual": len(original_classes)})
+        self.run.receipt["assertions"].append({
+            "id": "final-memory-semantic-mutant", "passed": True,
+            "classes": ["final-store"], "required": 1, "actual": 1})
 
     def synthesis(self):
         for configuration in ("default", "min", "odd"):

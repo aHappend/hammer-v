@@ -779,6 +779,11 @@ def shootdown_probe(probe):
 
 
 SYSTEM_MUTANTS = {
+    "final-store": ("hammer_v3_cache.sv", [
+        ("wire [63:0] write_data = fill_write ? fill_q : wdata_q;",
+         "wire [63:0] write_data = fill_write ? fill_q : "
+         "(write_hit && addr_q == 64'h8006f000 ? wdata_q ^ 64'd1 : wdata_q);")],
+        "final-state", r"FINAL_MEMORY_MISMATCH address=000000008006f000"),
     "sfence": ("hammer_v3_mmu.sv", [
         ("wire invalidate = rst_n && fence_state == INVALIDATE;",
          "wire invalidate = 1'b0;")], "shootdown", r"retirement \d+: expected"),
@@ -877,6 +882,10 @@ def system_mutant_probe(probe, mutant):
             fault_probe(probe)
         elif experiment == "coherence":
             coherence_probe(probe)
+        elif experiment == "final-state":
+            import system
+            system.run_configuration(probe, system.CONFIGURATIONS[0], (17,),
+                                     scenario="final-state")
         else:
             peripheral_probe(probe, experiment)
     except AssertionError as error:
@@ -898,6 +907,15 @@ def system_mutant_probe(probe, mutant):
                 if record["argv"][0] == "verilator" and "--binary" in record["argv"]]
     if not compiled or any(record["exit_status"] != 0 for record in compiled):
         raise AssertionError(f"{mutant}: compile failure is not semantic detection")
+    if mutant == "final-store":
+        divergence = probe.receipt.get("first_divergence", {})
+        simulations = [record for record in probe.receipt["commands"]
+                       if record["argv"][0].endswith("/simulation")]
+        if (divergence.get("comparison") != "final-state" or
+                divergence.get("compared_retirement_events", 0) <= 0 or
+                not simulations or any(record["exit_status"] != 0 for record in simulations)):
+            raise AssertionError("final-store: detection requires a completed simulation, "
+                                 "matched retirements and final-memory mismatch")
     probe.receipt["assertions"].append({
         "id": "disposable-defect-sensitivity", "passed": True, "mutant": mutant,
         "first_failing_assertion": first_failure, "experiment": experiment,
