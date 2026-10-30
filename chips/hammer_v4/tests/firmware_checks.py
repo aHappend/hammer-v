@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -164,11 +165,7 @@ def payload():
     check("t3", 0x1122334455667788, "Sv39 global mapping initial fill")
     mapping(0, "data_b", 0xE7)
     emit("li t3,0x40000000", "li t4,0", "sfence.vma t3,t4", "ld t3,0(t3)")
-    check("t3", 0x8877665544332211, "Sv39 ASID sfence global preservation")
-    # The preceding checker expects data_a until a full-VA invalidation.
-    # Set the expected value explicitly below, keeping the generated comparison
-    # and its public event coupled to this declared architectural requirement.
-    lines[-6] = "li t5,0x1122334455667788"
+    check("t3", 0x1122334455667788, "Sv39 ASID sfence global preservation")
     emit("li t3,0x40000000", "sfence.vma t3,zero", "ld t3,0(t3)")
     check("t3", 0x8877665544332211, "Sv39 full-VA sfence invalidates globals")
     mapping(0, "data_a", 0xC7)
@@ -214,7 +211,7 @@ def payload():
          ".balign 4096", "user_page:")
     emit("li t0,0x40006000", "ld t3,0(t0)", "li t5,0x1122334455667788",
          "bne t3,t5,user_failed", "li s8,13", "li s9,0x40000000",
-         "li s10,0x4000a000+(user_after_load-user_page)",
+         "la s10,user_after_load",
          "li t0,0x40000000", "ld t3,0(t0)", "j user_failed", "user_after_load:")
     user_events = [
         {"kind": "fault", "cause": 13, "tval": 0x40000000, "target": 1},
@@ -222,7 +219,7 @@ def payload():
         {"kind": "fault", "cause": 8, "tval": 0, "target": 1},
     ]
     emit("li s8,12", "li s9,0x40001000",
-         "li s10,0x4000a000+(user_after_fetch-user_page)",
+         "la s10,user_after_fetch",
          "li t0,0x40001000", "jalr ra,0(t0)", "j user_failed",
          "user_after_fetch:", "ecall", "user_failed:", "j user_failed")
     # U events occur before the supervisor-after-user signature records.
@@ -237,6 +234,7 @@ def main():
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--generate-only", action="store_true")
+    parser.add_argument("--rtl", default="rtl")
     args = parser.parse_args()
     relative = Path(args.out)
     if relative.is_absolute() or ".." in relative.parts or relative.parts[:1] != ("build",):
@@ -287,9 +285,56 @@ def main():
     }
     (out / "image-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     (out / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
-    if not args.generate_only:
-        raise RuntimeError("Directed public-pin executor has not yet been connected")
-    print(f"Generated {len(cases)} directed comparisons and {len(events)} public events")
+    print(f"Generated {len(cases)} directed comparisons and {len(events)} public events",
+          flush=True)
+    if args.generate_only:
+        return
+    rtl_relative = Path(args.rtl)
+    if rtl_relative.is_absolute() or ".." in rtl_relative.parts or \
+            (rtl_relative != Path("rtl") and rtl_relative.parts[:1] != ("build",)):
+        parser.error("--rtl must be rtl or a project-relative disposable build/ copy")
+    rtl_sources = sorted((ROOT / rtl_relative).glob("*.sv"))
+    if len(rtl_sources) < 40:
+        raise AssertionError("Directed simulation requires the complete RTL hierarchy")
+    model = out / "compile-obj"
+    commands.extend([
+        ["verilator", "--cc", "--exe", "--build", "-j", "4", "-Wno-fatal",
+         "--top-module", "hammer_v4_top", "--Mdir", str(model),
+         "-GIMEM_WORDS=32", "-GDMEM_WORDS=3", "-CFLAGS", "-O2 -std=c++17",
+         *[str(p.relative_to(ROOT)) for p in rtl_sources],
+         str(ROOT / "tests/directed_probe.cpp")],
+        [str(out / "directed-probe"),
+         str(ROOT / manifest["images"]["fw_jump.bin"]["path"]),
+         str(out / "directed.bin"),
+         str(ROOT / manifest["images"]["hammer-v4.dtb"]["path"]),
+         str(out), str(out / "expected-uart.bin"), str(out / "expected-events.txt"),
+         "8388608"],
+    ])
+    executable = out / "directed-probe"
+    try:
+        for index in (2, 3):
+            if index == 3:
+                shutil.copyfile(model / "Vhammer_v4_top", executable)
+                executable.chmod(0o755)
+            with (out / f"{index}.stdout.log").open("wb") as so, (
+                out / f"{index}.stderr.log"
+            ).open("wb") as se:
+                result = subprocess.run(commands[index], cwd=ROOT, stdout=so,
+                                        stderr=se, check=False)
+            (out / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
+            if result.returncode:
+                raise RuntimeError(
+                    f"Directed {'compilation' if index == 2 else 'comparison'} "
+                    f"failed with exit {result.returncode}: {relative}"
+                )
+    finally:
+        for pattern in ("*.o", "*.a", "*.gch"):
+            for path in model.glob(pattern):
+                path.unlink()
+    result_text = (out / "3.stdout.log").read_text()
+    if "COMPARED directed_events=" not in result_text:
+        raise AssertionError("Missing functional comparison result")
+    print(result_text, end="")
 
 
 if __name__ == "__main__":
