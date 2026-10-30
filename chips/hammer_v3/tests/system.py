@@ -20,6 +20,7 @@ from system_directed import final_state_workload
 from final_state import FinalState, ObservedMemory, write_plan
 from system_peripherals import peripheral_workload, peripheral_machine, MAILBOX
 from peripherals import compare_waveform
+from trace_stream import capture_trace, read_trace
 
 
 CONFIGURATIONS = (
@@ -385,7 +386,7 @@ def run_directed(experiment, configuration, seed, scenario):
     folder = experiment.folder / f"{scenario}-seed-{seed}"
     folder.mkdir()
     program, external, trace = (folder / name for name in
-                                ("program.hex", "external.hex", "trace.txt"))
+                                ("program.hex", "external.hex", "trace.txt.gz"))
     program.write_text("".join(f"{word:08x}\n" for word in words))
     external.write_text("".join(
         f"{address:016x} {sum(image.get(address+b, 0) << (8*b) for b in range(8)):016x}\n"
@@ -402,11 +403,12 @@ def run_directed(experiment, configuration, seed, scenario):
                                 f"+waveform={experiment.relative(waveform)}"]
     if metadata.get("overlap_pte") is not None:
         peripheral_arguments.append(f"+overlap_pte={metadata['overlap_pte']:x}")
-    experiment.run(f"{scenario}-seed-{seed}", [
-        experiment.relative(experiment.folder / "simulation"), "+directed",
-        f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
-        f"+trace={experiment.relative(trace)}", f"+seed={seed}",
-        f"+final_plan={experiment.relative(final_plan)}", *peripheral_arguments])
+    with capture_trace(experiment, trace) as trace_fifo:
+        experiment.run(f"{scenario}-seed-{seed}", [
+            experiment.relative(experiment.folder / "simulation"), "+directed",
+            f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
+            f"+trace={experiment.relative(trace_fifo)}", f"+seed={seed}",
+            f"+final_plan={experiment.relative(final_plan)}", *peripheral_arguments])
     model = (peripheral_machine(IntegratedMachine)(words, image, configuration[5], metadata)
              if peripheral else IntegratedMachine(words, image, configuration[5]))
     if scenario == "fences":
@@ -433,7 +435,7 @@ def run_directed(experiment, configuration, seed, scenario):
     overlapping_walks = []
     memory_stalls = previous_memory_stalls = 0
     blocked_stores = []
-    for line in trace.read_text().splitlines():
+    for line in read_trace(trace):
         if final_state.accept(line, model):
             continue
         if model.stopped:
@@ -709,17 +711,18 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             final_state = FinalState(write_plan(
                 final_plan, set(metadata["final_memory_addresses"]) | axi_addresses))
             program, external, trace = (folder / name for name in
-                                        ("program.hex", "external.hex", "trace.txt"))
+                                        ("program.hex", "external.hex", "trace.txt.gz"))
             program.write_text("".join(f"{word:08x}\n" for word in words))
             external.write_text("".join(f"{address:016x} " + f"{sum(image.get(address+b, 0) << (8*b) for b in range(8)):016x}\n"
                                        for address in sorted({p & ~7 for p in image})))
-            output = experiment.run(f"seed-{seed}", [
-                experiment.relative(experiment.folder / "simulation"),
-                f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
-                f"+trace={experiment.relative(trace)}", f"+seed={seed}",
-                f"+final_plan={experiment.relative(final_plan)}",
-                f"+axi={experiment.relative(axi_path)}",
-                f"+read_error={READ_ERROR:x}", f"+write_error={WRITE_ERROR:x}"])
+            with capture_trace(experiment, trace) as trace_fifo:
+                output = experiment.run(f"seed-{seed}", [
+                    experiment.relative(experiment.folder / "simulation"),
+                    f"+program={experiment.relative(program)}", f"+external={experiment.relative(external)}",
+                    f"+trace={experiment.relative(trace_fifo)}", f"+seed={seed}",
+                    f"+final_plan={experiment.relative(final_plan)}",
+                    f"+axi={experiment.relative(axi_path)}",
+                    f"+read_error={READ_ERROR:x}", f"+write_error={WRITE_ERROR:x}"])
             model = IntegratedMachine(words, image, configuration[5])
             axi = AxiScoreboard(commands)
             events = 0
@@ -733,7 +736,7 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             interfered_reservation = None
             completed_interference = False
             reservation_comparisons = 0
-            for line in trace.read_text().splitlines():
+            for line in read_trace(trace):
                 if final_state.accept(line, model):
                     continue
                 if model.stopped:

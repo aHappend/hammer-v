@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import probe as experiments
 import system as integrated
+from trace_stream import self_test as trace_capture_test
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,6 +47,7 @@ class Suite:
         return child
 
     def smoke(self):
+        self.execute("trace-capture", trace_capture_test)
         self.execute("v3-bare", experiments.top_probe, False)
         self.execute("parent-bare", experiments.top_probe, True)
         self.execute("sv39-startup", experiments.top_probe, False, True)
