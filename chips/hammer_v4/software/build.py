@@ -154,20 +154,25 @@ def main():
     out = Path(args.out)
     if out.is_absolute() or ".." in out.parts or not out.parts:
         parser.error("--out must be a nonempty project-relative path without '..'")
-    if any(part in {".vulcan", ".git", ".tooling", "VULCAN", "evidence",
-                    "rtl", "software", "design", "tests", "hammer_v3_reference"}
-           for part in out.parts):
-        parser.error("--out must not overlap owned sources, evidence or runtime metadata")
-    resolved_out = (ROOT / out).resolve()
+    protected = [ROOT / name for name in (
+        ".vulcan", ".git", ".tooling", "VULCAN", "evidence",
+        "rtl", "software", "design", "tests", "hammer_v3_reference",
+    )]
+    try:
+        resolved_out = (ROOT / out).resolve()
+        protected_paths = [(path, path.resolve()) for path in protected]
+    except (OSError, RuntimeError) as error:
+        parser.error(f"--out/protected directory resolution failed: {error}")
     if not resolved_out.is_relative_to(ROOT):
         parser.error("--out resolves outside the delivered project")
-    if any(part in {".vulcan", ".git", ".tooling", "VULCAN", "evidence",
-                    "rtl", "software", "design", "tests", "hammer_v3_reference"}
-           for part in resolved_out.relative_to(ROOT).parts):
-        parser.error("--out resolves into owned sources, evidence or runtime metadata")
+    for candidate in (ROOT / out, resolved_out):
+        for paths in protected_paths:
+            for path in paths:
+                if candidate.is_relative_to(path) or path.is_relative_to(candidate):
+                    parser.error("--out must not overlap owned sources, evidence or runtime metadata")
     if args.jobs < 1:
         parser.error("--jobs must be positive")
-    if out.exists():
+    if out.exists() or out.is_symlink():
         parser.error("--out already exists; preserve it and select a fresh directory")
     out.mkdir(parents=True)
     commands = out / "commands"
@@ -258,17 +263,27 @@ def main():
         write_json(out / "build-record.json", record)
         images = out / "images"
         images.mkdir()
+        objects = out / "objects"
+        objects.mkdir()
         common = [f"-march={ISA}", "-mabi=lp64", "-mcmodel=medany", "-mno-relax",
                   "-msmall-data-limit=0", "-mstrict-align", "-O2",
                   "-ffreestanding", "-fno-builtin", "-fno-pie", "-fno-stack-protector",
-                  "-fno-asynchronous-unwind-tables", "-nostdlib", "-static",
-                  "-Wl,--build-id=none", "-Wl,--no-relax", "-Wall", "-Wextra", "-Werror"]
-        run([BARE_CC, *common, "-T", SOURCE / "fw_jump.ld",
-             SOURCE / "fw_entry.S", SOURCE / "fw_jump.c",
+                  "-fno-asynchronous-unwind-tables", "-Wall", "-Wextra", "-Werror"]
+        link = ["-nostdlib", "-static", "-Wl,--build-id=none", "-Wl,--no-relax"]
+        run([BARE_CC, *common, "-c", SOURCE / "fw_entry.S", "-o", objects / "fw_entry.o"])
+        run([BARE_CC, *common, "-c", SOURCE / "fw_jump.c", "-o", objects / "fw_jump.o"])
+        run([BARE_CC, *common, *link, "-T", SOURCE / "fw_jump.ld",
+             objects / "fw_entry.o", objects / "fw_jump.o",
              "-o", images / "fw_jump.elf"])
         run([BARE_OBJCOPY, "-O", "binary", images / "fw_jump.elf", images / "fw_jump.bin"])
-        run([LINUX_CC, *common, "-no-pie", "-T", SOURCE / "init.ld",
-             SOURCE / "init_entry.S", SOURCE / "init.c", "-o", images / "init"])
+        run([LINUX_CC, *common, "-c", SOURCE / "init_entry.S", "-o", objects / "init_entry.o"])
+        run([LINUX_CC, *common, "-c", SOURCE / "init.c", "-o", objects / "init.o"])
+        run([LINUX_CC, *common, *link, "-no-pie", "-T", SOURCE / "init.ld",
+             objects / "init_entry.o", objects / "init.o", "-o", images / "init"])
+        epoch_ns = facts["source_date_epoch"] * 1000000000
+        os.utime(images / "init", ns=(epoch_ns, epoch_ns))
+        record["init_packaged_mtime_epoch"] = facts["source_date_epoch"]
+        write_json(out / "build-record.json", record)
         run(["dtc", "-I", "dts", "-O", "dtb", "-V", "17", "-b", "0",
              "-o", images / "hammer-v4.dtb", SOURCE / "hammer-v4.dts"])
         run(["tar", "--extract", "--xz", "--no-same-owner", "--no-same-permissions",

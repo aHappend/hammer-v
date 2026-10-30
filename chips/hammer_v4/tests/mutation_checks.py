@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Functional sensitivity of compact public-pin checks on disposable RTL copies.
 
-The delayed-pending leaf check does not establish a full-core eligible-boundary
-timing mutation.
+The delayed-pending leaf check and full-core quiescent-WFI boundary check have
+separate controls. Neither establishes the complete Linux timed oracle.
 """
 
 import argparse
@@ -54,6 +54,17 @@ MUTATIONS = {
         "    assign irq_mtip = rst_n && delayed_timer;",
         "TIMER_COMPARISON", "timer",
     ),
+    "timer-pending-delayed-boundary": (
+        "hammer_v2_clint.sv",
+        "assign irq_mtip = rst_n && time_q >= cmp_q;",
+        "reg delayed_timer;\n"
+        "    always @(posedge clk or negedge rst_n) begin\n"
+        "        if (!rst_n) delayed_timer <= 1'b0;\n"
+        "        else delayed_timer <= time_q >= cmp_q;\n"
+        "    end\n"
+        "    assign irq_mtip = rst_n && delayed_timer;",
+        "TIMER_BOUNDARY_COMPARISON", "temporal",
+    ),
     "coherent-invalidation": (
         "hammer_v3_top.sv", ".req_ready(da_ready), .req_cmd({2'b11,2'b0,route_cmd}),",
         ".req_ready(da_ready), .req_cmd({2'b10,2'b0,route_cmd}),",
@@ -71,6 +82,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
     parser.add_argument("--manifest", required=True)
+    parser.add_argument("--case", action="append", choices=sorted(MUTATIONS),
+                        help="diagnostic subset; the mandatory default executes every mutant")
     args = parser.parse_args()
     relative = Path(args.out)
     if relative.is_absolute() or ".." in relative.parts or relative.parts[:1] != ("build",):
@@ -78,6 +91,7 @@ def main():
     out = ROOT / relative
     out.mkdir(parents=True, exist_ok=False)
     original = hashes(ROOT / "rtl")
+    selected = {name: MUTATIONS[name] for name in args.case} if args.case else MUTATIONS
     records = []
 
     def run(name, scope, rtl):
@@ -86,7 +100,7 @@ def main():
             sys.executable, f"tests/{scope}_checks.py",
             "--out", (relative / name / "execution").as_posix(), "--rtl", rtl,
         ]
-        if scope == "firmware":
+        if scope in ("firmware", "temporal"):
             command.extend(["--manifest", args.manifest])
         elif scope == "timer":
             command.extend(["--simulator", "verilator"])
@@ -106,13 +120,15 @@ def main():
         return record
 
     controls = {}
-    for scope in ("firmware", "timer", "compatibility"):
+    for scope in ("firmware", "timer", "compatibility", "temporal"):
+        if scope not in {mutation[4] for mutation in selected.values()}:
+            continue
         record = run(f"control-{scope}", scope, "rtl")
         if record["exit_code"]:
             raise AssertionError(f"Unchanged {scope} control failed: {relative}")
         controls[scope] = record
 
-    for name, (filename, before, after, marker, scope) in MUTATIONS.items():
+    for name, (filename, before, after, marker, scope) in selected.items():
         rtl = out / f"{name}-rtl"
         rtl.mkdir()
         for source in sorted((ROOT / "rtl").glob("*.sv")):
@@ -128,7 +144,7 @@ def main():
         record["mutation"] = {"file": filename, "before": before, "after": after}
         (out / "results.json").write_text(json.dumps(records, indent=2) + "\n")
         directory = out / name / "execution"
-        raw_name = {"firmware": "3", "timer": "1",
+        raw_name = {"firmware": "3", "timer": "1", "temporal": "4",
                     "compatibility": "v4/simulate"}[scope]
         stdout = directory / f"{raw_name}.stdout.log"
         stderr = directory / f"{raw_name}.stderr.log"
@@ -140,7 +156,7 @@ def main():
             raise AssertionError(f"{name}: not rejected by targeted functional assertion")
         record["targeted_assertion"] = marker
         record["functional_rejection"] = True
-        if scope in ("firmware", "compatibility"):
+        if scope in ("firmware", "compatibility", "temporal"):
             control_text = (out / f"control-{scope}/execution/{raw_name}.stdout.log").read_text()
             control_edge = int(re.search(r"\bedges=(\d+)", control_text).group(1))
             failure_text = stderr.read_text()
@@ -153,7 +169,7 @@ def main():
         print(f"REJECTED {name}: {marker}", flush=True)
     if original != hashes(ROOT / "rtl"):
         raise AssertionError("Accepted RTL changed during disposable mutation checks")
-    print(f"Compared {len(controls)} unchanged controls and {len(MUTATIONS)} functional mutants")
+    print(f"Compared {len(controls)} unchanged controls and {len(selected)} functional mutants")
 
 
 if __name__ == "__main__":

@@ -387,6 +387,34 @@ build identity, config, timestamp and initramfs ordering remove selected
 legitimate variability at the source. Remaining clock/entropy/logging behavior
 must still be computed by the independent timed oracle, never normalized away.
 
+## Software build reproducibility repair
+
+The retained clean-build failures are
+`evidence/preparation/clean-software-reproduction-20261030T130814Z-715e2c5e/receipt.json`
+and
+`evidence/preparation/clean-software-reproduction-alternate-20261030T130847Z-dcdda43b/receipt.json`.
+The diagnosis
+`evidence/preparation/clean-image-metadata-diagnosis-20261030T131429Z-696558f9/receipt.json`
+isolates random GCC temporary object file symbols and the packaged init file's
+wall-clock mtime, despite identical software inputs/tools/platform.
+
+`software/build.py` now protects actual project source/evidence/runtime directory
+boundaries, checking both lexical/resolved containment and ancestor overlap,
+including protected symlink targets. It permits the documented fresh
+`build/software` destination without permitting source writes or overwriting
+occupied outputs. Firmware and init compile into four explicitly named objects
+before linking, preserving link order, ISA, compiler flags and executable source.
+The packaged init timestamp is set to the frozen manifest epoch before Kbuild
+generates the archive, and is recorded in the build record. Source-manifest
+provenance links this repair to the unchanged historical receipts.
+
+No RTL, parent source, Linux config, compatibility patch or executable behavior
+is changed by this repair. Independent Verifier must establish exact identity
+of every declared image across two fresh repaired builds, including a clean
+copied project; old nondeterministic binaries remain historical evidence only.
+Default-output and negative path/symlink/occupied-output cases also remain
+Verifier work. This source repair is not functional or reproduction acceptance.
+
 ## Dependency boundaries
 
 | Producer guarantee | Consumer obligation |

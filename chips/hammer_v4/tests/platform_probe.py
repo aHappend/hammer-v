@@ -45,12 +45,13 @@ def main():
             raise RuntimeError(f"{name} exited {result.returncode}; see {args.out}")
 
     run([
-        "verilator", "--cc", "--exe", "--build", "-j", "4", "-Wno-fatal",
+        "verilator", "-O3", "--cc", "--exe", "--build", "-j", "4", "-Wno-fatal",
         "--top-module", "hammer_v4_top", "--Mdir", str(model),
         "-GIMEM_WORDS=32", "-GDMEM_WORDS=3",
-        "-CFLAGS", "-O2 -std=c++17",
+        "-CFLAGS", "-O3 -std=c++17",
         *[str(p.relative_to(ROOT)) for p in sorted((ROOT / "rtl").glob("*.sv"))],
         str(ROOT / "tests/platform_probe.cpp"),
+        "-MAKEFLAGS", "OPT_FAST=-O3",
     ], "compile")
     executable = out / "platform-probe"
     shutil.copyfile(model / "Vhammer_v4_top", executable)

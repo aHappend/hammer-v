@@ -12,7 +12,13 @@ python3 software/build.py --out build/software --jobs 4
 
 The builder refuses an occupied directory instead of overwriting retained
 results. Choose a new project-relative directory for a new build, for example
-`build/software-rebuild`. No download, installation, runtime metadata, JTAG
+`build/software-rebuild`. Protection compares the output's lexical and resolved
+paths against actual protected project directories and their resolved targets,
+rejecting both containment and ancestor overlap. Thus `build/software` is legal,
+but writing inside or above source, evidence or runtime directories is not;
+symlink aliases cannot bypass those boundaries. Outputs resolving outside the
+project, occupied paths and dangling output symlinks are also rejected.
+No download, installation, runtime metadata, JTAG
 cable or PCIe device identifier is required by this command.
 
 ## Dependencies and pinned source
@@ -94,7 +100,14 @@ patch. `CONFIG_RISCV_ISA_FALLBACK=y` intentionally enables the admitted legacy
 
 Kbuild identity, timestamp, version, localversion and SOURCE_DATE_EPOCH are
 frozen in the source manifest. The initramfs uses a fixed ordered specification
-with UID/GID zero and the fixed Kbuild timestamp. `/dev/console` and `/dev/null`
+with UID/GID zero. Firmware and init assembly/C are compiled separately into
+explicitly named `objects/fw_entry.o`, `objects/fw_jump.o`,
+`objects/init_entry.o` and `objects/init.o` before linking, avoiding GCC's
+random temporary object names in ELF file symbols. Before initramfs generation,
+the builder sets the packaged `/init` file's atime/mtime to the manifest's
+`source_date_epoch` (1699574400); Kbuild's fixed timestamp supplies the
+non-file entries. The actual packaged mtime epoch is recorded in
+`build-record.json`. `/dev/console` and `/dev/null`
 are included as device nodes; no external root filesystem is needed.
 The DT rng-seed is public test data and must never be treated as secure entropy.
 Bootloader trust is enabled solely for this reproducible validation platform;
@@ -155,6 +168,19 @@ fresh directory from the declared deliverable inputs. See `design/SPEC.md`
 and `design/ARCHITECTURE.md` for exact requirements and continuous edge budgets.
 The absence of a Verifier-authored script at Designer handoff is not a pass.
 Do not replace it with a source-inventory check or a software-only boot.
+
+The reproducibility repair is linked in `source-manifest.json` to the retained
+failures
+`evidence/preparation/clean-software-reproduction-20261030T130814Z-715e2c5e/receipt.json`
+and
+`evidence/preparation/clean-software-reproduction-alternate-20261030T130847Z-dcdda43b/receipt.json`,
+and the metadata diagnosis
+`evidence/preparation/clean-image-metadata-diagnosis-20261030T131429Z-696558f9/receipt.json`.
+Those historical runs are not a repaired identity baseline. Independent Verifier
+must compare every declared image byte-for-byte from two fresh repaired builds,
+including one in a clean copied project, exercise the documented default output
+and negative path/symlink/occupied-output cases, and preserve earlier outputs.
+No successful reproduction is asserted by these source changes.
 
 Only the shared runtime executes native timing/HIL gates. The final product
 PDF is generated after engineering acceptance. The source handoff does not

@@ -58,6 +58,20 @@
   "binutils_version": "2.42",
   "abi": "lp64",
   "source_date_epoch": 1699574400,
+  "build_reproducibility": {
+    "objects": [
+      "objects/fw_entry.o",
+      "objects/fw_jump.o",
+      "objects/init_entry.o",
+      "objects/init.o"
+    ],
+    "init_packaged_mtime": "source_date_epoch",
+    "repair_of": [
+      "evidence/preparation/clean-software-reproduction-20261030T130814Z-715e2c5e/receipt.json",
+      "evidence/preparation/clean-software-reproduction-alternate-20261030T130847Z-dcdda43b/receipt.json"
+    ],
+    "diagnosis": "evidence/preparation/clean-image-metadata-diagnosis-20261030T131429Z-696558f9/receipt.json"
+  },
   "kbuild_build_timestamp": "Fri Nov 10 00:00:00 UTC 2023",
   "kbuild_build_user": "hammer",
   "kbuild_build_host": "reproducible",
