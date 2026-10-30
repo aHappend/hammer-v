@@ -50,5 +50,7 @@
   ],
   "detail": "All 3 physical FPGA HIL run(s) passed deterministically on chip 23645547322997765.",
   "source_sha256": "14b126e833904f1dd8d7ab0a673456082a19d253380f360e1e1083a4326f2e50",
-  "applicable": true
+  "applicable": true,
+  "hil_verification_tier": "L3_BRIDGE_CONNECTIVITY_PROBE_ONLY",
+  "verification_scope_note": "Catapult PCIe BAR0 hardware bridge connectivity probe (reg 57) only; per-chip bitstream flash and on-board workload vector execution require fpga/board_hil.json role wrapper."
 }
