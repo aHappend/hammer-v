@@ -31,8 +31,7 @@ def main():
     )
     script = (
         f"read_verilog -sv {sources}\n"
-        "hierarchy -check -top hammer_v4_top "
-        "-chparam IMEM_WORDS 32 -chparam DMEM_WORDS 3\n"
+        "hierarchy -check -top hammer_v4_top\n"
         "proc\nopt_expr\nopt_clean\ncheck -noinit -assert\n"
         "memory -nomap\nopt_clean\ncheck -assert\n"
         "select -assert-none t:$dlatch t:$adlatch t:$dlatchsr t:$div t:$mod\n"
@@ -53,6 +52,7 @@ def main():
     states = 0
     memory_bits = 0
     cell_count = 0
+    backing_memories = []
 
     def visit(name):
         nonlocal states, memory_bits, cell_count
@@ -65,6 +65,7 @@ def main():
             raise AssertionError(f"Blackboxed design module {name}")
         original = attributes.get("hdlname", name).split()[0].lstrip("\\")
         found.add(original)
+        memory_before = memory_bits
         if not module.get("ports") or not module.get("cells"):
             raise AssertionError(f"Empty hierarchy module {name}")
         for cell in module["cells"].values():
@@ -84,21 +85,38 @@ def main():
                 size = int(parameters.get("SIZE", "0"), 2)
                 memory_bits += width * size
                 states += 1
+        if original == "hammer_v2_ram":
+            parameters = module["parameter_default_values"]
+            words = int(parameters["WORDS"], 2)
+            instruction = int(parameters["INSTRUCTION"], 2)
+            expected_words = 16384 if instruction else 8192
+            expected_bits = expected_words * (32 if instruction else 64)
+            actual_bits = memory_bits - memory_before
+            if words != expected_words or actual_bits != expected_bits:
+                raise AssertionError(
+                    f"Default backing RAM lost: instruction={instruction}, "
+                    f"words={words}, bits={actual_bits}, expected={expected_bits}"
+                )
+            backing_memories.append({
+                "instruction": bool(instruction), "words": words,
+                "preserved_memory_bits": actual_bits,
+            })
         active.remove(name)
 
     visit("hammer_v4_top")
     missing = REQUIRED - found
-    if missing or not states or not memory_bits:
+    if missing or not states or not memory_bits or len(backing_memories) != 2:
         raise AssertionError(
             f"Missing hierarchy={sorted(missing)}, state_cells={states}, "
             f"memory_bits={memory_bits}"
         )
     summary = {
-        "configuration": {"IMEM_WORDS": 32, "DMEM_WORDS": 3},
+        "configuration": {"IMEM_WORDS": 16384, "DMEM_WORDS": 8192},
         "argv": argv, "exit_code": result.returncode,
         "reachable_modules": sorted(found), "cells": cell_count,
         "state_cells": states, "memory_bits": memory_bits,
         "latches": 0, "combinational_div_mod": 0,
+        "backing_memories": backing_memories,
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, sort_keys=True))
