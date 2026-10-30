@@ -16,7 +16,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--mode", choices=("firmware", "sv39", "user"), default="firmware")
+    parser.add_argument("--mode", choices=("firmware", "sv39", "user", "workload"),
+                        default="firmware")
     args = parser.parse_args()
     out = Path(args.out)
     if out.is_absolute() or ".." in out.parts or out.parts[:1] != ("build",):
