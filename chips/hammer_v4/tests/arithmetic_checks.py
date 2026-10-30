@@ -25,7 +25,7 @@ module tb;
   wire [63:0] result;
   reg [63:0] expected;
   integer file_handle, fields, count, cycles, n;
-  reg [1023:0] vector_file;
+  string vector_file;
   hammer_v2_muldiv dut(.*);
   always #5 clk = ~clk;
   always @(posedge clk) begin

@@ -57,6 +57,9 @@ module tb;
   integer cycles = 0;
   integer j;
   reg [31:0] expected;
+  reg executing;
+  reg [63:0] expected_data;
+  integer retirements, load_comparisons;
   always @(posedge clk) begin
     cycles = cycles + 1;
     if (cycles > 500000) $fatal(1, "compact diagnostic cycle bound");
@@ -67,6 +70,34 @@ module tb;
     end else if ((^{{halted,uart_tx,host_ready,boot_ready,boot_error,
                     host_rsp_valid,host_rsp_error,retire_valid}}) === 1'bx)
       $fatal(1, "active public pin X/Z");
+    if (executing && rst_n) begin
+      if (trap_valid !== 0) $fatal(1,"compact compatibility program trapped");
+      if (retire_valid === 1) begin
+        retirements = retirements + 1;
+        if (retire_priv !== 3) $fatal(1,"compact program privilege");
+        if ({parameters["IMEM_WORDS"]} == 1) begin
+          if (retire_pc !== 0 || retire_next_pc !== 0 ||
+              retire_insn !== 32'h0000006f || retire_rd_we !== 0)
+            $fatal(1,"singleton instruction-memory retirement");
+        end else begin
+          case (retire_pc)
+            0: if (retire_insn !== 32'h100002b7 || retire_rd_data !== 64'h10000000)
+                 $fatal(1,"compact base-address instruction");
+            4: begin
+              if (retire_insn !== 32'h0002b303 || retire_rd_data !== expected_data ||
+                  retire_mem_valid !== 1 || retire_mem_write !== 0 ||
+                  retire_mem_addr !== 64'h10000000 || retire_mem_rdata !== expected_data)
+                $fatal(1,"compact backing-data read got=%h expected=%h",
+                       retire_rd_data,expected_data);
+              load_comparisons = load_comparisons + 1;
+            end
+            8: if (retire_insn !== 32'hffdff06f || retire_next_pc !== 4)
+                 $fatal(1,"compact loop branch");
+            default: $fatal(1,"compact program unexpected PC=%h",retire_pc);
+          endcase
+        end
+      end
+    end
   end
   always @(negedge clk) if (!rst_n) begin
     if (halted !== 1 || uart_tx !== 1 || host_ready !== 0 ||
@@ -89,8 +120,36 @@ module tb;
       comparisons = comparisons + 1;
     end
   endtask
+  task automatic data_transfer(input bit write_enable,
+                               input [63:0] data, input [63:0] read_expected);
+    begin
+      @(negedge clk);
+      host_valid = 1; host_write = write_enable; host_imem = 0;
+      host_addr = 0; host_wdata = data; host_wstrb = 8'hff;
+      do @(posedge clk); while (host_ready !== 1);
+      @(negedge clk); host_valid = 0;
+      do @(posedge clk); while (host_rsp_valid !== 1);
+      if (host_rsp_error !== 0 || (!write_enable && host_rdata !== read_expected))
+        $fatal(1,"compact backing-data host transaction");
+      comparisons = comparisons + 1;
+    end
+  endtask
+  task automatic run_program;
+    begin
+      retirements = 0; load_comparisons = 0; executing = 1;
+      @(negedge clk); start = 1;
+      @(negedge clk); start = 0;
+      while (retirements < 16) @(negedge clk);
+      halt_req = 1;
+      while (halted !== 1) @(negedge clk);
+      executing = 0; halt_req = 0;
+      if ({parameters["IMEM_WORDS"]} != 1 && load_comparisons == 0)
+        $fatal(1,"no compact data-load comparisons");
+    end
+  endtask
   initial begin
 {initialize}
+    executing = 0; expected_data = 0; retirements = 0; load_comparisons = 0;
     #1;
     if (halted !== 1 || uart_tx !== 1 || host_ready !== 0 ||
         boot_ready !== 0 || boot_error !== 0 || host_rsp_valid !== 0)
@@ -133,8 +192,24 @@ module tb;
     transfer(0, 0, 0, 32'h12300293);
     transfer(1, ({parameters["IMEM_WORDS"]}-1)*4, 32'h00700313, 0);
     transfer(0, ({parameters["IMEM_WORDS"]}-1)*4, 0, 32'h00700313);
+    if ({parameters["IMEM_WORDS"]} == 1)
+      transfer(1, 0, 32'h0000006f, 0);
+    else begin
+      transfer(1, 0, 32'h100002b7, 0);
+      transfer(1, 4, 32'h0002b303, 0);
+      transfer(1, 8, 32'hffdff06f, 0);
+    end
+    expected_data = 64'h1122334455667788;
+    data_transfer(1, expected_data, 0);
+    data_transfer(0, 0, expected_data);
+    run_program;
+    expected_data = 64'h8877665544332211;
+    data_transfer(1, expected_data, 0);
+    data_transfer(0, 0, expected_data);
+    run_program;
     if (comparisons < 4) $fatal(1, "empty comparisons");
-    $display("COMPARED host_transactions=%0d cycles=%0d", comparisons, cycles);
+    $display("COMPARED host_transactions=%0d cycles=%0d execution_epochs=2 last_retirements=%0d last_loads=%0d",
+             comparisons,cycles,retirements,load_comparisons);
     $finish;
   end
 endmodule

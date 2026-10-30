@@ -26,7 +26,7 @@ module tb;
   reg expected_fault;
   reg [55:0] expected_pa;
   integer file_handle, fields, count;
-  reg [1023:0] vector_file;
+  string vector_file;
   hammer_v3_page_leaf dut(.*);
   initial begin
     if (!$value$plusargs("vectors=%s", vector_file)) $fatal(1,"vectors missing");
