@@ -249,33 +249,80 @@ class Prediction:
                 self.core.stopped = True
         self.clock.schedule(edge + 160, Phase.OBSERVE, finish)
 
-    def execute(self, limit):
+    def advance(self, through, *, resume=False):
         began, heartbeat = time.monotonic(), time.monotonic()
-        with (self.out / "expected-events.txt").open("x", encoding="ascii") as events, (
+        with (self.out / "expected-events.txt").open(
+            "a" if resume else "x", encoding="ascii"
+        ) as events, (
             self.out / "expected-uart.bin"
-        ).open("xb") as uart:
+        ).open("ab" if resume else "xb") as uart:
             self.event_file, self.uart_file = events, uart
-            while self.final_edge is None and self.clock.edge < limit - 1:
-                self.clock.run(min(limit - 1, self.clock.edge + 100000))
-                if time.monotonic() - heartbeat >= 20:
-                    print(f"ORACLE_PROGRESS seed={self.scenario.seed} edge={self.clock.edge} "
-                          f"retired={self.core.machine.commits} uart_bytes={self.uart_bytes} "
-                          f"pc={self.core.machine.pc:x} "
-                          f"seconds={time.monotonic() - began:.3f}", flush=True)
-                    heartbeat = time.monotonic()
-            if self.final_edge is None:
-                raise AssertionError(
-                    f"Independent workload not complete at edge {limit - 1}; "
-                    f"pc={self.core.machine.pc:#x} retired={self.core.machine.commits} "
-                    f"uart_bytes={self.uart_bytes}; recent={list(self.core.recent)}"
-                )
+            try:
+                while self.final_edge is None and self.clock.edge < through:
+                    self.clock.run(min(through, self.clock.edge + 100000))
+                    if time.monotonic() - heartbeat >= 20:
+                        print(f"ORACLE_PROGRESS seed={self.scenario.seed} edge={self.clock.edge} "
+                              f"retired={self.core.machine.commits} uart_bytes={self.uart_bytes} "
+                              f"pc={self.core.machine.pc:x} "
+                              f"seconds={time.monotonic() - began:.3f}", flush=True)
+                        heartbeat = time.monotonic()
+            finally:
+                del self.event_file, self.uart_file
+
+    def execute(self, limit):
+        began = time.monotonic()
+        self.advance(limit - 1)
+        if self.final_edge is None:
+            raise AssertionError(
+                f"Independent workload not complete at edge {limit - 1}; "
+                f"pc={self.core.machine.pc:#x} retired={self.core.machine.commits} "
+                f"uart_bytes={self.uart_bytes}; recent={list(self.core.recent)}"
+            )
         return {
             "prediction_seconds": time.monotonic() - began,
             "callbacks": self.clock.callbacks, "retired": self.core.machine.commits,
             "final_edge": self.final_edge, "events": self.events,
             "uart_bytes": self.uart_bytes, "coverage": self.coverage.counts,
             "uart_context": list(self.core.platform.uart_transactions),
+            "uart_modes": list(self.core.platform.uart_modes),
         }
+
+
+def write_expectations(prediction, out, manifest_path, scenario_path):
+    complete = not prediction.diagnostic
+    if prediction.final_edge is None:
+        raise ValueError("An unfinished machine has no completed expectations")
+    if complete:
+        prediction.coverage.complete()
+    metadata = {
+        "schema": 1,
+        "scope": "independent-clocked-complete-linux" if complete else
+                 "independent-clocked-prefix",
+        "scenario_sha256": digest(scenario_path), "manifest_sha256": digest(manifest_path),
+        "images": dict(prediction.scenario.image_hashes), "seed": prediction.scenario.seed,
+        "bound": BOUND, "final_edge": prediction.final_edge,
+        "coverage": prediction.coverage.counts,
+        "watches": prediction.ranges, "event_count": prediction.events,
+    }
+    for key, name in (("uart", "expected-uart.bin"), ("events", "expected-events.txt")):
+        metadata[key] = {"path": name, "bytes": (out / name).stat().st_size,
+                         "sha256": digest(out / name)}
+    with (out / "expectations.json").open("xb") as stream:
+        stream.write(canonical_json(metadata))
+    if not complete:
+        controls = [
+            prediction.scenario.seed, prediction.scenario.start_edge,
+            prediction.scenario.rx_first_edge, prediction.scenario.rx_spacing,
+            prediction.final_edge, prediction.events, prediction.uart_bytes,
+            len(prediction.ranges),
+        ]
+        with (out / "control.txt").open("x", encoding="ascii") as stream:
+            stream.write(" ".join(map(str, controls)) + "\n" + "".join(
+                f"{item['name']} {item['start']} {item['end']}\n"
+                for item in prediction.ranges))
+        with (out / "counts.txt").open("x", encoding="ascii") as stream:
+            stream.write(f"{prediction.events} {prediction.uart_bytes}\n")
+    return metadata
 
 
 def main(argv=None):
@@ -320,32 +367,7 @@ def main(argv=None):
               "bound": BOUND, "completed": False}
     try:
         result.update(prediction.execute(args.diagnostic_edge_limit))
-        complete = not prediction.diagnostic
-        metadata = {
-            "schema": 1,
-            "scope": "independent-clocked-complete-linux" if complete else
-                     "independent-clocked-prefix",
-            "scenario_sha256": digest(scenario_path), "manifest_sha256": digest(manifest_path),
-            "images": dict(scenario.image_hashes), "seed": scenario.seed, "bound": BOUND,
-            "final_edge": result["final_edge"], "coverage": result["coverage"],
-            "watches": prediction.ranges, "event_count": prediction.events,
-        }
-        for key, name in (("uart", "expected-uart.bin"), ("events", "expected-events.txt")):
-            metadata[key] = {"path": name, "bytes": (out / name).stat().st_size,
-                             "sha256": digest(out / name)}
-        (out / "expectations.json").write_bytes(canonical_json(metadata))
-        if not complete:
-            controls = [
-                scenario.seed, scenario.start_edge, scenario.rx_first_edge,
-                scenario.rx_spacing, result["final_edge"], prediction.events,
-                prediction.uart_bytes, len(prediction.ranges),
-            ]
-            (out / "control.txt").write_text(
-                " ".join(map(str, controls)) + "\n" + "".join(
-                    f"{item['name']} {item['start']} {item['end']}\n"
-                    for item in prediction.ranges), encoding="ascii")
-            (out / "counts.txt").write_text(
-                f"{prediction.events} {prediction.uart_bytes}\n", encoding="ascii")
+        metadata = write_expectations(prediction, out, manifest_path, scenario_path)
         result.update(scope=metadata["scope"], completed=True)
         print(f"ORACLE_GENERATED scope={metadata['scope']} seed={scenario.seed} "
               f"final_edge={prediction.final_edge} events={prediction.events} "
@@ -358,6 +380,7 @@ def main(argv=None):
             uart_bytes=prediction.uart_bytes, coverage=prediction.coverage.counts,
             recent=list(prediction.core.recent),
             uart_context=list(prediction.core.platform.uart_transactions),
+            uart_modes=list(prediction.core.platform.uart_modes),
         )
         raise
     finally:

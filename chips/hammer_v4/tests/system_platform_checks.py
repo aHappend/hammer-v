@@ -65,7 +65,8 @@ endmodule
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--case", choices=("fixed", "linux-fifo", "modem"), default="fixed")
+    parser.add_argument("--case", choices=("fixed", "linux-fifo", "modem", "loopback-irqs"),
+                        default="fixed")
     args = parser.parse_args()
     relative = Path(args.out)
     if relative.is_absolute() or ".." in relative.parts or relative.parts[:1] != ("build",):
@@ -111,6 +112,13 @@ def main():
             56: (6, False, 0), 64: (2, False, 0), 72: (4, True, 0x10),
             80: (6, False, 0), 88: (6, False, 0), 96: (4, True, 0),
         }
+    elif args.case == "loopback-irqs":
+        requests = {
+            8: (3, True, 3), 16: (2, True, 1), 24: (1, True, 1),
+            32: (4, True, 16), 40: (0, True, 0xA5), 48: (5, False, 0),
+            200: (2, False, 0), 208: (5, False, 0), 216: (0, False, 0),
+            224: (2, False, 0), 232: (4, True, 0), 240: (0, True, 0x5A),
+        }
     replies = {}
     for edge, (offset, store, value) in requests.items():
         def sample(e=edge, o=offset, s=store, v=value):
@@ -155,6 +163,9 @@ def main():
                           80: 0x0F, 88: 0}
         if observed_reads != expected_reads:
             raise AssertionError(f"Loopback modem levels/deltas/IIR: {observed_reads}")
+    elif args.case == "loopback-irqs":
+        if observed_reads != {48: 0x20, 200: 0xC4, 208: 0x61, 216: 0xA5, 224: 0xC1}:
+            raise AssertionError(f"Loopback RX interrupt/data/acknowledgment: {observed_reads}")
     (out / "bridge.sv").write_text(BENCH, encoding="ascii")
     commands = [
         ["iverilog", "-g2012", "-Wall", "-s", "tb", "-o",
@@ -180,6 +191,7 @@ def main():
         "case": args.case,
         "compared_edges": len(rows), "compared_mmio": len(requests),
         "read_results": observed_reads,
+        "uart_modes": list(platform.uart_modes),
         "vectors_sha256": digest(out / "vectors.txt"),
     }))
     print(f"COMPARED_UART_PLATFORM edges={len(rows)} mmio={len(requests)}")

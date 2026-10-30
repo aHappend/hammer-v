@@ -41,6 +41,8 @@ class Platform:
         self.port = Port(clock, 1, self._route)
         self.transactions = deque(maxlen=32)
         self.uart_transactions = deque(maxlen=32)
+        self.uart_modes = deque(maxlen=64)
+        self._last_uart_mode = None
         self.context = None
         self.modem_previous = self.modem_delta = 0
         self._modem_ticks, self._modem_reads = set(), set()
@@ -192,6 +194,12 @@ class Platform:
             "lcr": self.lcr, "divisor": self.divisor, "mcr": self.mcr})
         dlab = bool(self.lcr & 128)
         if store and offset == 0 and not dlab:
+            mode = (self.lcr, self.divisor, self.mcr)
+            if mode != self._last_uart_mode:
+                self.uart_modes.append({
+                    **self.uart_transactions[-1],
+                    "preceding_mmio": list(self.uart_transactions)})
+                self._last_uart_mode = mode
             if len(self.transmitter.queue) >= self.transmitter.capacity:
                 self.clock.schedule(edge + 1, Phase.SAMPLE,
                                     lambda: self._uart(edge + 1, address, width,

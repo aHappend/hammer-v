@@ -22,6 +22,41 @@ from system_protocol import compare_uart, event_summary, freeze_expectations
 from preparation import source_hashes
 
 
+def checkpoint_prefix(checkpoint, manifest_path, scenario, oracle, uart_bytes):
+    from system_checkpoint import read_checkpoint
+    from system_prediction import write_expectations
+
+    directory = ROOT / relative_path(ROOT, checkpoint, output=True)
+    record = json.loads((directory / "checkpoint.json").read_text())
+    binding = record["binding"]
+    if binding["manifest_sha256"] != digest(ROOT / manifest_path) or \
+            binding["scenario_sha256"] != digest(oracle.parent / "scenario.json") or \
+            binding["images"] != dict(scenario.image_hashes) or \
+            binding["diagnostic_uart_bytes"] != uart_bytes or uart_bytes is None:
+        raise AssertionError("Diagnostic checkpoint inputs differ from this comparison")
+    prediction, _ = read_checkpoint(directory, binding)
+    if prediction.scenario != scenario or not prediction.diagnostic or \
+            prediction.final_edge is None or prediction.uart_bytes < uart_bytes:
+        raise AssertionError("Diagnostic checkpoint has not reached its prefix goal")
+    oracle.mkdir()
+    for name in ("expected-events.txt", "expected-uart.bin"):
+        shutil.copyfile(prediction.out / name, oracle / name)
+    write_expectations(prediction, oracle, ROOT / manifest_path,
+                       oracle.parent / "scenario.json")
+    (oracle / "prediction.json").write_bytes(canonical_json({
+        "scope": "independent-clocked-prefix", "completed": True,
+        "checkpoint": directory.relative_to(ROOT).as_posix(),
+        "checkpoint_sha256": digest(directory / "checkpoint.json"),
+        "final_edge": prediction.final_edge, "events": prediction.events,
+        "uart_bytes": prediction.uart_bytes, "coverage": prediction.coverage.counts,
+        "uart_context": list(prediction.core.platform.uart_transactions),
+        "uart_modes": list(prediction.core.platform.uart_modes),
+    }))
+    return {"checkpoint": directory.relative_to(ROOT).as_posix(),
+            "sha256": digest(directory / "checkpoint.json"),
+            "scope": "resumed independent diagnostic prefix, not Linux acceptance"}
+
+
 def retained_failed_prefix(receipt_path, manifest_path, scenario, oracle):
     """Compare a retained forecast prefix without accepting its failed goal."""
     relative = relative_path(ROOT, receipt_path)
@@ -110,7 +145,9 @@ def main():
     parser.add_argument("--retirements", type=int, default=150000)
     parser.add_argument("--uart-bytes", type=int)
     parser.add_argument("--edge-limit", type=int, default=1 << 26)
-    parser.add_argument("--failed-prefix-receipt")
+    origin_options = parser.add_mutually_exclusive_group()
+    origin_options.add_argument("--failed-prefix-receipt")
+    origin_options.add_argument("--prediction-checkpoint")
     args = parser.parse_args()
     relative = relative_path(ROOT, args.out, output=True)
     manifest_path = relative_path(ROOT, args.manifest)
@@ -148,7 +185,10 @@ def main():
 
     oracle = relative / "oracle"
     origin = None
-    if args.failed_prefix_receipt:
+    if args.prediction_checkpoint:
+        origin = checkpoint_prefix(args.prediction_checkpoint, manifest_path, scenario,
+                                   ROOT / oracle, args.uart_bytes)
+    elif args.failed_prefix_receipt:
         origin = retained_failed_prefix(args.failed_prefix_receipt, manifest_path, scenario,
                                          ROOT / oracle)
     else:
