@@ -5,11 +5,13 @@ import difflib
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -61,8 +63,71 @@ class Probe:
     def relative(self, path):
         return str(path.relative_to(ROOT))
 
+    def storage_snapshot(self, label):
+        files = [path.stat() for path in self.folder.rglob("*")
+                 if path.is_file() and not path.is_symlink()]
+        record = {
+            "label": label, "at": now(), "files": len(files),
+            "apparent_bytes": sum(stat.st_size for stat in files),
+            "allocated_bytes": sum(stat.st_blocks * 512 for stat in files),
+            "filesystem_available_bytes": shutil.disk_usage(self.folder).free,
+        }
+        self.receipt.setdefault("storage_samples", []).append(record)
+        self.persist()
+        return record
+
+    def release_compiler_intermediates(self):
+        binary = self.folder / "simulation"
+        objects = self.folder / "compile-obj"
+        if binary.is_symlink() or not binary.is_file() or not os.access(binary, os.X_OK):
+            raise RuntimeError(f"LINKED_EXECUTABLE_MISSING: {self.relative(binary)}")
+        if objects.is_symlink() or not objects.is_dir():
+            raise RuntimeError(f"COMPILER_INTERMEDIATES_INVALID: {self.relative(objects)}")
+        self.storage_snapshot("linked-before-intermediate-cleanup")
+        files = [path.stat() for path in objects.rglob("*") if path.is_file()]
+        record = {
+            "path": self.relative(objects), "executable": self.relative(binary),
+            "executable_sha256": digest(binary), "files": len(files),
+            "apparent_bytes": sum(stat.st_size for stat in files),
+            "allocated_bytes": sum(stat.st_blocks * 512 for stat in files),
+        }
+        shutil.rmtree(objects)
+        self.receipt.setdefault("compiler_intermediates_removed", []).append(record)
+        self.storage_snapshot("linked-after-intermediate-cleanup")
+
     def persist(self):
-        (self.folder / "receipt.json").write_text(json.dumps(self.receipt, indent=2) + "\n")
+        destination = self.folder / "receipt.json"
+        temporary = None
+        active_error = sys.exc_info()[1]
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.folder,
+                                             prefix=".receipt-", suffix=".tmp",
+                                             delete=False) as output:
+                temporary = Path(output.name)
+                json.dump(self.receipt, output, indent=2)
+                output.write("\n")
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, destination)
+        except OSError as error:
+            detail = f"{type(error).__name__}: {error}"
+            self.receipt.setdefault("persistence_errors", []).append(detail)
+            trace_failure = next((record["failure"] for record in
+                                  reversed(self.receipt.get("trace_streams", []))
+                                  if "failure" in record), None)
+            primary = (f"TRACE_CAPTURE_FAILED: {trace_failure}" if trace_failure else
+                       self.receipt.get("failure") or
+                       (f"{type(active_error).__name__}: {active_error}"
+                        if active_error is not None else None))
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    detail += f"; temporary cleanup failed: {cleanup_error}"
+            message = f"RECEIPT_PERSIST_FAILED: {self.relative(destination)}: {detail}"
+            if primary:
+                message = f"{primary}; {message}"
+            raise RuntimeError(message) from error
 
     def run(self, label, argv, timeout=3600, accepted_exits=(0,)):
         if argv[0] == "verilator" and "--binary" in argv:
@@ -359,6 +424,7 @@ def walker_probe(probe, mutant=None):
         probe.run("compile", ["verilator", "--binary", "--timing", "-Wall", "-Wno-fatal",
                              "--top-module", "ptw_probe", "--Mdir", probe.relative(objects),
                              "-o", "../simulation", "tests/ptw_probe.sv", *rtl])
+        probe.release_compiler_intermediates()
         output = probe.run("simulation", [probe.relative(probe.folder / "simulation"),
                                           f"+vectors={probe.relative(vector_file)}"],
                            accepted_exits=(1, -6, 134) if mutant else (0,))
@@ -437,6 +503,7 @@ def peripheral_probe(probe, unit):
                              "tests/peripheral_probe.sv",
                              probe.relative(probe.rtl_folder / "hammer_v3_plic.sv"),
                              probe.relative(probe.rtl_folder / "hammer_v3_uart.sv")])
+        probe.release_compiler_intermediates()
         output = probe.run("simulation", [probe.relative(probe.folder / "simulation"),
                                           f"+vectors={probe.relative(vector_file)}",
                                           f"+waveform={probe.relative(waveform)}"])
@@ -467,6 +534,7 @@ def fault_probe(probe):
                              "-o", "../simulation", "-I" + probe.relative(probe.folder),
                              "tests/top_probe.sv",
                              *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+        probe.release_compiler_intermediates()
         for index, (spec, words, data) in enumerate(fault_programs()):
             case = probe.folder / f"case-{index:03d}"
             case.mkdir()
@@ -526,6 +594,8 @@ def coherence_probe(probe, simulator="verilator", exchanges=100, reset_abort=Fal
                             "tests/coherence_probe.sv", *sources]
             execute = ["vvp", probe.relative(binary)]
         probe.run("compile", compile_argv)
+        if simulator == "verilator":
+            probe.release_compiler_intermediates()
         output = probe.run("simulation", [*execute,
                                           f"+program={probe.relative(program)}",
                                           f"+trace={probe.relative(trace)}"])
@@ -680,6 +750,7 @@ def context_probe(probe):
                              "-o", "../simulation", "-I" + probe.relative(probe.folder),
                              "tests/top_probe.sv",
                              *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+        probe.release_compiler_intermediates()
         probe.run("simulation", [probe.relative(probe.folder / "simulation"),
                                  f"+program={probe.relative(program)}",
                                  f"+trace={probe.relative(trace)}",
@@ -717,6 +788,7 @@ def isa_probe(probe, parent=False, seed=17):
                              "-o", "../simulation", "-I" + probe.relative(probe.folder),
                              "tests/top_probe.sv",
                              *[str(p.relative_to(ROOT)) for p in sorted(source_folder.glob("*.sv"))]])
+        probe.release_compiler_intermediates()
         probe.run("simulation", [probe.relative(probe.folder / "simulation"),
                                  f"+program={probe.relative(program)}",
                                  f"+trace={probe.relative(trace)}"])
@@ -761,6 +833,7 @@ def shootdown_probe(probe):
                              "-o", "../simulation", "-I" + probe.relative(probe.folder),
                              "tests/top_probe.sv",
                              *[str(p.relative_to(ROOT)) for p in sorted(probe.rtl_folder.glob("*.sv"))]])
+        probe.release_compiler_intermediates()
         probe.run("simulation", [probe.relative(probe.folder / "simulation"),
                                  f"+program={probe.relative(program)}",
                                  f"+trace={probe.relative(trace)}",

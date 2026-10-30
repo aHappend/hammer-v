@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 import gzip
 import hashlib
+import errno
 import os
 from pathlib import Path
 import select
@@ -64,11 +65,23 @@ def capture_trace(experiment, destination):
         reader.join(timeout=60)
         fifo.unlink()
         experiment.receipt.setdefault("trace_streams", []).append(record)
-        experiment.persist()
+        persistence_error = None
+        try:
+            experiment.persist()
+        except Exception as error:
+            persistence_error = error
         if reader.is_alive():
-            raise RuntimeError("TRACE_CAPTURE_DRAIN_TIMEOUT")
+            message = "TRACE_CAPTURE_DRAIN_TIMEOUT"
+            if persistence_error is not None:
+                message += f"; {persistence_error}"
+            raise RuntimeError(message) from persistence_error
         if errors:
-            raise RuntimeError(f"TRACE_CAPTURE_FAILED: {record['failure']}") from errors[0]
+            message = f"TRACE_CAPTURE_FAILED: {record['failure']}"
+            if persistence_error is not None:
+                message += f"; {persistence_error}"
+            raise RuntimeError(message) from errors[0]
+        if persistence_error is not None:
+            raise persistence_error
 
 
 def read_trace(path):
@@ -112,6 +125,101 @@ def self_test(experiment):
         "id": "lossless-stream-and-output-error-rejection", "passed": True,
         "compared_records": 50000, "compared_bytes": len(expected),
         "injected_output_error_rejected": failure_observed})
+    persistence_self_test(experiment)
+
+
+def persistence_self_test(experiment):
+    import probe
+
+    real_gzip_open = gzip.open
+
+    def partial_write(receipt, output, **kwargs):
+        output.write('{"incomplete":')
+        output.flush()
+        raise OSError(errno.ENOSPC, "injected receipt write exhaustion")
+
+    cases = []
+    for stage in ("write", "fsync", "replace"):
+        fixture = object.__new__(probe.Probe)
+        fixture.folder = experiment.folder / f"receipt-{stage}-00000031"
+        fixture.folder.mkdir()
+        fixture.receipt = {"assertions": [], "generation": "last-valid"}
+        fixture.persist()
+        path = fixture.folder / "receipt.json"
+        original = path.read_bytes()
+        fixture.receipt["generation"] = "must-not-replace"
+        target = {"write": "probe.json.dump", "fsync": "probe.os.fsync",
+                  "replace": "probe.os.replace"}[stage]
+        injected_error = (partial_write if stage == "write" else
+                          OSError(errno.ENOSPC, f"injected receipt {stage} exhaustion"))
+        first_record = threading.Event()
+        capture_failed = threading.Event()
+
+        @contextmanager
+        def failing_capture(*args, **kwargs):
+            with real_gzip_open(*args, **kwargs) as output:
+                class FailingOutput:
+                    def write(self, data):
+                        if first_record.is_set():
+                            capture_failed.set()
+                            raise OSError(errno.ENOSPC, "injected trace capture exhaustion")
+                        output.write(data)
+                        first_record.set()
+
+                yield FailingOutput()
+
+        with patch(target, side_effect=injected_error):
+            with patch.object(gzip, "open", side_effect=failing_capture):
+                try:
+                    with capture_trace(fixture, fixture.folder / "failed.txt.gz") as fifo:
+                        with fifo.open("wb", buffering=0) as writer:
+                            writer.write(b"retained first record\n")
+                            if not first_record.wait(timeout=60):
+                                raise AssertionError("INJECTED_CAPTURE_FIRST_RECORD_MISSING")
+                            writer.write(b"rejected second record\n")
+                            if not capture_failed.wait(timeout=60):
+                                raise AssertionError("INJECTED_CAPTURE_FAILURE_MISSING")
+                except RuntimeError as error:
+                    diagnostic = str(error)
+                    if not (diagnostic.startswith("TRACE_CAPTURE_FAILED:") and
+                            "injected trace capture exhaustion" in diagnostic and
+                            "RECEIPT_PERSIST_FAILED:" in diagnostic and
+                            f"injected receipt {stage} exhaustion" in diagnostic):
+                        raise AssertionError(f"CAPTURE_DIAGNOSIS_OBSCURED: {diagnostic}")
+                else:
+                    raise AssertionError("COMBINED_CAPTURE_PERSISTENCE_FAILURE_ACCEPTED")
+                # The suite's outer failure handler must not obscure the capture either.
+                try:
+                    fixture.finish(diagnostic)
+                except RuntimeError as error:
+                    final_diagnostic = str(error)
+                    if ("TRACE_CAPTURE_FAILED:" not in final_diagnostic or
+                            "RECEIPT_PERSIST_FAILED:" not in final_diagnostic):
+                        raise AssertionError(f"FINAL_DIAGNOSIS_OBSCURED: {error}")
+                else:
+                    raise AssertionError("FAILED_RECEIPT_FINALIZATION_ACCEPTED")
+        if path.read_bytes() != original:
+            raise AssertionError(f"LAST_VALID_RECEIPT_CHANGED: {stage}")
+        if list(fixture.folder.glob(".receipt-*.tmp")) or list(fixture.folder.glob("*.fifo")):
+            raise AssertionError(f"FAILED_PERSISTENCE_CLEANUP_MISSING: {stage}")
+        log = fixture.folder / "injected.stderr.txt"
+        log.write_text(diagnostic + "\n" + final_diagnostic + "\n")
+        fixture.receipt["assertions"].append({
+            "id": "injected-failure-retained", "passed": True,
+            "last_valid_receipt_unchanged": True, "stage": stage})
+        fixture.persist()
+        recovered = probe.json.loads(path.read_text())
+        stream = recovered["trace_streams"][0]
+        if (len(recovered["persistence_errors"]) != 2 or
+                "injected trace capture exhaustion" not in stream["failure"] or
+                stream["records"] != 1 or
+                stream["uncompressed_bytes"] != len(b"retained first record\n")):
+            raise AssertionError(f"PERSISTENCE_ERROR_RECOVERY_MISSING: {stage}")
+        cases.append({"stage": stage, "receipt": fixture.relative(path),
+                      "stderr": fixture.relative(log)})
+    experiment.receipt["assertions"].append({
+        "id": "capture-plus-receipt-enospc", "passed": True,
+        "last_valid_receipts_preserved": len(cases), "cases": cases})
 
 
 if __name__ == "__main__":

@@ -687,6 +687,7 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             "-DSYSTEM_MEMORY", "-DFINAL_STATE", *(["-DSYSTEM_ACCEL"] if accelerator else []),
             "-GPROGRAM_WORDS=256", "-GCONTINUE_TRAPS=1", "-GMAX_CYCLES=5000000", "tests/top_probe.sv",
             *[str(p.relative_to(probe.ROOT)) for p in sorted(experiment.rtl_folder.glob("*.sv"))]])
+        experiment.release_compiler_intermediates()
         for seed in seeds:
             directed_bins = Counter()
             for directed_scenario in ((scenario,) if scenario else
@@ -900,6 +901,7 @@ def run_configuration(experiment, configuration, seeds=SEEDS, accelerator=False,
             experiment.receipt["assertions"].append({
                 "id": "integrated-software-oracle", "passed": True, **record})
             experiment.persist()
+            experiment.storage_snapshot(f"seed-{seed}-compared")
     finally:
         if objects.is_dir():
             shutil.rmtree(objects)
