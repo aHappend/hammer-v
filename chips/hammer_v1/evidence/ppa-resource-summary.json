@@ -1,16 +1,6 @@
 {
   "chip": "Hammer-V1",
-  "fitter_resources": {
-    "alms_used": 6722,
-    "alms_total": 427200,
-    "alms_pct": "2 %",
-    "total_registers": 6458,
-    "block_memory_bits": 2097152,
-    "m20k_ram_blocks": 128,
-    "m20k_ram_blocks_total": 2713,
-    "dsp_blocks": 0,
-    "virtual_pins": 1168
-  },
+  "fitter_resources": {},
   "timing": {
     "device": "10AX115N2F45E1SG",
     "netlist_mode": "post_fit",
