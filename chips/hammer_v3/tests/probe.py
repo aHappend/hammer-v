@@ -131,6 +131,7 @@ class Probe:
 
     def run(self, label, argv, timeout=3600, accepted_exits=(0,)):
         if argv[0] == "verilator" and "--binary" in argv:
+            argv = [*argv, "-MAKEFLAGS", "VM_PARALLEL_BUILDS=0"]
             for tool in ("g++", "make"):
                 if not any(record["argv"] == [tool, "--version"]
                            for record in self.receipt["commands"]):
