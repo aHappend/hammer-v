@@ -157,9 +157,12 @@ class Coverage:
 
 
 class Prediction:
-    def __init__(self, scenario, images, out, *, diagnostic_retirements=None):
+    def __init__(self, scenario, images, out, *, diagnostic_retirements=None,
+                 diagnostic_uart_bytes=None):
         self.scenario, self.out = scenario, out
         self.diagnostic_retirements = diagnostic_retirements
+        self.diagnostic_uart_bytes = diagnostic_uart_bytes
+        self.diagnostic = diagnostic_retirements is not None or diagnostic_uart_bytes is not None
         self.clock = Clock()
         self.ranges = [
             {"name": "fdt", "start": 0x87E00000, "end": 0x87E00000 + len(images[2][2])},
@@ -200,8 +203,10 @@ class Prediction:
                 memory.address, memory.mask, memory.wdata, memory.rdata,
                 registers[10], registers[11], registers[12], registers[17],
             ))
-        if self.diagnostic_retirements is not None and \
-                ordinal >= self.diagnostic_retirements and \
+        prefix_reached = self.diagnostic_retirements is not None and \
+            ordinal >= self.diagnostic_retirements or \
+            self.diagnostic_uart_bytes is not None and self.uart_bytes >= self.diagnostic_uart_bytes
+        if prefix_reached and \
                 self.core.platform.transmitter.temt and not self.active:
             self.final_edge = edge
             self.core.stopped = True
@@ -233,7 +238,7 @@ class Prediction:
             self.uart_file.write(bytes((byte,)))
             self.tail.append(byte)
             self.active = False
-            if self.diagnostic_retirements is None and bytes(self.tail) == PANIC_END:
+            if not self.diagnostic and bytes(self.tail) == PANIC_END:
                 last_rx = self.scenario.rx_first_edge + 2 * self.scenario.rx_spacing + 160
                 if edge + 160 < last_rx:
                     raise AssertionError("PID-1 panic preceded admitted console input")
@@ -277,7 +282,9 @@ def main(argv=None):
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--diagnostic-retirements", type=int)
+    diagnostic = parser.add_mutually_exclusive_group()
+    diagnostic.add_argument("--diagnostic-retirements", type=int)
+    diagnostic.add_argument("--diagnostic-uart-bytes", type=int)
     parser.add_argument("--diagnostic-edge-limit", type=int, default=BOUND)
     args = parser.parse_args(argv)
     relative = Path(args.out)
@@ -289,9 +296,11 @@ def main(argv=None):
     ):
         parser.error("--out may not escape the project or contain symlinks")
     if args.diagnostic_retirements is not None and args.diagnostic_retirements <= 0 or \
+            args.diagnostic_uart_bytes is not None and args.diagnostic_uart_bytes <= 0 or \
             not 0 < args.diagnostic_edge_limit <= BOUND:
         parser.error("Invalid diagnostic bound")
-    if args.diagnostic_retirements is None and args.diagnostic_edge_limit != BOUND:
+    if args.diagnostic_retirements is None and args.diagnostic_uart_bytes is None and \
+            args.diagnostic_edge_limit != BOUND:
         parser.error("Complete predictions retain the continuous 4294967296-edge bound")
     manifest_path = project_file(ROOT, args.manifest)
     scenario_path = project_file(ROOT, args.scenario)
@@ -304,12 +313,13 @@ def main(argv=None):
     out = ROOT / relative
     out.mkdir(parents=True, exist_ok=False)
     prediction = Prediction(scenario, images, out,
-                            diagnostic_retirements=args.diagnostic_retirements)
+                            diagnostic_retirements=args.diagnostic_retirements,
+                            diagnostic_uart_bytes=args.diagnostic_uart_bytes)
     result = {"scope": "incomplete-independent-prediction", "seed": scenario.seed,
               "bound": BOUND, "completed": False}
     try:
         result.update(prediction.execute(args.diagnostic_edge_limit))
-        complete = args.diagnostic_retirements is None
+        complete = not prediction.diagnostic
         metadata = {
             "schema": 1,
             "scope": "independent-clocked-complete-linux" if complete else
@@ -341,6 +351,12 @@ def main(argv=None):
               f"uart_bytes={prediction.uart_bytes}", flush=True)
     except Exception as error:
         result["failure"] = {"type": type(error).__name__, "message": str(error)}
+        result.update(
+            last_edge=prediction.clock.edge, retired=prediction.core.machine.commits,
+            pc=prediction.core.machine.pc, events=prediction.events,
+            uart_bytes=prediction.uart_bytes, coverage=prediction.coverage.counts,
+            recent=list(prediction.core.recent),
+        )
         raise
     finally:
         (out / "prediction.json").write_bytes(canonical_json(result))

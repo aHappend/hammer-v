@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--seed", type=int, choices=SEEDS, default=SEEDS[0])
     parser.add_argument("--retirements", type=int, default=150000)
+    parser.add_argument("--uart-bytes", type=int)
     parser.add_argument("--edge-limit", type=int, default=1 << 26)
     args = parser.parse_args()
     relative = relative_path(ROOT, args.out, output=True)
@@ -67,7 +68,8 @@ def main():
     run([
         "python3", "tests/system_oracle.py", "--manifest", manifest_path.as_posix(),
         "--scenario", (relative / "scenario.json").as_posix(), "--out", oracle.as_posix(),
-        "--diagnostic-retirements", str(args.retirements),
+        "--diagnostic-uart-bytes" if args.uart_bytes is not None else "--diagnostic-retirements",
+        str(args.uart_bytes if args.uart_bytes is not None else args.retirements),
         "--diagnostic-edge-limit", str(args.edge_limit),
     ], "prediction")
     metadata = json.loads((ROOT / oracle / "expectations.json").read_text())
@@ -115,15 +117,30 @@ def main():
     comparison = compare_uart(ROOT / oracle / "expected-uart.bin", ROOT / actual / "uart.bin")
     if not comparison["equal"]:
         raise AssertionError(f"Exact UART prefix comparison failed: {comparison}")
+    observed = json.loads((ROOT / actual / "prefix-result.json").read_text())
+    if observed["coverage"] != metadata["coverage"]:
+        raise AssertionError(
+            f"Independent and public-pin prefix coverage differ: "
+            f"expected={metadata['coverage']}, actual={observed['coverage']}"
+        )
     load_images(ROOT, args.manifest)
     result = {
         "scope": "bounded CLI prediction/comparison, not complete Linux acceptance",
         "seed": args.seed, "frozen_files": frozen, "frozen_unix": frozen_at,
         "dut_started_unix": commands[-1]["started_unix"],
         "complete_system_seal_rejected": True, "final_edge": metadata["final_edge"],
+        "compared_coverage": observed["coverage"],
         "compared_events": metadata["event_count"], "uart": comparison,
         "all_comparisons_passed": True,
     }
+    if comparison["bytes"] > 2527:
+        with (ROOT / oracle / "expected-uart.bin").open("rb") as stream:
+            stream.seek(2511)
+            result["byte_2527_comparison"] = {
+                "equal": True, "context_first_offset": 2511,
+                "expected_and_actual_context_hex": stream.read(33).hex(),
+                "normalization": False,
+            }
     if frozen_at >= result["dut_started_unix"]:
         raise AssertionError("DUT ran before independent expectation freeze")
     (out / "summary.json").write_bytes(canonical_json(result))
