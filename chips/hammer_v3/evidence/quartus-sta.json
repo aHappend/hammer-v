@@ -1,0 +1,334 @@
+{
+  "gate": "quartus-sta",
+  "timestamp_utc": "2026-10-30T00:26:53.941990+00:00",
+  "project_dir": "/data/sufeng/hammer-v3-line/workspace/project/.vulcan/engineering/run-0001/quartus_sta_work",
+  "revision": "top",
+  "clock_filter": "clk_main",
+  "min_setup_slack_ns": 0.0,
+  "min_hold_slack_ns": 0.0,
+  "status": "passed",
+  "map_summary": {
+    "exists": true,
+    "path": "/data/sufeng/hammer-v3-line/workspace/project/.vulcan/engineering/run-0001/quartus_sta_work/top.map.rpt",
+    "error_count": 0,
+    "errors": [],
+    "lpm_divide_error_count": 0,
+    "lpm_divide_errors": [],
+    "warning_10268_count": 0,
+    "warning_10268": [],
+    "uninferred_ram_count": 0,
+    "uninferred_rams": []
+  },
+  "sta_summary": {
+    "exit_code": 0,
+    "netlist_mode": "post_fit",
+    "clocks": [
+      {
+        "name": "clk_main",
+        "period_ns": 10.0
+      }
+    ],
+    "wns_setup_ns": 0.288,
+    "wns_hold_ns": 0.038,
+    "unconstrained_setup_paths": 0,
+    "unconstrained_functional_endpoints": 0,
+    "unapproved_timing_exceptions": 0,
+    "failing_setup_count": 0,
+    "failing_hold_count": 0,
+    "setup_paths": [
+      {
+        "slack_ns": 0.288,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.3,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.303,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[7]"
+      },
+      {
+        "slack_ns": 0.312,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.315,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[7]"
+      },
+      {
+        "slack_ns": 0.324,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.327,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[7]"
+      },
+      {
+        "slack_ns": 0.339,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[7]"
+      },
+      {
+        "slack_ns": 0.347,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.347,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[21]"
+      },
+      {
+        "slack_ns": 0.347,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[9]"
+      },
+      {
+        "slack_ns": 0.349,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][1]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.358,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.359,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.359,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.359,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[21]"
+      },
+      {
+        "slack_ns": 0.359,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[9]"
+      },
+      {
+        "slack_ns": 0.361,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][1]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      },
+      {
+        "slack_ns": 0.362,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[7]"
+      },
+      {
+        "slack_ns": 0.362,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "threshold[0][0]|hammer_v3_plic:g_legal.u_plic|owner[31]"
+      }
+    ],
+    "hold_paths": [
+      {
+        "slack_ns": 0.038,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "g_legal.maintenance_state.MDWAIT",
+        "to_node": "g_legal.maintenance_state.MDWAIT"
+      },
+      {
+        "slack_ns": 0.039,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_fabric:g_legal.u_fabric",
+        "to_node": "target.10|hammer_v3_fabric:g_legal.u_fabric|target.10"
+      },
+      {
+        "slack_ns": 0.04,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "in_service[31]|hammer_v3_plic:g_legal.u_plic|in_service[31]"
+      },
+      {
+        "slack_ns": 0.041,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_mmu:g_legal.u_mmu",
+        "to_node": "fence_state.DRAIN|hammer_v3_mmu:g_legal.u_mmu|fence_state.DRAIN"
+      },
+      {
+        "slack_ns": 0.041,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "g_legal.maintenance_state.MDONE",
+        "to_node": "g_legal.maintenance_state.MDONE"
+      },
+      {
+        "slack_ns": 0.042,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_state.RX_BREAK|hammer_v3_uart:g_legal.u_uart|rx_state.RX_BREAK"
+      },
+      {
+        "slack_ns": 0.042,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "in_service[22]|hammer_v3_plic:g_legal.u_plic|in_service[22]"
+      },
+      {
+        "slack_ns": 0.042,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "in_service[26]|hammer_v3_plic:g_legal.u_plic|in_service[26]"
+      },
+      {
+        "slack_ns": 0.043,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_state.RX_START|hammer_v3_uart:g_legal.u_uart|rx_state.RX_START"
+      },
+      {
+        "slack_ns": 0.043,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_state.RX_PARITY|hammer_v3_uart:g_legal.u_uart|rx_state.RX_PARITY"
+      },
+      {
+        "slack_ns": 0.045,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_state.RX_STOP|hammer_v3_uart:g_legal.u_uart|rx_state.RX_STOP"
+      },
+      {
+        "slack_ns": 0.046,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_state.RX_BREAK|hammer_v3_uart:g_legal.u_uart|rx_state.RX_BREAK~DUPLICATE"
+      },
+      {
+        "slack_ns": 0.046,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_bit[2]|hammer_v3_uart:g_legal.u_uart|rx_bit[2]"
+      },
+      {
+        "slack_ns": 0.047,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_mmu:g_legal.u_mmu",
+        "to_node": "hammer_v3_tlb:u_itlb|g_legal.valid[2]|hammer_v3_mmu:g_legal.u_mmu|hammer_v3_tlb:u_itlb|g_legal.valid[2]"
+      },
+      {
+        "slack_ns": 0.048,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_bit[0]|hammer_v3_uart:g_legal.u_uart|rx_bit[0]"
+      },
+      {
+        "slack_ns": 0.048,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_fabric:g_legal.u_fabric",
+        "to_node": "target.01|hammer_v3_fabric:g_legal.u_fabric|target.01"
+      },
+      {
+        "slack_ns": 0.048,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "in_service[17]|hammer_v3_plic:g_legal.u_plic|in_service[17]"
+      },
+      {
+        "slack_ns": 0.049,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_bit[1]|hammer_v3_uart:g_legal.u_uart|rx_bit[1]"
+      },
+      {
+        "slack_ns": 0.049,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_uart:g_legal.u_uart",
+        "to_node": "rx_frame_error|hammer_v3_uart:g_legal.u_uart|rx_frame_error"
+      },
+      {
+        "slack_ns": 0.049,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v3_plic:g_legal.u_plic",
+        "to_node": "in_service[29]|hammer_v3_plic:g_legal.u_plic|in_service[29]"
+      }
+    ],
+    "stderr_tail": []
+  },
+  "detail": "Timing closed: Setup WNS = 0.288 ns",
+  "top_module": "hammer_v3_top",
+  "clock_port": "clk",
+  "clock_period_ns": 10.0,
+  "target_frequency_mhz": 100.0,
+  "fmax_mhz": 102.97,
+  "critical_path_delay_ns": 9.712,
+  "parameters": {},
+  "source_sha256": "232754a4831b9e39f8a36d543db3cc98d488c4d6afc0bc8dd3b5a33639683226",
+  "applicable": true
+}
