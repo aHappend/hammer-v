@@ -2,8 +2,10 @@
 """Compare frozen memory-path predictions at real RTL request/response pins.
 
 This harness has no processor. It connects the delivered fetch/data paths,
-MMU/TLB/PTW, both cache arbiters/caches, router, fabric and AXI master verbatim.
-It is a scheduler-integration diagnostic, not a Linux/core acceptance result.
+atomic unit, MMU/TLB/PTW, both cache arbiters/caches, router, fabric and AXI
+master verbatim. Ordinary accesses, maintenance and physical atomic requests
+are compared at their public interfaces. Atomic translation-to-start scheduling
+is not covered here. This is not a Linux/core acceptance result.
 """
 
 import argparse
@@ -18,7 +20,7 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from system_execution_checks import image
-from system_memory import MemoryExecution, TranslationRequest
+from system_memory import AtomicRequest, MemoryExecution, TranslationRequest
 from system_oracle import Clock, Phase, SEEDS, canonical_json, digest
 
 
@@ -31,6 +33,12 @@ def wrapper():
         "output wire [63:0] i_data",
         "output wire i_error, i_page",
         "input wire d_valid, d_write",
+        "input wire [1:0] d_command",
+        "input wire a_start, a_word, a_invalidate",
+        "input wire [4:0] a_op",
+        "input wire [63:0] a_addr, a_operand",
+        "output wire a_ready, a_done, a_error",
+        "output wire [63:0] a_result",
         "output wire d_ready, d_rsp_valid",
         "input wire [63:0] d_addr, d_wdata",
         "input wire [7:0] d_mask",
@@ -39,7 +47,7 @@ def wrapper():
         "output wire d_error, d_page",
     ]
     nets, instances = {}, []
-    external = set(re.findall(r"\b(?:clk|rst_n|satp|[id]_[a-z_]+)\b", "\n".join(top)))
+    external = set(re.findall(r"\b(?:clk|rst_n|satp|[ida]_[a-z_]+)\b", "\n".join(top)))
 
     def interface(module):
         source = (ROOT / "rtl" / (module + ".sv")).read_text()
@@ -91,12 +99,16 @@ def wrapper():
         "cache_rdata": "ia_data[63:0]", "cache_error": "ia_error[0]",
     })
     unit("hammer_v3_data_path", "data", {
-        "req_valid": "d_valid", "req_physical": "1'b0", "req_ready": "d_ready",
-        "req_addr": "d_addr", "req_wdata": "d_wdata", "req_wstrb": "d_mask",
-        "req_cmd": "{1'b0,d_write}", "req_size": "d_size",
+        "req_valid": "a_live ? atom_valid : d_valid", "req_physical": "a_live && 1'b1",
+        "req_ready": "path_ready",
+        "req_addr": "a_live ? atom_addr : d_addr",
+        "req_wdata": "a_live ? atom_wdata : d_wdata",
+        "req_wstrb": "a_live ? atom_mask : d_mask",
+        "req_cmd": "a_live ? atom_cmd : (d_command[1] ? d_command : {1'b0,d_write})",
+        "req_size": "a_live ? (a_word_q ? 2'd2 : 2'd3) : d_size",
         "req_access": "d_write ? 2'd2 : 2'd1",
-        "rsp_valid": "d_rsp_valid", "rsp_ready": "1'b1", "rsp_rdata": "d_data",
-        "rsp_error": "d_error", "rsp_page_fault": "d_page",
+        "rsp_valid": "path_rsp_valid", "rsp_ready": "a_live ? atom_rsp_ready : 1'b1",
+        "rsp_rdata": "d_data", "rsp_error": "d_error", "rsp_page_fault": "d_page",
         "at_req_valid": "1'b0", "at_req_ready": "", "at_req_va": "64'b0",
         "at_req_access": "2'b0", "at_rsp_valid": "", "at_rsp_ready": "1'b1",
         "at_rsp_pa": "", "at_rsp_error": "", "at_rsp_page_fault": "",
@@ -108,6 +120,18 @@ def wrapper():
         "out_wdata": "rt_wdata", "out_wstrb": "rt_mask", "out_cmd": "rt_cmd",
         "out_size": "rt_size", "out_rsp_valid": "rt_rsp_valid",
         "out_rsp_ready": "rt_rsp_ready", "out_rdata": "rt_data", "out_error": "rt_error",
+    })
+    unit("hammer_v3_atomic", "atomic_unit", {
+        "start": "a_start && a_ready", "ready": "atom_ready",
+        "op": "a_op", "word_op": "a_word", "addr": "a_addr", "operand": "a_operand",
+        "invalidate": "a_invalidate", "store_commit": "1'b0", "store_addr": "64'b0",
+        "done": "a_done", "consume": "1'b1", "error": "a_error",
+        "cause": "", "tval": "", "result": "a_result", "old_data": "",
+        "mem_write": "", "wmask": "", "wdata": "",
+        "req_valid": "atom_valid", "req_ready": "path_ready && a_live",
+        "req_cmd": "atom_cmd", "req_addr": "atom_addr", "req_wdata": "atom_wdata",
+        "req_wstrb": "atom_mask", "rsp_valid": "path_rsp_valid && a_live",
+        "rsp_ready": "atom_rsp_ready", "rsp_rdata": "d_data", "rsp_error": "d_error",
     })
     unit("hammer_v3_mmu", "mmu", {
         "satp": "satp", "mstatus": "64'b0", "priv": "2'b0",
@@ -192,9 +216,30 @@ def wrapper():
         "rsp_rdata": "mem_data", "rsp_error": "mem_error", "rsp_decerr": "mem_decerr",
         **{name: name for _, _, name in axi if name.startswith("m_mem_axi_")},
     })
+    arbitration = """
+reg a_live, a_word_q, d_busy;
+assign a_ready = atom_ready && !d_busy && !d_valid;
+assign d_ready = path_ready && !a_live;
+assign d_rsp_valid = path_rsp_valid && !a_live;
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        a_live <= 0;
+        a_word_q <= 0;
+        d_busy <= 0;
+    end else begin
+        if (d_valid && d_ready) d_busy <= 1;
+        if (d_rsp_valid) d_busy <= 0;
+        if (a_start && a_ready) begin
+            a_live <= 1;
+            a_word_q <= a_word;
+        end
+        if (a_done) a_live <= 0;
+    end
+end
+"""
     return "module memory_path (\n" + ",\n".join(top) + "\n);\n" + \
         "\n".join(f"wire {width} {name};" for name, width in nets.items()) + \
-        "\n" + "\n".join(instances) + "\nendmodule\n"
+        "\n" + arbitration + "\n".join(instances) + "\nendmodule\n"
 
 
 def predict(seed, directory):
@@ -209,26 +254,56 @@ def predict(seed, directory):
         [(0x800001, "store", 1, 42), (0x800001, "load", 1, 0),
          (0x800008, "store", 8, 0xFFEEDDCCBBAA9988), (0x800008, "load", 8, 0),
          (0x800080, "load", 8, 0), (0x800008, "load", 8, 0),
-         (0xA00000, "load", 8, 0)],
+         (0xA00000, "load", 8, 0),
+         (0x800008, "store", 8, 0x123456789ABCDEF0),
+         (0, "clean", 8, 0), (0x800008, "load", 8, 0),
+         (0, "invalidate", 8, 0), (0x800008, "load", 8, 0),
+         (0x80300008, "amoadd", 8, 5), (0x80300008, "lr", 8, 0),
+         (0x80300008, "sc", 8, 0xFFEEDDCCBBAA9988), (0x80300008, "sc", 8, 7),
+         (0x8030000C, "lr", 4, 0), (0x80300008, "sc", 4, 7),
+         (0x8030000C, "lr", 4, 0), (0x8030000C, "sc", 4, 0xFEDCBA98),
+         (0x80300008, "lr", 8, 0), (0x80300008, "sc-invalidated", 8, 7),
+         (0x8030000C, "amomin", 4, 0x80000000), (0x800008, "load", 8, 0)],
     )
 
     def issue(port, index, edge):
         address, access, width, value = programs[port][index]
-        request = TranslationRequest(address, access, satp, 0, 0)
-        requests.append((port, edge, address, width, int(access == "store"), value))
+        maintenance = access in ("clean", "invalidate")
+        atomic = access in ("amoadd", "lr", "sc", "sc-invalidated", "amomin")
+        operation = {"amoadd": 0, "lr": 2, "sc": 3, "sc-invalidated": 3, "amomin": 16}.get(access)
+        command = 4 + operation if atomic else {"clean": 2, "invalidate": 3}.get(access, 0)
+        requests.append((port, edge, address, width, int(access == "store"), value, command,
+                         int(access == "sc-invalidated")))
 
         def received(reply):
             events.append((port, index, reply.edge, reply.data, int(reply.error),
                            int(reply.page_fault)))
             if index + 1 < len(programs[port]):
                 issue(port, index + 1, reply.edge + 2)
-        model.ports[port].submit(0, edge, (request, width, value), received)
+        if maintenance:
+            model.maintenance.submit(0, edge, (False, access == "invalidate"), received)
+        elif atomic:
+            if access == "sc-invalidated":
+                model.invalidate_reservation(edge)
+            kind = "load" if operation == 2 else "store" if operation == 3 else "atomic"
+            model.atomic_physical.submit(
+                0, edge, AtomicRequest(TranslationRequest(address, kind, 0, 0, 3),
+                                       width, value, operation), received)
+        else:
+            request = TranslationRequest(address, access, satp, 0, 0)
+            model.ports[port].submit(0, edge, (request, width, value), received)
     for port in (0, 1):
         issue(port, 0, 32)
     clock.run(100000)
-    if len(events) != 13 or model.translation.pte_reads < 6 or \
-            not model.dcache.writebacks or not events[-1][-1]:
+    if len(events) != sum(map(len, programs)) or model.translation.pte_reads < 6 or \
+            not model.dcache.writebacks or not any(event[-1] for event in events) or \
+            model.backing.ram.memory[0x300008:0x300010] != \
+            bytes.fromhex("f0debc9a78563412") or \
+            model.dcache.hits < 2:
         raise AssertionError("Missing simultaneous walks, dirty eviction or page fault")
+    if events[-1][3] != 0x80000000BBAA9988 or \
+            sum(event[0] == 1 and event[3] == 1 for event in events) != 3:
+        raise AssertionError("Atomic old data, failed SC or byte-preserving AMO comparison failed")
     (directory / "requests.txt").write_text(
         "".join(" ".join(map(str, record)) + "\n" for record in sorted(requests, key=lambda x: x[1])))
     (directory / "expected.txt").write_text(
@@ -298,14 +373,17 @@ def main():
             raise AssertionError("RTL execution changed frozen memory-path predictions")
         (out / "summary.json").write_bytes(canonical_json({
             "scope": "public-pin memory-path timing/value diagnostic; no core/Linux",
-            "seeds": list(SEEDS), "responses_compared": 39, "frozen_inputs": frozen,
+            "seeds": list(SEEDS), "responses_compared": 90, "frozen_inputs": frozen,
+            "maintenance": "dirty clean retains line; invalidate/refill preserves stored bytes",
+            "atomics": "physical atomic-unit/cache path; not core atomic-translation timing",
             "dut_execution": True, "full_system_timed_oracle": False,
         }))
     finally:
         for pattern in ("*.o", "*.a", "*.gch"):
             for path in obj.glob(pattern):
                 path.unlink()
-    print("COMPARED frozen cache/PTW/fabric response edges and values for seeds 11/29/47")
+    print("COMPARED 90 frozen cache/maintenance/physical-atomic/PTW/fabric response edges "
+          "and values for seeds 11/29/47; no core/Linux acceptance")
 
 
 if __name__ == "__main__":

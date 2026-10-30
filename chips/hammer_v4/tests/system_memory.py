@@ -10,7 +10,7 @@ All response consumers in this module are continuously ready.
 from collections import deque
 from dataclasses import dataclass, field
 
-from architecture import PageFault, canonical, leaf
+from architecture import PageFault, amo, canonical, leaf
 from system_oracle import AxiRam, MASK, Phase
 
 
@@ -20,6 +20,7 @@ class Word:
     data: int = 0
     strobes: int = 0
     write: bool = False
+    command: int = 0
 
     def __post_init__(self):
         if type(self.address) is not int or not 0 <= self.address <= MASK or \
@@ -28,6 +29,8 @@ class Word:
             raise ValueError("Invalid aligned memory word transaction")
         if not self.write and (self.data or self.strobes):
             raise ValueError("A read cannot carry write payload")
+        if self.command not in (0, 2, 3) or self.command and self.write:
+            raise ValueError("Invalid cache maintenance command")
 
 
 @dataclass(frozen=True)
@@ -213,6 +216,9 @@ class Cache:
         self.hits = self.misses = self.writebacks = 0
 
     def _serve(self, owner, edge, request, finish):
+        if request.command:
+            self._maintain(edge, request.command == 3, finish)
+            return
         if not self.backing.present(self.instruction, request.address) or \
                 self.instruction and request.write:
             finish(Reply(edge + 2, error=True))
@@ -275,7 +281,7 @@ class Cache:
     def _clear(line):
         line.valid = line.dirty = False
 
-    def _writeback(self, line, first, complete):
+    def _writeback(self, line, first, complete, invalidate=True):
         def beat(index, issue_edge):
             address = line.base + 8 * index
             data = int.from_bytes(line.data[8 * index:8 * index + 8], "little")
@@ -284,7 +290,11 @@ class Cache:
                 if reply.error:
                     raise AssertionError("Backing writeback failed in provisioned RAM")
                 if index == 3:
-                    self._invalidate(line, reply.edge)
+                    def cleaned():
+                        line.dirty = False
+                        if invalidate:
+                            line.valid = False
+                    self.clock.schedule(reply.edge, Phase.UPDATE, cleaned)
                     complete(reply.edge + 1)
                 else:
                     beat(index + 1, reply.edge + 1)
@@ -293,6 +303,28 @@ class Cache:
             self.backing.port.submit(int(not self.instruction), issue_edge + 1,
                                      Word(address, data, 255, True), received)
         beat(0, first)
+
+    def _maintain(self, edge, invalidate, finish):
+        def scan(index, lookup_edge):
+            def check():
+                line = self.lines[index]
+
+                def advance(next_edge):
+                    def sample_next():
+                        if index + 1 == len(self.lines):
+                            finish(Reply(next_edge + 1))
+                        else:
+                            scan(index + 1, next_edge + 1)
+                    self.clock.schedule(next_edge, Phase.SAMPLE, sample_next)
+
+                if line.valid and line.dirty and not self.instruction:
+                    self._writeback(line, lookup_edge + 2, advance, invalidate)
+                else:
+                    if invalidate:
+                        self._invalidate(line, lookup_edge + 1)
+                    advance(lookup_edge + 2)
+            self.clock.schedule(lookup_edge + 1, Phase.SAMPLE, check)
+        scan(0, edge + 1)
 
     def _hit(self, line, request, edge, finish):
         offset = request.address & 31
@@ -343,6 +375,21 @@ class TranslationRequest:
         if self.access != "fetch" and self.privilege == 3 and self.status & (1 << 17):
             return self.status >> 11 & 3
         return self.privilege
+
+
+@dataclass(frozen=True)
+class AtomicRequest:
+    translation: TranslationRequest
+    width: int
+    value: int
+    operation: int
+
+    def __post_init__(self):
+        access = "load" if self.operation == 2 else "store" if self.operation == 3 else "atomic"
+        if self.operation not in (0, 1, 2, 3, 4, 8, 12, 16, 20, 24, 28) or \
+                self.width not in (4, 8) or self.translation.address % self.width or \
+                self.translation.access != access or not 0 <= self.value <= MASK:
+            raise ValueError("Invalid aligned architectural atomic request")
 
 
 class Translation:
@@ -459,11 +506,14 @@ class Translation:
 
 
 class MemoryExecution:
-    """Core-facing translated RAM path; MMIO/maintenance are not implemented.
+    """Translated RAM, cache maintenance and serialized RV64A operations.
 
     Requests are virtual byte accesses; cache/fabric transfers remain aligned
     words. This layer preserves instruction word selection, shifted stores and
     fault causes without pretending that one interpreter step is one clock.
+    The atomic port starts at atomic-translation acceptance and ends at DONE
+    sampling, including the core's registered translation/start boundaries.
+    It is not a prediction of fetch/decode/retirement or interrupt admission.
     """
 
     def __init__(self, clock, seed, images=(), rom=b"", cache_lines=64):
@@ -476,6 +526,93 @@ class MemoryExecution:
         self.translation = Translation(clock, self.data)
         self.ports = [Port(clock, 1, lambda _, e, r, f, p=p: self._serve(p, e, r, f))
                       for p in (0, 1)]
+        self.maintenance = Port(clock, 1, self._maintain)
+        self.atomic = Port(clock, 1, self._atomic)
+        self.atomic_physical = Port(clock, 1, self._atomic_physical)
+        self.reservation = None
+        self.reservation_invalidations = set()
+
+    def invalidate_reservation(self, edge):
+        if edge in self.reservation_invalidations:
+            return
+        self.reservation_invalidations.add(edge)
+        self.clock.schedule(edge, Phase.UPDATE, lambda: setattr(self, "reservation", None))
+        self.clock.schedule(edge, Phase.OBSERVE,
+                            lambda: self.reservation_invalidations.remove(edge))
+
+    def _atomic(self, owner, edge, request, finish):
+        if not isinstance(request, AtomicRequest):
+            raise TypeError("Atomic port requires an AtomicRequest")
+
+        def translated(reply):
+            if reply.error or reply.page_fault:
+                finish(register_reply(reply))
+                return
+            if not self.backing.present(False, reply.data):
+                finish(Reply(reply.edge + 1, error=True))
+                return
+            physical = AtomicRequest(
+                TranslationRequest(reply.data, request.translation.access, 0, 0, 3),
+                request.width, request.value, request.operation,
+            )
+            self.clock.schedule(
+                reply.edge + 2, Phase.SAMPLE,
+                lambda: self._atomic_physical(0, reply.edge + 2, physical, finish))
+        self.translation.ports[1].submit(0, edge + 1, request.translation, translated)
+
+    def _atomic_physical(self, owner, edge, request, finish):
+        if not isinstance(request, AtomicRequest) or \
+                request.translation.satp or request.translation.privilege != 3:
+            raise ValueError("Physical atomic port requires a Bare M-mode request")
+        address, width, operation = request.translation.address, request.width, request.operation
+        if not self.backing.present(False, address):
+            finish(Reply(edge + 1, error=True))
+            return
+
+        def read(result):
+            if result.error:
+                finish(register_reply(result))
+            elif operation == 2:
+                def reserve():
+                    if result.edge not in self.reservation_invalidations:
+                        self.reservation = (address, width)
+                self.clock.schedule(result.edge, Phase.UPDATE, reserve)
+                finish(register_reply(result))
+            else:
+                write(result.edge + 2, amo(operation, result.data, request.value, width),
+                      result.data)
+
+        def write(issue_edge, value, old):
+            def written(result):
+                if not result.error:
+                    self.clock.schedule(
+                        result.edge, Phase.UPDATE,
+                        lambda: setattr(self, "reservation", None))
+                finish(Reply(result.edge + 1, 0 if result.error else old, result.error))
+            self._physical(issue_edge, address, width, value, True, written)
+
+        match = self.reservation == (address, width) and \
+            edge not in self.reservation_invalidations
+        if operation in (2, 3):
+            self.clock.schedule(edge, Phase.UPDATE, lambda: setattr(self, "reservation", None))
+        if operation == 3:
+            if not match:
+                finish(Reply(edge + 1, 1))
+            else:
+                write(edge + 1, request.value, 0)
+        else:
+            self._physical(edge + 1, address, width, 0, False, read)
+
+    def _maintain(self, owner, edge, request, finish):
+        instruction, invalidate = request
+        if type(instruction) is not bool or type(invalidate) is not bool:
+            raise ValueError("Maintenance requires instruction/invalidate selectors")
+        word = Word(0, command=3 if invalidate else 2)
+        if instruction:
+            self.instruction.port.submit(
+                0, edge + 1, word, lambda reply: finish(register_reply(reply)))
+        else:
+            self._route(edge + 1, word, lambda reply: finish(register_reply(reply)))
 
     def _serve(self, port, edge, access, finish):
         request, width, value = access
@@ -485,7 +622,7 @@ class MemoryExecution:
                 request.access != "fetch" and port != 1:
             raise ValueError("Wrong instruction/data port")
         if request.access == "atomic":
-            raise NotImplementedError("Atomic maintenance/reservation scheduling is not integrated")
+            raise ValueError("Read/modify/write requests must use the serialized atomic port")
 
         def translated(reply):
             if reply.error or reply.page_fault:
@@ -493,21 +630,27 @@ class MemoryExecution:
                 return
             if not self.backing.present(port == 0, reply.data):
                 raise NotImplementedError(f"MMIO scheduling not integrated: {reply.data:#x}")
-            lane = reply.data & 7
-            store = request.access == "store"
-            word = Word(reply.data & ~7, (value << (8 * lane)) & MASK if store else 0,
-                        ((1 << width) - 1) << lane if store else 0, store)
-
-            def received(result):
-                raw = result.data >> (lane * 8) & ((1 << (width * 8)) - 1)
-                finish(Reply(result.edge + 1, 0 if store else raw,
-                             result.error, result.page_fault))
             if port == 0:
-                self.instruction.port.submit(0, reply.edge + 1, word, received)
+                def fetched(result):
+                    raw = result.data >> ((reply.data & 7) * 8) & ((1 << (width * 8)) - 1)
+                    finish(Reply(result.edge + 1, raw, result.error, result.page_fault))
+                word = Word(reply.data & ~7)
+                self.instruction.port.submit(0, reply.edge + 1, word, fetched)
             else:
-                # The data router is another registered ownership boundary.
-                self._route(reply.edge + 1, word, received)
+                self._physical(reply.edge, reply.data, width, value,
+                               request.access == "store", finish)
         self.translation.ports[port].submit(0, edge + 1, request, translated)
+
+    def _physical(self, edge, address, width, value, store, finish):
+        lane = address & 7
+        word = Word(address & ~7, (value << (8 * lane)) & MASK if store else 0,
+                    ((1 << width) - 1) << lane if store else 0, store)
+
+        def received(result):
+            raw = result.data >> (lane * 8) & ((1 << (width * 8)) - 1)
+            finish(Reply(result.edge + 1, 0 if store else raw,
+                         result.error, result.page_fault))
+        self._route(edge + 1, word, received)
 
     def _route(self, edge, word, receive):
         # A core data port has only one transaction, so this router cannot

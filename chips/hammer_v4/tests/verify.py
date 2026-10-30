@@ -20,7 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from preparation import source_hashes
+from preparation import collect_tool_version, source_hashes
 
 
 TOOLS = (
@@ -154,18 +154,11 @@ def main():
                 "Incomplete mandatory L1 prerequisites: " + json.dumps(missing, sort_keys=True)
             )
         for index, tool in enumerate(TOOLS):
-            raw = relative / f"tool-{index:02d}.log"
-            with (ROOT / raw).open("wb") as stream:
-                result = subprocess.run(
-                    [tool, "--version"], cwd=ROOT, stdout=stream,
-                    stderr=subprocess.STDOUT, check=False,
-                )
-            receipt["tool_versions"][tool] = {
-                "argv": [tool, "--version"], "exit_code": result.returncode,
-                "raw": raw.as_posix(),
-            }
-            if result.returncode:
-                raise RuntimeError(f"Cannot establish tool version: {tool}")
+            collect_tool_version(
+                tool, relative / f"tool-{index:02d}.log", receipt["tool_versions"],
+                root=ROOT,
+            )
+            save()
         (ROOT / build).mkdir(parents=True, exist_ok=False)
         for index, record in enumerate(receipt["stages"]):
             name = record["id"]

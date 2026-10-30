@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from architecture import PageFault, XLEN_MASK, leaf, muldiv, signed, walk
+from architecture import PageFault, XLEN_MASK, amo, leaf, muldiv, signed, walk
 
 
 MASK = XLEN_MASK
@@ -436,6 +436,34 @@ class Machine:
             self.trap(error.cause, error.tval)
             return None
 
+    def atomic(self, instruction, address, operand):
+        width, operation = 1 << (instruction >> 12 & 7), instruction >> 27
+        if width not in (4, 8) or operation not in (0, 1, 2, 3, 4, 8, 12, 16, 20, 24, 28) or \
+                operation == 2 and instruction >> 20 & 31:
+            raise ArchitecturalTrap(2, instruction)
+        if address % width:
+            raise ArchitecturalTrap(4 if operation == 2 else 6, address)
+        if operation == 2:
+            value = signed(self.read(address, width), width * 8)
+            self.reservation = (self.translate(address, "load"), width)
+            return value, ("load", address, width, value & MASK)
+        if operation == 3:
+            physical = self.translate(address, "store")
+            success = self.reservation == (physical, width)
+            self.reservation = None
+            if success:
+                self.write(address, width, operand)
+            return int(not success), (
+                ("store", address, width, operand & ((1 << (width * 8)) - 1))
+                if success else None
+            )
+        physical = self.translate(address, "atomic")
+        old = self.platform.read(physical, width)
+        updated = amo(operation, old, operand, width)
+        self.platform.write(physical, width, updated)
+        self.reservation = None
+        return signed(old, width * 8), ("atomic", address, width, updated)
+
     def execute(self):
         pc, privilege = self.pc, self.privilege
         instruction = self.read(pc, 4, "fetch")
@@ -545,43 +573,7 @@ class Machine:
                 illegal()
             self.reservation = None
         elif opcode == 0x2F:
-            if funct3 not in (2, 3):
-                illegal()
-            width, operation = 1 << funct3, instruction >> 27
-            if x % width:
-                raise ArchitecturalTrap(4 if operation == 2 else 6, x)
-            if operation == 2:
-                if rs2:
-                    illegal()
-                value = signed(self.read(x, width), width * 8)
-                self.reservation = (self.translate(x, "load"), width)
-                memory = ("load", x, width, value & MASK)
-            elif operation == 3:
-                physical = self.translate(x, "store")
-                success = self.reservation == (physical, width)
-                self.reservation = None
-                value = int(not success)
-                if success:
-                    self.write(x, width, y)
-                    memory = ("store", x, width, y & ((1 << (width * 8)) - 1))
-            else:
-                physical = self.translate(x, "atomic")
-                old = self.platform.read(physical, width)
-                mask = (1 << (width * 8)) - 1
-                operand = y & mask
-                operations = {
-                    0: (old + operand) & mask, 1: operand, 4: old ^ operand,
-                    8: old | operand, 12: old & operand,
-                    16: old if signed(old, width * 8) < signed(operand, width * 8) else operand,
-                    20: old if signed(old, width * 8) > signed(operand, width * 8) else operand,
-                    24: min(old, operand), 28: max(old, operand),
-                }
-                if operation not in operations:
-                    illegal()
-                self.platform.write(physical, width, operations[operation])
-                self.reservation = None
-                value = signed(old, width * 8)
-                memory = ("atomic", x, width, operations[operation])
+            value, memory = self.atomic(instruction, x, y)
             write_rd = True
         elif opcode == 0x73:
             if funct3:

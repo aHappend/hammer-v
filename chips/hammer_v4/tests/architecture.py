@@ -131,3 +131,27 @@ def muldiv(operation, lhs, rhs, word=False):
         raise ValueError(f"Unknown M-extension operation {operation}")
     answer &= mask
     return (signed(answer, 32) if word else answer) & XLEN_MASK
+
+
+def amo(operation, old, operand, width):
+    """Value stored by an RV64A read/modify/write, before result sign extension."""
+    if width not in (4, 8):
+        raise ValueError("An AMO is a word or doubleword")
+    mask = (1 << (width * 8)) - 1
+    old, operand = old & mask, operand & mask
+    if operation == 0:
+        return (old + operand) & mask
+    if operation == 1:
+        return operand
+    if operation == 4:
+        return old ^ operand
+    if operation == 8:
+        return old | operand
+    if operation == 12:
+        return old & operand
+    if operation in (16, 20):
+        comparison = signed(old, width * 8) < signed(operand, width * 8)
+        return old if comparison == (operation == 16) else operand
+    if operation in (24, 28):
+        return min(old, operand) if operation == 24 else max(old, operand)
+    raise ValueError(f"Unknown AMO operation {operation}")

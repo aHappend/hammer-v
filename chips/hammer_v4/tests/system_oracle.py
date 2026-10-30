@@ -4,10 +4,11 @@
 Time here is not an instruction count. All inputs are frozen before execution,
 samples precede updates, and clock counters continue during resource stalls.
 The clocked RAM/cache/PTW/fabric path lives in system_memory.py and resumable
-ISA execution in system_execution.py. These are not yet a full-system engine:
-core fetch/pipeline, maintenance, atomic/MMIO integration and the final
-expectation-generation CLI remain unimplemented. Do not use the bounded
-integration diagnostics as Linux acceptance.
+ISA execution in system_execution.py. RAM/cache maintenance and RV64A are
+integrated, including independently predicted physical atomic response edges.
+These are not yet a full-system engine: core fetch/pipeline/interrupt scheduling,
+MMIO integration and the final expectation-generation CLI remain unimplemented.
+Do not use the bounded integration diagnostics as Linux acceptance.
 """
 
 from collections import deque
@@ -673,6 +674,6 @@ if __name__ == "__main__":
     raise SystemExit(
         "Full-system expectation generation is not available yet. This module "
         "and system_memory/system_execution implement clocked platform and RAM "
-        "execution, not the required core pipeline/maintenance/atomic/MMIO "
+        "execution, not the required full core pipeline/interrupt/MMIO "
         "integration. No expected UART stream has been generated."
     )

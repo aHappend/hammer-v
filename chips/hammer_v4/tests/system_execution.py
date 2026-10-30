@@ -10,6 +10,7 @@ the caller must schedule CSR samples at writeback, not at instruction fetch.
 
 from dataclasses import dataclass
 
+from architecture import amo, signed
 from rv64_reference import ArchitecturalTrap, Machine, MASK
 from system_memory import TranslationRequest
 
@@ -21,6 +22,7 @@ class Access:
     width: int = 8
     value: int = 0
     asid: int | None = None
+    operation: int | None = None
 
 
 @dataclass(frozen=True)
@@ -76,9 +78,27 @@ class Trial(Machine):
         if address % width:
             raise ArchitecturalTrap(0 if access == "fetch" else 4, address)
         value = self.access(Access(access, address, width))
-        if access == "fetch" and value & 127 == 0x2F:
-            raise NotImplementedError("Atomic execution needs scheduled maintenance/reservations")
         return value
+
+    def atomic(self, instruction, address, operand):
+        width, operation = 1 << (instruction >> 12 & 7), instruction >> 27
+        if width not in (4, 8) or operation not in (0, 1, 2, 3, 4, 8, 12, 16, 20, 24, 28) or \
+                operation == 2 and instruction >> 20 & 31:
+            raise ArchitecturalTrap(2, instruction)
+        if address % width:
+            raise ArchitecturalTrap(4 if operation == 2 else 6, address)
+        result = self.access(Access("atomic", address, width, operand, operation=operation))
+        # Physical reservations belong to the independently scheduled memory
+        # owner, where host/coherent invalidations can reach them during stalls.
+        self.reservation = None
+        if operation == 3:
+            memory = ("store", address, width, operand & ((1 << (8 * width)) - 1)) \
+                if result == 0 else None
+            return result, memory
+        value = signed(result, width * 8)
+        memory = ("load", address, width, value & MASK) if operation == 2 else \
+            ("atomic", address, width, amo(operation, result, operand, width))
+        return value, memory
 
     def write(self, address, width, value):
         if address % width:
@@ -148,17 +168,23 @@ class Instruction:
                 raise ValueError("Architectural reply must be unsigned XLEN or a precise fault")
             if self.pending.kind in ("store", "fence") and value:
                 raise ValueError("Store/fence acknowledgment cannot contain read data")
-            if self.pending.kind in ("fetch", "load") and value >= 1 << (8 * self.pending.width):
+            if self.pending.kind in ("fetch", "load", "atomic") and \
+                    value >= 1 << (8 * self.pending.width):
                 raise ValueError("Read reply exceeds its access width")
+            if self.pending.kind == "atomic" and self.pending.operation == 3 and value not in (0, 1):
+                raise ValueError("SC must report success zero or failure one")
         self.journal.append((self.pending, value))
         self.pending = None
         return self.advance()
 
     def translation_request(self):
         access = self.pending
-        if access is None or access.kind not in ("fetch", "load", "store"):
+        if access is None or access.kind not in ("fetch", "load", "store", "atomic"):
             raise AssertionError("No outstanding architectural memory operation")
-        return TranslationRequest(access.address, access.kind, self.before["csrs"][0x180],
+        kind = access.kind
+        if kind == "atomic":
+            kind = "load" if access.operation == 2 else "store" if access.operation == 3 else "atomic"
+        return TranslationRequest(access.address, kind, self.before["csrs"][0x180],
                                   self.before["csrs"][0x300], self.before["privilege"])
 
     def publish(self):

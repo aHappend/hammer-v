@@ -14,6 +14,59 @@ import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIRS = ("rtl", "software", "design", "tests", "hammer_v3_reference/rtl")
+TOOL_VERSION_ARGS = {
+    "python3": ("--version",),
+    "iverilog": ("-V",),
+    "vvp": ("-V",),
+    "verilator": ("--version",),
+    "yosys": ("-V",),
+    "make": ("--version",),
+    "gcc": ("--version",),
+    "g++": ("--version",),
+    "dtc": ("--version",),
+    "cpio": ("--version",),
+    "tar": ("--version",),
+    "xz": ("--version",),
+    "bash": ("--version",),
+    "bc": ("--version",),
+    "bison": ("--version",),
+    "flex": ("--version",),
+    "perl": ("-v",),
+    "/usr/bin/riscv64-unknown-elf-gcc": ("--version",),
+    "/usr/bin/riscv64-unknown-elf-objcopy": ("--version",),
+    "/usr/bin/riscv64-linux-gnu-gcc": ("--version",),
+    "/usr/bin/riscv64-linux-gnu-objcopy": ("--version",),
+}
+
+
+def collect_tool_version(tool, raw, records, *, root=ROOT, timeout=3600):
+    """Keep the failed command record too; never guess an unknown tool's CLI."""
+    record = records[tool] = {
+        "started_unix": time.time(), "ended_unix": None,
+        "exit_code": None, "timeout_s": timeout, "timed_out": False,
+        "cwd": ".", "raw": raw.as_posix(),
+    }
+    try:
+        if tool not in TOOL_VERSION_ARGS:
+            raise ValueError(f"No audited version command for tool: {tool}")
+        argv = [tool, *TOOL_VERSION_ARGS[tool]]
+        record["argv"] = argv
+        record["available"] = shutil.which(tool) is not None
+        if not record["available"]:
+            raise RuntimeError(f"Cannot establish tool version; unavailable: {tool}")
+        with (root / raw).open("wb") as stream:
+            result = subprocess.run(
+                argv, cwd=root, stdout=stream, stderr=subprocess.STDOUT,
+                timeout=timeout, check=False,
+            )
+        record["exit_code"] = result.returncode
+        if result.returncode:
+            raise RuntimeError(f"Cannot establish tool version: {tool}")
+    except subprocess.TimeoutExpired:
+        record["timed_out"] = True
+        raise
+    finally:
+        record["ended_unix"] = time.time()
 
 
 def source_hashes():
@@ -69,28 +122,12 @@ def main():
     }
     if args.repair_of:
         previous = ROOT / args.repair_of
-        if not previous.resolve().is_relative_to(ROOT / "evidence/preparation"):
-            parser.error("--repair-of must identify a project preparation receipt")
+        if not previous.resolve().is_relative_to(ROOT / "evidence") or \
+                previous.name != "receipt.json":
+            parser.error("--repair-of must identify a project evidence receipt")
         if not previous.is_file():
             parser.error("--repair-of receipt does not exist")
         receipt["repair_of"] = args.repair_of
-    for index, tool in enumerate(args.tool):
-        executable = shutil.which(tool)
-        if executable is None:
-            receipt["tool_versions"][tool] = {"available": False}
-            continue
-        version_file = out / f"tool-{index:02d}.log"
-        with version_file.open("wb") as stream:
-            result = subprocess.run(
-                [tool, "--version"], cwd=ROOT, stdout=stream,
-                stderr=subprocess.STDOUT, timeout=args.timeout, check=False,
-            )
-        receipt["tool_versions"][tool] = {
-            "available": True, "argv": [tool, "--version"],
-            "exit_code": result.returncode,
-            "raw": version_file.relative_to(ROOT).as_posix(),
-        }
-
     def save():
         (out / "receipt.json").write_text(
             json.dumps(receipt, indent=2, sort_keys=True) + "\n"
@@ -98,6 +135,12 @@ def main():
 
     save()
     try:
+        for index, tool in enumerate(args.tool):
+            collect_tool_version(
+                tool, relative / f"tool-{index:02d}.log",
+                receipt["tool_versions"], root=ROOT, timeout=args.timeout,
+            )
+            save()
         with (out / "stdout.log").open("wb") as stdout, (
             out / "stderr.log"
         ).open("wb") as stderr:
@@ -108,9 +151,15 @@ def main():
             receipt["exit_code"] = result.returncode
     except subprocess.TimeoutExpired:
         receipt["timed_out"] = True
+        receipt["exit_code"] = 1
         raise
     except OSError as error:
         receipt["launch_error"] = str(error)
+        receipt["exit_code"] = 1
+        raise
+    except (RuntimeError, ValueError) as error:
+        receipt["exit_code"] = 1
+        receipt["failure"] = {"type": type(error).__name__, "message": str(error)}
         raise
     finally:
         receipt["ended_unix"] = time.time()

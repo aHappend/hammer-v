@@ -16,10 +16,11 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from architecture import signed
 from rv64_reference import Machine, ReferencePlatform
 from system_execution import Access, Fault, Instruction, architectural_state
-from system_memory import MemoryExecution, TranslationRequest, Word
-from system_oracle import Clock, Counter, Phase, SEEDS, canonical_json
+from system_memory import AtomicRequest, MemoryExecution, TranslationRequest, Word
+from system_oracle import Clock, Counter, MASK, Phase, SEEDS, canonical_json
 
 
 def rejected(function, exception, marker):
@@ -198,7 +199,8 @@ def continuation_rejections():
     rejected(second.publish, AssertionError, "state changed")
     atomic = Instruction(Machine(ReferencePlatform()))
     atomic.advance()
-    rejected(lambda: atomic.reply(0x100030AF), NotImplementedError, "Atomic execution")
+    if atomic.reply(0x100030AF) != Access("atomic", 0, 8, operation=2):
+        raise AssertionError("LR did not suspend at its scheduled atomic operation")
     for address in (0xB00, 0x344):
         state = Machine(ReferencePlatform())
         pending = Instruction(state)
@@ -212,9 +214,118 @@ def continuation_rejections():
         if state.csrs[address] != 0:
             raise AssertionError("A same-value CSR write lost its override/clear")
     return {"early_or_repeated_operations_rejected": 5,
-            "unsupported_atomic_rejected": True,
+            "atomic_dispatch_compared": True,
             "counter_and_pending_state_preserved": True,
             "same_value_csr_overrides_compared": 2}
+
+
+def atomic_cases(seed):
+    clock = Clock()
+    cases, data = [], bytearray(512)
+    operations = (0, 1, 4, 8, 12, 16, 20, 24, 28)
+    for width in (4, 8):
+        bits, mask = width * 8, (1 << (width * 8)) - 1
+        old, operand = (1 << (bits - 1)) + 1, mask - 1
+        expected = (
+            (1 << (bits - 1)) - 1, operand, (1 << (bits - 1)) - 1,
+            mask, 1 << (bits - 1), old, operand, old, operand,
+        )
+        for operation, updated in zip(operations, expected):
+            offset = len(cases) * 8 + (4 if width == 4 else 0)
+            data[offset:offset + width] = old.to_bytes(width, "little")
+            cases.append((operation, width, offset, operand, signed(old, bits) & MASK,
+                          updated, False))
+    # SC cannot succeed without LR; width is part of the physical reservation.
+    offset = 256
+    data[offset:offset + 8] = (0x8877665580000001).to_bytes(8, "little")
+    cases.extend([
+        (3, 8, offset, 9, 1, 0x8877665580000001, False),
+        (2, 4, offset, 0, 0xFFFFFFFF80000001, 0x80000001, False),
+        (3, 8, offset, 9, 1, 0x8877665580000001, False),
+        (2, 4, offset, 0, 0xFFFFFFFF80000001, 0x80000001, False),
+        (3, 4, offset, 9, 0, 9, False),
+        (3, 4, offset, 10, 1, 9, False),
+        (2, 8, offset, 0, 0x8877665500000009, 0x8877665500000009, False),
+        (3, 8, offset, 10, 1, 0x8877665500000009, True),
+    ])
+    code = []
+    for operation, width, _, _, _, _, _ in cases:
+        rs2 = 0 if operation == 2 else 2
+        code.append(operation << 27 | rs2 << 20 | 1 << 15 |
+                    (2 if width == 4 else 3) << 12 | 3 << 7 | 0x2F)
+    images = image()[:1] + (
+        ("atomics", 0x80200000, struct.pack("<" + "I" * len(code), *code)),
+        ("data", 0x80300000, bytes(data)),
+    )
+    memory = MemoryExecution(clock, seed, images, cache_lines=4)
+    machine = Machine(ReferencePlatform())
+    machine.pc, machine.privilege = 0x400000, 0
+    machine.csrs[0x180] = (8 << 60) | (0x80010000 >> 12)
+    commits, requests = [], []
+
+    def begin(index, edge):
+        operation, width, offset, operand, _, _, invalidate = cases[index]
+        machine.registers[1:3] = [0x800000 + offset, operand]
+        if invalidate:
+            memory.invalidate_reservation(edge + 1)
+        instruction = Instruction(machine)
+        handle(index, instruction, instruction.advance(), edge)
+
+    def handle(index, instruction, access, edge):
+        if isinstance(access, Access):
+            before = architectural_state(machine)
+
+            def received(reply):
+                if architectural_state(machine) != before:
+                    raise AssertionError("Atomic/fetch reply published state before retirement")
+                if reply.error or reply.page_fault:
+                    raise AssertionError("Legal atomic/fetch unexpectedly faulted")
+                handle(index, instruction, instruction.reply(reply.data), reply.edge)
+            if access.kind == "fetch":
+                memory.ports[0].submit(
+                    0, edge + 1, (instruction.translation_request(), 4, 0), received)
+            elif access.kind == "atomic":
+                requests.append((index, access.operation, access.width, edge + 1))
+                memory.atomic.submit(
+                    0, edge + 1, AtomicRequest(instruction.translation_request(), access.width,
+                                              access.value, access.operation), received)
+            else:
+                raise AssertionError(f"Unscheduled atomic side effect: {access}")
+            return
+        if isinstance(access, Fault):
+            raise AssertionError(f"Legal atomic instruction trapped: {access}")
+
+        def publish():
+            result = instruction.publish()
+            operation, width, offset, operand, expected, updated, _ = cases[index]
+            if result.value != expected or machine.registers[3] != expected:
+                raise AssertionError(f"Atomic old/result mismatch case={index}: {result}")
+            line = next((line for line in memory.dcache.lines
+                         if line.valid and line.base == (0x80300000 + offset) & ~31), None)
+            actual_bytes = line.data[offset % 32:offset % 32 + width] if line else \
+                memory.backing.ram.memory[0x300000 + offset:0x300000 + offset + width]
+            actual = int.from_bytes(actual_bytes, "little")
+            if actual != updated:
+                raise AssertionError(f"Atomic memory mismatch case={index}: {actual:#x} != {updated:#x}")
+            expected_memory = ("load", 0x800000 + offset, width, expected) if operation == 2 else \
+                (("store", 0x800000 + offset, width, operand & ((1 << (width * 8)) - 1))
+                 if expected == 0 else None) if operation == 3 else \
+                ("atomic", 0x800000 + offset, width, updated)
+            if result.memory != expected_memory:
+                raise AssertionError(f"Atomic architectural event mismatch case={index}: {result}")
+            commits.append((index, edge + 1, result.value, actual))
+            if index + 1 < len(cases):
+                clock.schedule(edge + 2, Phase.SAMPLE, lambda: begin(index + 1, edge + 2))
+        clock.schedule(edge + 1, Phase.UPDATE, publish)
+
+    clock.schedule(0, Phase.SAMPLE, lambda: begin(0, 0))
+    clock.run(100000)
+    if len(commits) != len(cases) or len(requests) != len(cases) or \
+            machine.commits != len(cases) or memory.reservation is not None:
+        raise AssertionError("Missing or repeated atomic comparison/reservation invalidation")
+    return {"seed": seed, "atomic_instructions_compared": len(commits), "commits": commits,
+            "requests": requests, "callbacks": clock.callbacks,
+            "scope": "scheduled ISA/RAM atomic integration, not core timing or Linux"}
 
 
 def main():
@@ -229,6 +340,7 @@ def main():
     began = time.monotonic()
     results = [integrated(seed) for seed in SEEDS]
     concurrent = [competing_paths(seed) for seed in SEEDS]
+    atomics = [atomic_cases(seed) for seed in SEEDS]
     rejections = continuation_rejections()
     if len({tuple(record["accesses"]) for record in results}) == 1:
         raise AssertionError("All seeded memory access schedules were identical")
@@ -236,9 +348,11 @@ def main():
         "scope": "ISA continuation/cache/PTW/fabric integration; not core pipeline or Linux acceptance",
         "dut_execution": False, "full_system_timed_oracle": False,
         "sequential": results, "concurrent": concurrent, "rejections": rejections,
+        "atomics": atomics,
         "seconds": time.monotonic() - began,
     }))
-    print("COMPARED scheduled architectural continuations/cache/PTW/fabric for seeds 11/29/47; "
+    print("COMPARED scheduled architectural continuations/atomics/cache/PTW/fabric "
+          "for seeds 11/29/47; "
           "full_system_timed_oracle=false dut_execution=false", flush=True)
 
 
