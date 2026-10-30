@@ -70,6 +70,20 @@ MUTATIONS = {
         ".req_ready(da_ready), .req_cmd({2'b10,2'b0,route_cmd}),",
         "COHERENCE_COMPARISON", "compatibility",
     ),
+    "mmu-mprv-bypass": (
+        "hammer_v3_mmu.sv", "priv == 3 && mstatus[17] ? mstatus[12:11] : priv;",
+        "1'b0 ? mstatus[12:11] : priv;",
+        "MMU_TRANSLATION_COMPARISON", "mmu",
+    ),
+    "mmu-asid-fence-global": (
+        "hammer_v3_tlb.sv", "(!flags[n][5] && asid[n] == invalidate_asid)))",
+        "(asid[n] == invalidate_asid)))",
+        "MMU_PTE_ADDRESS_COMPARISON", "mmu",
+    ),
+    "mmu-reserved-pte": (
+        "hammer_v3_ptw.sv", "|pte_q[63:54];", "1'b0;",
+        "MMU_PTE_ADDRESS_COMPARISON", "mmu",
+    ),
 }
 
 
@@ -102,7 +116,7 @@ def main():
         ]
         if scope in ("firmware", "temporal"):
             command.extend(["--manifest", args.manifest])
-        elif scope == "timer":
+        elif scope in ("timer", "mmu"):
             command.extend(["--simulator", "verilator"])
         elif scope == "compatibility":
             command.append("--v4-only")
@@ -120,7 +134,7 @@ def main():
         return record
 
     controls = {}
-    for scope in ("firmware", "timer", "compatibility", "temporal"):
+    for scope in ("firmware", "timer", "compatibility", "temporal", "mmu"):
         if scope not in {mutation[4] for mutation in selected.values()}:
             continue
         record = run(f"control-{scope}", scope, "rtl")
@@ -145,7 +159,7 @@ def main():
         (out / "results.json").write_text(json.dumps(records, indent=2) + "\n")
         directory = out / name / "execution"
         raw_name = {"firmware": "3", "timer": "1", "temporal": "4",
-                    "compatibility": "v4/simulate"}[scope]
+                    "compatibility": "v4/simulate", "mmu": "entries-1/1"}[scope]
         stdout = directory / f"{raw_name}.stdout.log"
         stderr = directory / f"{raw_name}.stderr.log"
         # A syntax/link failure never reaches these simulator artifacts. Require
@@ -156,10 +170,10 @@ def main():
             raise AssertionError(f"{name}: not rejected by targeted functional assertion")
         record["targeted_assertion"] = marker
         record["functional_rejection"] = True
-        if scope in ("firmware", "compatibility", "temporal"):
+        if scope in ("firmware", "compatibility", "temporal", "mmu"):
             control_text = (out / f"control-{scope}/execution/{raw_name}.stdout.log").read_text()
             control_edge = int(re.search(r"\bedges=(\d+)", control_text).group(1))
-            failure_text = stderr.read_text()
+            failure_text = raw.decode() if scope == "mmu" else stderr.read_text()
             mutant_edge = int(re.search(r"\bedge=(\d+)", failure_text).group(1))
             if mutant_edge > control_edge:
                 raise AssertionError(f"{name}: failure exceeds unchanged control completion")
