@@ -7,6 +7,7 @@ window. Oracle resource snapshots explain scheduling but are not DUT inputs.
 """
 
 import argparse
+from collections import deque
 from dataclasses import asdict
 from pathlib import Path
 import shutil
@@ -29,6 +30,7 @@ def main():
     parser.add_argument("--last-edge", type=int, default=142550000)
     parser.add_argument("--retirements", type=int, default=4104300)
     parser.add_argument("--edge-limit", type=int, default=150000000)
+    parser.add_argument("--predict-only", action="store_true")
     args = parser.parse_args()
     if not 0 <= args.first_edge <= args.last_edge < args.edge_limit <= BOUND or \
             args.last_edge - args.first_edge > 1000000:
@@ -46,6 +48,21 @@ def main():
     prediction = Prediction(scenario, images, oracle,
                             diagnostic_retirements=args.retirements)
     core, clock = prediction.core, prediction.clock
+    predictor_history = deque(maxlen=256)
+    original_resolve = core.predictor.resolve
+
+    def resolve(pc, target, taken, conditional):
+        x = core.execute
+        if pc // 4 % len(core.predictor.entries) == 10:
+            predictor_history.append({
+                "edge": clock.edge, "pc": pc, "target": target,
+                "taken": taken, "conditional": conditional, "word": x.word,
+                "rs1": x.registers[x.word >> 15 & 31],
+                "rs2": x.registers[x.word >> 20 & 31],
+                "old": core.predictor.entries[10],
+            })
+        original_resolve(pc, target, taken, conditional)
+    core.predictor.resolve = resolve
     began = time.monotonic()
     commands = []
 
@@ -144,6 +161,7 @@ def main():
         result = prediction.execute(args.edge_limit)
     result["scope"] = "bounded-scheduling-diagnostic-not-linux-acceptance"
     (oracle / "prediction.json").write_bytes(canonical_json(result))
+    (oracle / "predictor-history.json").write_bytes(canonical_json(list(predictor_history)))
     controls = [scenario.seed, scenario.start_edge, scenario.rx_first_edge,
                 scenario.rx_spacing, prediction.final_edge, prediction.events,
                 prediction.uart_bytes, len(prediction.ranges)]
@@ -153,6 +171,8 @@ def main():
     frozen = {path.name: digest(path) for path in oracle.iterdir()}
     (out / "prefix-seal.json").write_bytes(canonical_json({
         "scope": result["scope"], "files": frozen, "frozen_unix": time.time()}))
+    if args.predict_only:
+        return
     obj = relative / "compile-obj"
     try:
         run([
