@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import struct
 import subprocess
 
@@ -37,6 +38,7 @@ def fdt(blob):
     require(40 <= strings <= total and ns <= total - strings, "FDT string bounds")
     require(reserve % 8 == 0 and 40 <= reserve <= total - 16, "FDT reserve bounds")
     require(tree + nt <= strings or strings + ns <= tree, "FDT overlapping blocks")
+    reservation_begin = reserve
     reservations = []
     while True:
         require(reserve <= total - 16, "FDT unterminated reservations")
@@ -46,7 +48,9 @@ def fdt(blob):
             break
         require(length and base + length <= 1 << 64, "FDT reservation overflow")
         reservations.append((base, length))
-    require(reserve <= tree or reserve <= strings, "FDT reservation overlap")
+    require((reserve <= tree or tree + nt <= reservation_begin) and
+            (reserve <= strings or strings + ns <= reservation_begin),
+            "FDT reservation overlap")
     stack = []
     properties = {}
     offset, limit = tree, tree + nt
@@ -121,6 +125,110 @@ def elf(blob):
     require(any(load["permissions"] & 1 and load["virtual"] <= entry <
                 load["virtual"] + load["bytes"] for load in loads), "ELF executable entry")
     return {"entry": entry, "loads": loads}
+
+
+BASE_MNEMONICS = set("""
+    lui auipc jal jalr beq bne blt bge bltu bgeu
+    lb lh lw ld lbu lhu lwu sb sh sw sd
+    addi slti sltiu xori ori andi slli srli srai
+    add sub sll slt sltu xor srl sra or and
+    addiw slliw srliw sraiw addw subw sllw srlw sraw
+    mul mulh mulhsu mulhu div divu rem remu mulw divw divuw remw remuw
+    fence fence.i fence.tso ecall ebreak mret sret wfi sfence.vma
+    csrrw csrrs csrrc csrrwi csrrsi csrrci unimp
+""".split())
+for atomic in ("lr", "sc", "amoswap", "amoadd", "amoxor", "amoand", "amoor",
+               "amomin", "amomax", "amominu", "amomaxu"):
+    for width in ("w", "d"):
+        for ordering in ("", ".aq", ".rl", ".aqrl"):
+            BASE_MNEMONICS.add(f"{atomic}.{width}{ordering}")
+
+
+def data_ranges(blob):
+    shoff, = struct.unpack_from("<Q", blob, 40)
+    shsize, shnum = struct.unpack_from("<HH", blob, 58)
+    sections = [struct.unpack_from("<IIQQQQIIQQ", blob, shoff + index * shsize)
+                for index in range(shnum)]
+    shstr_index, = struct.unpack_from("<H", blob, 62)
+    shstr_section = sections[shstr_index]
+    shstr = blob[shstr_section[4]:shstr_section[4] + shstr_section[5]]
+    markers = {}
+    functions = {}
+    for section in sections:
+        if section[1] != 2:
+            continue
+        strings_section = sections[section[6]]
+        strings = blob[strings_section[4]:strings_section[4] + strings_section[5]]
+        for offset in range(section[4], section[4] + section[5], section[9]):
+            name, info, _, index, value, size = struct.unpack_from("<IBBHQQ", blob, offset)
+            end = strings.find(b"\0", name)
+            require(end >= name, "ELF symbol name bounds")
+            symbol = strings[name:end]
+            if info & 15 == 2 and size:
+                functions.setdefault(index, []).append((value, value + size))
+            if symbol.startswith(b"__pi_"):
+                symbol = symbol[len(b"__pi_"):]
+            if symbol == b"$d" or symbol.startswith(b"$d."):
+                markers.setdefault(index, []).append((value, True))
+            elif symbol == b"$x" or symbol.startswith((b"$x.", b"$xrv")):
+                markers.setdefault(index, []).append((value, False))
+    ranges = []
+    for index, marks in markers.items():
+        section = sections[index]
+        if not section[2] & 4:
+            continue
+        marks.sort()
+        for current, following in zip(marks, marks[1:] + [(section[3] + section[5], False)]):
+            if current[1] and following[0] > current[0]:
+                ranges.append((current[0], following[0]))
+    for index, section in enumerate(sections):
+        name_end = shstr.find(b"\0", section[0])
+        name = shstr[section[0]:name_end]
+        if name != b".init.pi":
+            continue
+        # Upstream merges PI .text and .rodata into one executable output section.
+        spans = sorted(set(functions.get(index, ())))
+        require(bool(spans), "PI section lacks typed function boundaries")
+        for address, is_data in markers.get(index, ()):
+            require(is_data or any(start <= address < end for start, end in spans),
+                    f"PI executable mapping outside typed functions: {address:#x}")
+        cursor = section[3]
+        for start, end in spans:
+            require(section[3] <= start < end <= section[3] + section[5],
+                    "PI function extent")
+            if start > cursor:
+                ranges.append((cursor, start))
+            cursor = max(cursor, end)
+        if cursor < section[3] + section[5]:
+            ranges.append((cursor, section[3] + section[5]))
+    return ranges
+
+
+def audit_disassembly(text, mapped_data_ranges):
+    instructions = 0
+    mapped_data = 0
+    for line in text.splitlines():
+        match = re.match(r"^\s*([0-9a-f]+):\s+([0-9a-f]+)\s+(\S+)", line)
+        if not match:
+            continue
+        address, encoding, mnemonic = match.groups()
+        if any(start <= int(address, 16) < end for start, end in mapped_data_ranges):
+            mapped_data += 1
+            continue
+        if mnemonic in (".word", ".2byte", ".4byte", ".8byte", ".byte", ".dword"):
+            raise AssertionError(
+                f"Undecoded executable code without an ELF $d mapping at {address}: {line}"
+            )
+        require(len(encoding) == 8,
+                f"Non-32-bit executable instruction at {address}: {line}")
+        require(mnemonic in BASE_MNEMONICS,
+                f"Unsupported decoded instruction at {address}: {line}")
+        if mnemonic == "unimp":
+            require(int(encoding, 16) == 0xc0001073,
+                    f"Unexpected illegal-instruction encoding at {address}")
+        instructions += 1
+    require(instructions > 0, "Empty executable disassembly")
+    return {"decoded_instructions": instructions, "mapped_data_records": mapped_data}
 
 
 def main():
@@ -210,11 +318,28 @@ def main():
         attributes = result.stdout.decode()
         architecture = [line.split('"')[1] for line in attributes.splitlines()
                         if "Tag_RISCV_arch:" in line]
-        require(len(architecture) == 1, f"Missing ELF ISA declaration: {name}")
-        extensions = architecture[0].split("_")
-        require(extensions[0].startswith("rv64i") and all(
-            item.startswith(("m2p", "a2p", "zicsr2p", "zifencei2p")) for item in extensions[1:]
-        ), f"Unsupported ELF ISA extensions: {name} {architecture}")
+        if not architecture:
+            require(name == "vmlinux" and "-Wa,-mno-arch-attr" in log,
+                    f"Missing ELF ISA declaration without explicit kernel suppression: {name}")
+        else:
+            require(len(architecture) == 1, f"Ambiguous ELF ISA declaration: {name}")
+            extensions = architecture[0].split("_")
+            matches = [re.fullmatch(r"([a-z]+)[0-9]+p[0-9]+", item) for item in extensions[1:]]
+            require(all(matches), f"Invalid ELF ISA extension encoding: {name}")
+            extension_names = {match[1] for match in matches}
+            require(re.fullmatch(r"rv64i[0-9]+p[0-9]+", extensions[0]) and
+                    extension_names <= {"m", "a", "zicsr", "zifencei", "zmmul"} and
+                    ("zmmul" not in extension_names or "m" in extension_names),
+                    f"Unsupported ELF ISA extensions: {name} {architecture}")
+        argv = ["/usr/bin/riscv64-linux-gnu-objdump", "-d", "-M", "no-aliases,numeric",
+                path.relative_to(ROOT).as_posix()]
+        result = subprocess.run(argv, cwd=ROOT, capture_output=True, check=False)
+        (out / f"{name}.disassembly.log").write_bytes(result.stdout)
+        (out / f"{name}.disassembly.stderr.log").write_bytes(result.stderr)
+        require(result.returncode == 0, f"Executable disassembly failed: {name}")
+        executables[name]["isa_audit"] = audit_disassembly(
+            result.stdout.decode(), data_ranges(path.read_bytes())
+        )
     require(executables["fw_jump.elf"]["entry"] == 0x80000000, "Firmware ELF entry")
     kernel = (ROOT / manifest["images"]["Image"]["path"]).read_bytes()
     require(kernel[48:56] == b"RISCV\0\0\0", "Linux Image magic")

@@ -130,6 +130,17 @@ uname=160, getpid=172, exit=93. A successful PID-1 exit is followed by Linux's
 real init-exit panic. The complete panic is part of acceptance, not an
 artificial successful halt.
 
+Linux's actual unaligned-access probe remains enabled. A source-controlled
+compatibility patch provides delegated S-mode RV64 integer misalignment
+emulation, selected by enforced `CONFIG_RISCV_SMODE_MISALIGNED_EMULATION=y`.
+It must decode standard integer loads/stores, preserve signedness and x0,
+use fault-safe instruction/data accesses, handle page boundaries and access
+failures, and advance saved EPC only after successful emulation. Unsupported
+instructions and AMOs retain their normal fault/fixup behavior. Kernel user
+accesses require saved SUM; nofault kernel accesses may not sleep. Independent
+directed cases and a fresh real Linux boot must establish the repair, not a
+disabled probe or a fabricated successful result.
+
 Freeze PRINTK=y, PRINTK_TIME=n, SMP=n, RANDOMIZE_BASE=n,
 LOCALVERSION_AUTO=n, HZ_100=y, RISCV_SBI=y, SERIAL_8250=y,
 SERIAL_8250_CONSOLE=y, SERIAL_EARLYCON=y and BLK_DEV_INITRD=y.

@@ -31,6 +31,28 @@
         "drivers/char/Kconfig",
         "drivers/char/random.c"
       ]
+    },
+    {
+      "path": "linux-6.6.1-smode-misaligned.patch",
+      "sha256": "92b2ee6c295e0d05d20e344ba6cba6b28f862d7de03b8f249eb249b6ed669ca1",
+      "origin": "Original HAMMER-V4 local compatibility repair; not an upstream Linux patch",
+      "base_version": "6.6.1",
+      "base_archive_sha256": "da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234",
+      "license": "GPL-2.0-only",
+      "purpose": "Safely emulate delegated S-mode RV64 integer misaligned loads/stores while retaining the actual unaligned-access probe, unsupported-instruction faults and kernel exception fixups",
+      "files": [
+        "arch/riscv/Kconfig",
+        "arch/riscv/kernel/Makefile",
+        "arch/riscv/include/asm/csr.h",
+        "arch/riscv/include/asm/misaligned_smode.h",
+        "arch/riscv/kernel/traps.c",
+        "arch/riscv/kernel/traps_misaligned_smode.c"
+      ],
+      "repair_of": [
+        "evidence/preparation/kernel-user-20261030T104140Z-acd24544/receipt.json",
+        "evidence/preparation/kernel-probe-identity-20261030T105532Z-dc26c2b9/receipt.json",
+        "evidence/preparation/software-smode-build-20261030T110356Z-1ee2b2fb/receipt.json"
+      ]
     }
   ],
   "binutils_version": "2.42",

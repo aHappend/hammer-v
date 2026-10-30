@@ -59,6 +59,7 @@ def require_config(path):
         "CONFIG_RISCV_ISA_SVNAPOT": "n", "CONFIG_RISCV_ISA_SVPBMT": "n",
         "CONFIG_RISCV_ISA_ZICBOM": "n", "CONFIG_RISCV_ISA_ZICBOZ": "n",
         "CONFIG_RISCV_ISA_FALLBACK": "y",
+        "CONFIG_RISCV_SMODE_MISALIGNED_EMULATION": "y",
         "CONFIG_EFI": "n", "CONFIG_RISCV_SBI": "y",
         "CONFIG_PRINTK": "y", "CONFIG_PRINTK_TIME": "n",
         "CONFIG_RANDOMIZE_BASE": "n", "CONFIG_LOCALVERSION_AUTO": "n",
@@ -72,7 +73,10 @@ def require_config(path):
         "CONFIG_LOCALVERSION": '"-hammer-v4"',
         "CONFIG_INITRAMFS_SOURCE": '"../initramfs.list"',
     }
-    required_explicit = {"CONFIG_RANDOM_TRUST_BOOTLOADER", "CONFIG_RANDOM_TRUST_CPU"}
+    required_explicit = {
+        "CONFIG_RANDOM_TRUST_BOOTLOADER", "CONFIG_RANDOM_TRUST_CPU",
+        "CONFIG_RISCV_SMODE_MISALIGNED_EMULATION",
+    }
     mismatches = [
         f"{key}: required {value}, got {values.get(key, 'absent')}"
         for key, value in required.items()

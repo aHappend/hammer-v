@@ -47,6 +47,35 @@ command-line overrides. The shipped config explicitly selects
 `CONFIG_RANDOM_TRUST_BOOTLOADER=y` and `CONFIG_RANDOM_TRUST_CPU=n`; the builder
 requires both symbols to be present with those exact values.
 
+`software/linux-6.6.1-smode-misaligned.patch` is a second local GPL-2.0-only
+compatibility patch. Linux 6.6.1 always runs its unaligned-copy probe, but
+its existing emulation handler is M-mode-only and unsafe to reuse in S-mode.
+The patch adds and the builder explicitly requires
+`CONFIG_RISCV_SMODE_MISALIGNED_EMULATION=y`; the ineffective, nonexistent
+`CONFIG_RISCV_PROBE_UNALIGNED_ACCESS` setting is removed. The actual probe,
+firmware delegation and parent RTL remain unchanged.
+
+The new S-mode handler decodes standard 32-bit RV64 LH/LHU/LW/LWU/LD and
+SH/SW/SD instructions and computes the effective address from saved rs1 and
+the signed immediate. It uses exception-protected byte accesses, including
+across page boundaries. User data accesses use checked get_user/put_user and
+can service demand faults; kernel accesses cannot sleep and preserve the
+original instruction's exception-table fixup. Kernel access to user addresses
+requires saved SUM. Instruction fetch is nofault, with temporary MXR for
+execute-only pages, preemption disabled and MXR restored before rescheduling.
+The patch defines `SR_MXR` as `_AC(0x00080000, UL)` in the shared
+`asm/csr.h`: architectural status bit 19, missing from Linux 6.6.1's
+header. Fetch enable, saved-state testing and restoration use that one definition.
+Failed accesses report the first inaccessible byte, do not advance EPC and
+do not commit a load destination. User failures generate SIGSEGV (MAPERR for
+an absent VMA, otherwise ACCERR); kernel failures use the original fixup/oops
+path. Successful emulation advances EPC by four, sign/zero-extends correctly
+and never treats pt_regs' EPC slot as x0. Loads into x0 still access memory.
+Unsupported instructions, including AMOs, retain SIGBUS/BUS_ADRALN or the
+kernel fixup/oops behavior. Misaligned stores are non-atomic: a failure can
+leave earlier byte stores visible, but no later bytes are written. Saved
+trap context is otherwise unchanged.
+
 The ordered `linux_patches` manifest records the patch origin, base and SHA-256.
 The builder checks the archive and patch hashes, extracts into a fresh output
 tree, then applies each patch with GNU patch in batch/forward mode with zero

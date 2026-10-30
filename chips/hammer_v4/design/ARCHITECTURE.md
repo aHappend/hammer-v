@@ -320,6 +320,52 @@ in manifest order to a freshly extracted tree before configuration. The
 original upstream archive is not modified. Patch provenance/hashes accompany
 the recorded build inputs; this repair does not establish a successful build
 or boot.
+
+The second manifest patch, `linux-6.6.1-smode-misaligned.patch`, implements
+delegated S-mode integer misaligned accesses without changing firmware
+delegation, inherited RTL or `check_unaligned_access`. The latter probe is
+unconditional in Linux 6.6.1; the removed `RISCV_PROBE_UNALIGNED_ACCESS` config
+line never controlled it. The new, real Kconfig option
+`RISCV_SMODE_MISALIGNED_EMULATION` is required explicitly by the builder and
+selects a separate S-mode object, not the unsafe M-mode handler.
+
+The patch also supplies the missing shared `asm/csr.h` definition
+`SR_MXR = _AC(0x00080000, UL)` (architectural status bit 19). The instruction
+fetch path uses this same mask to enable MXR, test its previous value and
+restore it. This repairs the compile failure retained at
+`evidence/preparation/software-smode-build-20261030T110356Z-1ee2b2fb/receipt.json`;
+a fresh independent build and behavioral checks remain required.
+
+| Emulation boundary | Defined behavior |
+|---|---|
+| Standard 32-bit RV64 LH/LHU/LW/LWU/LD, SH/SW/SD | Decode rs1, rd/rs2 and signed I/S immediate; XLEN-wrapped effective address; little-endian protected byte accesses |
+| Signed/unsigned load, rd=rs1, x0 | Commit only after every byte succeeds; signed or zero extension; read saved rs1 before writing rd; x0 reads zero and discards results but not memory faults |
+| User instruction fetch | Checked nofault reads; temporary MXR permits execute-only pages; preemption/page faults disabled until MXR is restored |
+| User data page boundary | Checked get_user/put_user permits real demand-fault handling; stop at first inaccessible byte |
+| Kernel memory / uaccess | Protected nofault access, no sleeping; user addresses require saved SUM; original-EPC exception-table fixup remains available |
+| Access failure | No EPC advance or load-register commit; report failing instruction/data byte; user SIGSEGV MAPERR for absent VMA, otherwise ACCERR; kernel fixup/oops |
+| Partial misaligned store | Earlier successful bytes may remain visible; no atomicity promised; stop before subsequent bytes |
+| Unsupported/AMO/FP/compressed instruction | No emulation or PC advance; preserve SIGBUS/BUS_ADRALN and kernel fixup/oops semantics |
+| Success | Advance saved EPC exactly four; otherwise preserve saved context, including status and original cause/tval |
+
+This repair is linked to the retained
+`evidence/preparation/kernel-user-20261030T104140Z-acd24544/receipt.json`
+failure (Linux panic before U-mode after 177159109 released edges) and
+`evidence/preparation/kernel-probe-identity-20261030T105532Z-dc26c2b9/receipt.json`
+source/image identity check. Those records and their UART capture remain
+unchanged. The successful earlier random-trust build is separately retained
+at `evidence/preparation/software-build-repair-20261030T103714Z-6c659688/receipt.json`;
+it does not validate this new patch.
+
+Independent Verifier must rebuild in a fresh directory, link a new diagnostic
+receipt to the original failure, rerun the real kernel/user milestone probe
+and add directed integer-emulation cases: every supported width/sign,
+negative immediates, x0 and register aliases, page-crossing success/failure,
+read/write permission failures, kernel SUM and original-instruction fixups,
+inaccessible instruction bytes, unsupported AMOs and nested trap/context
+preservation. Full UART-oracle, three-seed, mutation, clean-reproduction and
+native timing/HIL acceptance remain unchanged and pending.
+
 The build forces RV64IMA/Zicsr/Zifencei and LP64 for both C and assembly,
 disables C/F/D/V and optional instruction-extension alternatives, and disables
 EFI, which would otherwise select compressed entry code. Zicsr/Zifencei names
