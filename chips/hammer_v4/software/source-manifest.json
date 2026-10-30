@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "linux": {
+    "version": "6.6.1",
+    "archive": "linux-6.6.1.tar.xz",
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.1.tar.xz",
+    "sha256": "da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234",
+    "license": "GPL-2.0-only WITH Linux-syscall-note; see archive COPYING and LICENSES/"
+  },
+  "toolchains": {
+    "firmware": {
+      "compiler": "/usr/bin/riscv64-unknown-elf-gcc",
+      "version": "13.2.0"
+    },
+    "linux_and_init": {
+      "compiler": "/usr/bin/riscv64-linux-gnu-gcc",
+      "version": "13.3.0"
+    }
+  },
+  "software_isa": "rv64ima_zicsr_zifencei",
+  "linux_patches": [],
+  "binutils_version": "2.42",
+  "abi": "lp64",
+  "source_date_epoch": 1699574400,
+  "kbuild_build_timestamp": "Fri Nov 10 00:00:00 UTC 2023",
+  "kbuild_build_user": "hammer",
+  "kbuild_build_host": "reproducible",
+  "kbuild_build_version": "1",
+  "localversion": "-hammer-v4",
+  "ram_base": 2147483648,
+  "ram_size": 134217728,
+  "firmware_entry": 2147483648,
+  "kernel_entry": 2149580800,
+  "dtb_address": 2279604224,
+  "dtb_reserved_size": 2097152,
+  "uart_input_line_hex": "76340a",
+  "init_exit_status": 0,
+  "expected_termination": "Linux PID-1 exit panic; complete UART output required"
+}
