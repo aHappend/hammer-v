@@ -47,7 +47,10 @@ def project_file(root, relative):
     ):
         raise ValueError(f"Not a deliverable-relative path: {relative}")
     resolved = (root / path).resolve(strict=True)
-    if not resolved.is_relative_to(root.resolve()) or not resolved.is_file():
+    if not resolved.is_relative_to(root.resolve()) or not resolved.is_file() or any(
+        part in (".git", ".vulcan", ".tooling", "VULCAN")
+        for part in resolved.relative_to(root.resolve()).parts
+    ):
         raise ValueError(f"Input escapes project or is not a file: {relative}")
     return resolved
 
