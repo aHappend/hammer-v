@@ -22,7 +22,7 @@ from system_oracle import Clock, MASK, Phase, SEEDS, canonical_json, digest, loa
 from system_protocol import event_line
 
 
-def prediction(seed, images, out, goal="firmware"):
+def prediction(seed, images, out, goal="firmware", prefix_retirements=150000):
     clock = Clock()
     events, transitions, handoff = [], [], []
     milestones = {}
@@ -55,6 +55,10 @@ def prediction(seed, images, out, goal="firmware"):
                 core.platform.transmitter.temt:
             core.stopped = True
             milestones["stop_edge"] = edge
+        if goal == "kernel-prefix" and ordinal >= prefix_retirements and \
+                core.platform.transmitter.temt:
+            core.stopped = True
+            milestones["stop_edge"] = edge
 
     def trap(edge, record, registers):
         pc, cause, tval, target, interrupt = record
@@ -67,7 +71,7 @@ def prediction(seed, images, out, goal="firmware"):
     core = Core(clock, seed, images, retirement=retire, trap=trap,
                 wire=lambda edge, level: transitions.append((edge, level)))
     started = time.monotonic()
-    limit = 16777216 if goal == "sv39" else 500000
+    limit = 16777216 if goal in ("sv39", "kernel-prefix") else 500000
     heartbeat = time.monotonic()
 
     def progress(edge):
@@ -84,7 +88,7 @@ def prediction(seed, images, out, goal="firmware"):
         raise AssertionError(f"Firmware prediction did not reach mret: recent={list(core.recent)} "
                              f"queue={list(core.queue)} stages="
                              f"{(core.decode, core.execute, core.mem, core.writeback)}")
-    if goal == "sv39" and "stop_edge" not in milestones:
+    if goal in ("sv39", "kernel-prefix") and "stop_edge" not in milestones:
         raise AssertionError(f"Compact Sv39 prediction not complete: {milestones}; "
                              f"recent={list(core.recent)}")
     if goal == "interactions" and (
@@ -181,7 +185,10 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--predict-only", action="store_true")
-    parser.add_argument("--goal", choices=("firmware", "sv39", "interactions"), default="firmware")
+    parser.add_argument("--goal", choices=("firmware", "sv39", "interactions", "kernel-prefix"),
+                        default="firmware")
+    parser.add_argument("--prefix-retirements", type=int, default=150000)
+    parser.add_argument("--seed", type=int, choices=SEEDS, action="append")
     args = parser.parse_args()
     relative = Path(args.out)
     if relative.is_absolute() or ".." in relative.parts or relative.parts[:1] != ("build",):
@@ -195,8 +202,12 @@ def main():
         manifest["images"]["fw_jump.bin"]["path"] = firmware.relative_to(ROOT).as_posix()
         images = (("fw_jump.bin", 0x80000000, firmware.read_bytes()), *images[1:])
     predictions = []
-    for seed in SEEDS:
-        result = prediction(seed, images, out / f"seed-{seed}", args.goal)
+    if args.prefix_retirements < 150000:
+        parser.error("--prefix-retirements must extend beyond the retained Sv39 prefix")
+    seeds = args.seed or SEEDS
+    for seed in seeds:
+        result = prediction(seed, images, out / f"seed-{seed}", args.goal,
+                            args.prefix_retirements)
         predictions.append(result)
         print(f"FROZEN {args.goal} seed={seed} events={result['events']} "
               f"edges={result['final_edge']} seconds={result['prediction_seconds']:.3f}", flush=True)
@@ -259,7 +270,7 @@ def main():
         "manifest_sha256": digest(ROOT / args.manifest), "predictions": predictions,
         "dut_execution": True, "all_comparisons_passed": True,
     }))
-    print(f"COMPARED independently frozen {args.goal} retirement/UART streams, seeds 11/29/47")
+    print(f"COMPARED independently frozen {args.goal} retirement/UART streams, seeds {seeds}")
 
 
 if __name__ == "__main__":

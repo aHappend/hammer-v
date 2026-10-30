@@ -313,17 +313,17 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     manifest, images = load_images(ROOT, args.manifest)
     invocation = ["python3", "tests/system_oracle.py", "--manifest", args.manifest,
-                  "--scenario", "not-generated.json", "--out", "not-generated"]
+                  "--scenario", "not-generated.json", "--out", "../not-generated"]
     result = subprocess.run(invocation, cwd=ROOT, capture_output=True, check=False)
     (out / "incomplete-cli.stdout.log").write_bytes(result.stdout)
     (out / "incomplete-cli.stderr.log").write_bytes(result.stderr)
     (out / "commands.json").write_text(json.dumps([{
         "argv": invocation, "cwd": ".", "exit_code": result.returncode,
-        "scope": "incomplete CLI must reject, not manufacture an expectation",
+        "scope": "unsafe output CLI must reject before execution",
     }], indent=2) + "\n")
-    if result.returncode != 1 or b"No expected UART stream has been generated" \
+    if result.returncode != 2 or b"--out must be a fresh project-relative build/ directory" \
             not in result.stderr:
-        raise AssertionError("Unimplemented full-system CLI returned a success-shaped result")
+        raise AssertionError("Full-system CLI accepted an unsafe output path")
     results = {
         "scope": "analytical clock/scenario/AXI/serial/peripheral component checks",
         "acceptance_evidence": False,

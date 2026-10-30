@@ -7,8 +7,9 @@ The clocked RAM/cache/PTW/fabric path lives in system_memory.py and resumable
 ISA execution in system_execution.py. system_core.py connects the independent
 ISA to pipeline resources, redirects/traps, writeback CSR sampling and MMIO in
 system_platform.py. Bounded firmware, initial kernel Sv39 and timer/reservation
-comparisons are not complete Linux acceptance. Full-workload integration and
-the final expectation-generation CLI remain incomplete.
+comparisons are not complete Linux acceptance. The expectation-generation CLI
+executes immutable images through system_prediction; incomplete execution fails
+without producing a complete-system expectation or launch seal.
 """
 
 from collections import deque
@@ -18,6 +19,10 @@ import hashlib
 import heapq
 import json
 from pathlib import Path
+import sys
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 BOUND = 4294967296
@@ -681,10 +686,5 @@ class AxiRam:
 
 
 if __name__ == "__main__":
-    raise SystemExit(
-        "Full-system expectation generation is not available yet. This module "
-        "and system_memory/system_execution/system_core implement independently "
-        "clocked execution with bounded firmware, initial Sv39 and timer "
-        "comparisons, not yet validated complete Linux/peripheral execution "
-        "or its final expectation producer. No expected UART stream has been generated."
-    )
+    from system_prediction import main
+    main()

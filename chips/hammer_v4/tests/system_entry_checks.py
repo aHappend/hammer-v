@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the current missing-oracle boundary without launching any RTL boot.
-
-This negative check is for the in-progress implementation only. When the full
-oracle is implemented, replace the missing-producer fixture, not the mandatory
-complete-boot check or its thresholds.
-"""
+"""Reject a real, deliberately incomplete prediction before DUT compilation."""
 
 import argparse
 import json
@@ -19,6 +14,14 @@ from system_checks import Execution, inventory, relative_path
 from system_oracle import canonical_json, digest
 
 
+class PrefixExecution(Execution):
+    def run(self, root, argv, name):
+        if argv[1] != "tests/system_oracle.py":
+            raise AssertionError("Incomplete prediction must not launch another command")
+        return super().run(root, [*argv, "--diagnostic-retirements", "1",
+                                  "--diagnostic-edge-limit", "200000"], name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
@@ -30,12 +33,14 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     canonical = ROOT / "evidence/uart_linux_boot.log"
     old_canonical = digest(canonical) if canonical.is_file() else None
-    execution = Execution(out, ["python3", "tests/system_entry_checks.py",
-                                "--out", args.out, "--manifest", args.manifest])
+    execution = PrefixExecution(out, ["python3", "tests/system_entry_checks.py",
+                                      "--out", args.out, "--manifest", args.manifest])
     failure = None
     try:
         execution.prepare(ROOT, manifest, relative / "seed-11", execution.receipt["runs"][0])
-    except RuntimeError as error:
+    except ValueError as error:
+        if str(error) != "Not a complete independently clocked system expectation":
+            raise
         failure = error
         execution.fail(error)
     finally:
@@ -45,15 +50,14 @@ def main():
         )
         execution.save()
     if failure is None:
-        raise AssertionError("This negative check is obsolete: oracle generation did not reject")
+        raise AssertionError("An incomplete prediction was accepted")
     commands = execution.receipt["commands"]
     if len(commands) != 1 or commands[0]["argv"][1] != "tests/system_oracle.py" or \
-            commands[0]["exit_code"] != 1 or commands[0]["ended_unix"] is None:
-        raise AssertionError("Expected one settled oracle rejection, not a simulator/tool failure")
-    if b"No expected UART stream has been generated" not in (
-        ROOT / commands[0]["stderr"]
-    ).read_bytes():
-        raise AssertionError("Oracle failed for an unexpected reason")
+            commands[0]["exit_code"] != 0 or commands[0]["ended_unix"] is None:
+        raise AssertionError("Expected one settled prefix producer, not a tool failure")
+    metadata = json.loads((out / "seed-11/oracle/expectations.json").read_text())
+    if metadata["scope"] != "independent-clocked-prefix":
+        raise AssertionError("Deliberately incomplete prediction has the wrong scope")
     if list(out.rglob("launch-seal.json")) or list(out.rglob("uart.bin")) or \
             list(out.rglob("system-probe")) or list(out.rglob("compile-obj")):
         raise AssertionError("Incomplete oracle was followed by DUT compilation/execution")
@@ -65,7 +69,7 @@ def main():
     ]:
         raise AssertionError("Unexecuted required boots disappeared from the denominator")
     (out / "summary.json").write_bytes(canonical_json({
-        "scope": "negative orchestration check only; no RTL or complete oracle executed",
+        "scope": "negative orchestration check only; incomplete predictor, no RTL boot",
         "oracle_rejection_receipt": (execution.evidence / "receipt.json")
                                     .relative_to(ROOT).as_posix(),
         "all_four_required_boot_statuses": statuses,
