@@ -88,9 +88,10 @@ class Port:
             self.ticks.remove(edge)
             if self.busy or not self.waiting:
                 return
-            owner = next((self.prefer + offset) % self.owners
-                         for offset in range(self.owners)
-                         if (self.prefer + offset) % self.owners in self.waiting)
+            owner = 0 if self.owners == 1 else next(
+                (self.prefer + offset) % self.owners
+                for offset in range(self.owners)
+                if (self.prefer + offset) % self.owners in self.waiting)
             request, receive = self.waiting.pop(owner)
             self.busy = True
             self.prefer = (owner + 1) % self.owners

@@ -3,7 +3,9 @@
 
 The router captures a request, presents it to a peripheral on the next edge,
 then registers the peripheral response. Values are sampled before side effects.
-Unsupported console formats fail explicitly rather than fabricate wire bytes.
+The admitted 8N1 console also supports internal loopback, FIFO-size probes and
+modem status/deltas. Unsupported transmit formats retain explicit diagnostics
+with precise PC/register/MMIO context rather than fabricated wire bytes.
 """
 
 from collections import deque
@@ -16,12 +18,16 @@ from system_oracle import BOUND, Clint, Counter, MASK, Phase, Plic, SerialReceiv
 class Platform:
     def __init__(self, clock, wire):
         self.clock = clock
+        self.wire = wire
         self.clint = Clint(clock)
         self.plic = Plic(clock)
         self.cycles = Counter()
-        self.transmitter = SerialTransmitter(clock, wire)
+        self.transmitter = SerialTransmitter(clock, self._tx_wire)
         self.transmitter.on_empty = self._tx_empty
         self.receiver = SerialReceiver(clock, self._received)
+        self.receiver.source = lambda: (
+            0 if self.lcr & 64 else self.transmitter.line
+        ) if self.mcr & 16 else self.receiver.sync
         self.rx = deque()
         self.ier = self.lcr = self.mcr = self.scr = 0
         self.divisor = 1
@@ -34,6 +40,40 @@ class Platform:
         self.changed = None
         self.port = Port(clock, 1, self._route)
         self.transactions = deque(maxlen=32)
+        self.uart_transactions = deque(maxlen=32)
+        self.context = None
+        self.modem_previous = self.modem_delta = 0
+        self._modem_ticks, self._modem_reads = set(), set()
+
+    @property
+    def tx_line(self):
+        return 1 if self.mcr & 16 else 0 if self.lcr & 64 else self.transmitter.line
+
+    def _tx_wire(self, edge, _level):
+        self.wire(edge, self.tx_line)
+        if self.mcr & 16:
+            self.receiver._synchronize(edge + 1)
+
+    def _modem_now(self):
+        if not self.mcr & 16:
+            return 0
+        return (self.mcr >> 1 & 1) | (self.mcr & 1) << 1 | \
+            (self.mcr >> 2 & 1) << 2 | (self.mcr >> 3 & 1) << 3
+
+    def _modem_tick(self, edge):
+        if edge in self._modem_ticks:
+            return
+        self._modem_ticks.add(edge)
+        now, previous = self._modem_now(), self.modem_previous
+        change = (now ^ previous) & 11 | (previous & ~now & 4)
+
+        def update():
+            self._modem_ticks.remove(edge)
+            self.modem_delta = (0 if edge in self._modem_reads else self.modem_delta) | change
+            self._modem_reads.discard(edge)
+            self.modem_previous = now
+            self._sources(edge + 1)
+        self.clock.schedule(edge, Phase.UPDATE, update)
 
     @property
     def mtime(self):
@@ -52,7 +92,7 @@ class Platform:
 
     def _received(self, edge, byte, error):
         if len(self.rx) < self.transmitter.capacity:
-            self.rx.append((byte, 4 if error else 0))
+            self.rx.append((byte, 2 if error else 0))
         else:
             self.overrun = True
         self._reset_timeout(edge)
@@ -119,6 +159,8 @@ class Platform:
             return prefix | 12
         if self.ier & 2 and self.thre_pending:
             return prefix | 2
+        if self.ier & 8 and self.modem_delta:
+            return prefix
         return prefix | 1
 
     def _route(self, owner, edge, request, finish):
@@ -144,6 +186,10 @@ class Platform:
         if width != 1 or offset not in range(8):
             finish(Reply(edge + 2, error=True))
             return
+        self.uart_transactions.append({
+            "edge": edge, "pc": self.context() if self.context else None,
+            "offset": offset, "store": store, "value": value,
+            "lcr": self.lcr, "divisor": self.divisor, "mcr": self.mcr})
         dlab = bool(self.lcr & 128)
         if store and offset == 0 and not dlab:
             if len(self.transmitter.queue) >= self.transmitter.capacity:
@@ -151,8 +197,10 @@ class Platform:
                                     lambda: self._uart(edge + 1, address, width,
                                                        store, value, finish))
                 return
-            if self.lcr != 3 or self.divisor not in (0, 1) or self.mcr & 16:
-                raise NotImplementedError("Clocked console currently requires 8N1/divisor one")
+            if self.lcr & 63 != 3 or self.divisor not in (0, 1):
+                raise NotImplementedError(
+                    "Unsupported clocked UART transmit configuration; "
+                    f"preceding_mmio={list(self.uart_transactions)}")
             self.transmitter.accept(edge, value)
         read = 0
         if not store:
@@ -171,10 +219,12 @@ class Platform:
             elif offset == 5:
                 read = int(bool(self.rx)) | int(self.overrun) << 1 | \
                     (self.rx[0][1] << 2 if self.rx else 0) | \
-                    int(self.transmitter.thre) << 5 | int(self.transmitter.temt) << 6
+                    int(self.transmitter.thre) << 5 | int(self.transmitter.temt) << 6 | \
+                    int(self.fifo and any(error for _, error in self.rx)) << 7
             elif offset == 6:
-                if self.mcr & 16:
-                    raise NotImplementedError("Clocked loopback modem status not integrated")
+                read = self._modem_now() << 4 | self.modem_delta
+                self._modem_reads.add(edge)
+                self._modem_tick(edge)
             else:
                 read = self.scr
 
@@ -203,8 +253,16 @@ class Platform:
                         self._reset_timeout(edge)
                 elif offset == 3:
                     self.lcr = value
+                    self.clock.schedule(edge, Phase.OBSERVE,
+                                        lambda: self.wire(edge, self.tx_line))
+                    self.receiver._synchronize(edge + 1)
                 elif offset == 4:
                     self.mcr = value & 31
+                    self.clock.schedule(edge + 1, Phase.SAMPLE,
+                                        lambda: self._modem_tick(edge + 1))
+                    self.clock.schedule(edge, Phase.OBSERVE,
+                                        lambda: self.wire(edge, self.tx_line))
+                    self.receiver._synchronize(edge + 1)
                 elif offset == 7:
                     self.scr = value
             elif offset == 0 and not dlab and self.rx:
@@ -214,6 +272,8 @@ class Platform:
                 self.thre_pending = False
             elif offset == 5:
                 self.overrun = False
+                if self.rx:
+                    self.rx[0] = (self.rx[0][0], 0)
             self._sources(edge + 1)
         self.clock.schedule(edge, Phase.UPDATE, update)
         finish(Reply(edge + 2, 0 if store else read))

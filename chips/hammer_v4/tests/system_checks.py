@@ -237,10 +237,11 @@ class Execution:
             "python3", "tests/system_memory_rtl_checks.py",
             "--out", (out_relative / "memory-rtl").as_posix(),
         ], "memory-path-rtl-integration")
-        self.run(ROOT, [
-            "python3", "tests/system_platform_checks.py",
-            "--out", (out_relative / "uart-platform").as_posix(),
-        ], "uart-platform-integration")
+        for case in ("fixed", "linux-fifo", "modem"):
+            self.run(ROOT, [
+                "python3", "tests/system_platform_checks.py", "--case", case,
+                "--out", (out_relative / f"uart-platform-{case}").as_posix(),
+            ], f"uart-platform-{case}-integration")
         prepared = [
             self.prepare(ROOT, manifest_relative, out_relative / f"seed-{seed}", record)
             for seed, record in zip(SEEDS, self.receipt["runs"])

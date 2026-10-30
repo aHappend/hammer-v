@@ -9,6 +9,7 @@ window. Oracle resource snapshots explain scheduling but are not DUT inputs.
 import argparse
 from collections import deque
 from dataclasses import asdict
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -193,6 +194,21 @@ def main():
              (relative / "oracle").as_posix(), actual.as_posix(), "11",
              str(prediction.final_edge), "selected",
              str(args.first_edge), str(args.last_edge)], "comparison")
+        for name in ("window-retirements.txt", "window-axi.txt"):
+            if digest(oracle / name) != digest(ROOT / actual / name):
+                raise AssertionError(f"Exact bounded public observation differs: {name}")
+        observed = json.loads((ROOT / actual / "prefix-result.json").read_text())
+        if observed["coverage"] != result["coverage"]:
+            raise AssertionError("Bounded architectural coverage differs")
+        (out / "comparison.json").write_bytes(canonical_json({
+            "scope": result["scope"], "first_edge": args.first_edge,
+            "last_edge": args.last_edge,
+            "exact_window_sha256": {name: digest(oracle / name) for name in (
+                "window-retirements.txt", "window-axi.txt")},
+            "compared_events": prediction.events, "uart_bytes": prediction.uart_bytes,
+            "coverage": observed["coverage"],
+            "rtl_seconds": commands[-1]["ended_unix"] - commands[-1]["started_unix"],
+        }))
     finally:
         for pattern in ("*.o", "*.a", "*.gch"):
             for path in (ROOT / obj).glob(pattern):

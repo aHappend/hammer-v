@@ -274,6 +274,7 @@ class Prediction:
             "callbacks": self.clock.callbacks, "retired": self.core.machine.commits,
             "final_edge": self.final_edge, "events": self.events,
             "uart_bytes": self.uart_bytes, "coverage": self.coverage.counts,
+            "uart_context": list(self.core.platform.uart_transactions),
         }
 
 
@@ -356,6 +357,7 @@ def main(argv=None):
             pc=prediction.core.machine.pc, events=prediction.events,
             uart_bytes=prediction.uart_bytes, coverage=prediction.coverage.counts,
             recent=list(prediction.core.recent),
+            uart_context=list(prediction.core.platform.uart_transactions),
         )
         raise
     finally:

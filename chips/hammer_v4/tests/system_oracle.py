@@ -195,7 +195,8 @@ class Clock:
     def schedule(self, edge, phase, callback):
         if type(edge) is not int or not 0 <= edge < BOUND:
             raise EdgeBoundExceeded(f"Released edge outside [0,{BOUND}): {edge}")
-        phase = Phase(phase)
+        if not isinstance(phase, Phase):
+            phase = Phase(phase)
         if edge < self.edge or edge == self.edge and phase <= self.phase:
             raise ValueError("Cannot schedule into a sampled/published clock phase")
         if not callable(callback):
@@ -448,6 +449,7 @@ class SerialReceiver:
         self._ticks = set()
         self._generation = 0
         self._byte = 0
+        self.source = None
 
     def transition(self, edge, level):
         if level not in (0, 1):
@@ -466,23 +468,24 @@ class SerialReceiver:
         def sample():
             self._ticks.remove(edge)
             old_meta, old_sync = self.meta, self.sync
+            level = self.source() if self.source else old_sync
 
             def update():
                 self.meta, self.sync = self.line, old_meta
-                if not self.active and not old_sync:
+                if not self.active and not level:
                     self.active = True
                     self._generation += 1
                     self._byte = 0
                     self._sample_bit(edge + 8, 0, self._generation)
                 if self.meta != self.line or self.sync != self.meta or \
-                        not self.active and not self.sync:
+                        not self.active and not (self.source() if self.source else self.sync):
                     self._synchronize(edge + 1)
             self.clock.schedule(edge, Phase.UPDATE, update)
         self.clock.schedule(edge, Phase.SAMPLE, sample)
 
     def _sample_bit(self, edge, position, generation):
         def sample():
-            level = self.sync
+            level = self.source() if self.source else self.sync
 
             def update():
                 if generation != self._generation:

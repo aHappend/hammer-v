@@ -9,6 +9,7 @@ model. This engine is under integration; it is not Linux acceptance evidence.
 
 from collections import deque
 from dataclasses import dataclass
+from functools import cached_property
 import struct
 
 from architecture import branch_condition, signed
@@ -50,33 +51,33 @@ class Job:
     ready_edge: int | None = None
     fence_edge: int | None = None
 
-    @property
+    @cached_property
     def word(self):
         return self.fetched.word
 
-    @property
+    @cached_property
     def opcode(self):
         return self.word & 127
 
-    @property
+    @cached_property
     def serial(self):
         return self.opcode in (0x0F, 0x2F) or self.opcode == 0x73 and (
             self.word >> 12 & 7 or self.word in (0x30200073, 0x10200073, 0x10500073) or
             self.word & 0xFE007FFF == 0x12000073)
 
-    @property
+    @cached_property
     def memory(self):
         return self.opcode in (3, 0x23)
 
-    @property
+    @cached_property
     def exclusive(self):
         return self.serial or self.memory
 
-    @property
+    @cached_property
     def muldiv(self):
         return self.opcode in (0x33, 0x3B) and self.word >> 25 == 1
 
-    @property
+    @cached_property
     def sources(self):
         if self.opcode in (0x37, 0x17, 0x6F, 0x0F):
             return ()
@@ -89,7 +90,7 @@ class Job:
         return (first, self.word >> 20 & 31) if self.opcode in (
             0x23, 0x63, 0x33, 0x3B, 0x2F, 0x73) else (first,)
 
-    @property
+    @cached_property
     def destination(self):
         return self.word >> 7 & 31 if self.opcode in (
             0x37, 0x17, 0x6F, 0x67, 3, 0x13, 0x1B, 0x33, 0x3B, 0x2F, 0x73) else 0
@@ -127,6 +128,7 @@ class Core:
         self.queue = deque()
         self.releasing = False
         self.decode = self.execute = self.mem = self.writeback = None
+        self.platform.context = lambda: self.mem.fetched.pc if self.mem else self.machine.pc
         self.fetch_pc = 0
         self.fetching = self.killed = False
         self.fetched = None
