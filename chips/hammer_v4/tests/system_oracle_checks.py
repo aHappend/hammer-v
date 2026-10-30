@@ -338,10 +338,9 @@ def main():
         "scenarios": scenario_cases(out, images),
         "axi": axi_cases(images),
         "remaining": [
-            "independent core fetch/pipeline/dependency/redirect/interrupt-boundary schedule",
-            "core integration with the clocked RAM/cache/TLB/PTW/fabric path",
-            "maintenance, atomic and MMIO timing integration",
-            "clock-scheduled architectural execution of complete Linux images",
+            "complete Linux coverage of the independently clocked core and peripherals",
+            "full-workload interrupt, UART FIFO/IRQ and MMIO integration",
+            "patrol-compliant complete Linux expectation generation",
             "final pre-DUT UART expectation generation and immutability receipt",
             "compiled seeded DUT integration and clean full RTL reproduction",
         ],

@@ -4,11 +4,11 @@
 Time here is not an instruction count. All inputs are frozen before execution,
 samples precede updates, and clock counters continue during resource stalls.
 The clocked RAM/cache/PTW/fabric path lives in system_memory.py and resumable
-ISA execution in system_execution.py. RAM/cache maintenance and RV64A are
-integrated, including independently predicted physical atomic response edges.
-These are not yet a full-system engine: core fetch/pipeline/interrupt scheduling,
-MMIO integration and the final expectation-generation CLI remain unimplemented.
-Do not use the bounded integration diagnostics as Linux acceptance.
+ISA execution in system_execution.py. system_core.py connects the independent
+ISA to pipeline resources, redirects/traps, writeback CSR sampling and MMIO in
+system_platform.py. Bounded firmware, initial kernel Sv39 and timer/reservation
+comparisons are not complete Linux acceptance. Full-workload integration and
+the final expectation-generation CLI remain incomplete.
 """
 
 from collections import deque
@@ -167,8 +167,10 @@ class Scenario:
 class Phase(IntEnum):
     DRIVE = -1
     SAMPLE = 0
-    UPDATE = 1
-    OBSERVE = 2
+    RESOLVE = 1
+    ISSUE = 2
+    UPDATE = 3
+    OBSERVE = 4
 
 
 class EdgeBoundExceeded(RuntimeError):
@@ -315,6 +317,7 @@ class Plic:
         self.irq = (False, False)
         self.claims = []
         self.completions = []
+        self.on_irq = None
         self._scheduled = set()
         self._actions = {}
 
@@ -383,6 +386,7 @@ class Plic:
             service = dict(self.service)
             actions = self._actions.pop(edge, [])
             def update():
+                previous_irq = self.irq
                 self.meta, self.sync = self.sources, self.meta
                 self.irq = tuple(bool(value) for value in selected)
                 self.pending = pending
@@ -415,8 +419,10 @@ class Plic:
                     )
                 if not stable:
                     self._tick(edge + 1)
+                if self.irq != previous_irq and self.on_irq is not None:
+                    self.on_irq(edge, self.irq)
             self.clock.schedule(edge, Phase.UPDATE, update)
-        self.clock.schedule(edge, Phase.SAMPLE, sample)
+        self.clock.schedule(edge, Phase.RESOLVE, sample)
 
 
 class SerialReceiver:
@@ -525,16 +531,20 @@ class SerialTransmitter:
 
         def sample():
             self._pushes.remove(edge)
-            # Capacity is pre-edge, even when a pop also occurs at this edge.
-            if len(self.queue) >= self.capacity:
-                raise AssertionError("UART THR request not ready: FIFO full")
-
-            def update():
-                self.queue.append(byte)
-                if not self.active:
-                    self._pop(edge + 1)
-            self.clock.schedule(edge, Phase.UPDATE, update)
+            self.accept(edge, byte)
         self.clock.schedule(edge, Phase.SAMPLE, sample)
+
+    def accept(self, edge, byte):
+        if self.clock.edge != edge or self.clock.phase != Phase.SAMPLE:
+            raise AssertionError("UART THR acceptance requires a sampled bus edge")
+        if not 0 <= byte <= 255 or len(self.queue) >= self.capacity:
+            raise AssertionError("UART THR request not ready: invalid byte or full FIFO")
+
+        def update():
+            self.queue.append(byte)
+            if not self.active:
+                self._pop(edge + 1)
+        self.clock.schedule(edge, Phase.UPDATE, update)
 
     def _pop(self, edge):
         if edge in self._pops:
@@ -673,7 +683,8 @@ class AxiRam:
 if __name__ == "__main__":
     raise SystemExit(
         "Full-system expectation generation is not available yet. This module "
-        "and system_memory/system_execution implement clocked platform and RAM "
-        "execution, not the required full core pipeline/interrupt/MMIO "
-        "integration. No expected UART stream has been generated."
+        "and system_memory/system_execution/system_core implement independently "
+        "clocked execution with bounded firmware, initial Sv39 and timer "
+        "comparisons, not yet validated complete Linux/peripheral execution "
+        "or its final expectation producer. No expected UART stream has been generated."
     )

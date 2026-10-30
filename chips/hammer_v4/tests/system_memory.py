@@ -58,6 +58,7 @@ class Port:
         self.ticks = set()
         self.accepted = 0
         self.completed = 0
+        self.blocked_until = 0
         self.recent = deque(maxlen=32)
 
     def submit(self, owner, edge, request, receive):
@@ -69,12 +70,16 @@ class Port:
             self.waiting[owner] = (request, receive)
             self._dispatch(edge)
         try:
-            self.clock.schedule(edge, Phase.DRIVE, drive)
+            if edge == self.clock.edge and self.clock.phase == Phase.RESOLVE:
+                drive()
+            else:
+                self.clock.schedule(edge, Phase.DRIVE, drive)
         except (ValueError, RuntimeError):
             self.live.remove(owner)
             raise
 
     def _dispatch(self, edge):
+        edge = max(edge, self.blocked_until)
         if edge in self.ticks or self.busy:
             return
         self.ticks.add(edge)
@@ -113,7 +118,9 @@ class Port:
                     self.clock.schedule(reply.edge, Phase.UPDATE, release)
                 self.clock.schedule(reply.edge, Phase.SAMPLE, consume)
             self.serve(owner, edge, request, finish)
-        self.clock.schedule(edge, Phase.SAMPLE, sample)
+        phase = Phase.ISSUE if edge == self.clock.edge and \
+            self.clock.phase == Phase.RESOLVE else Phase.SAMPLE
+        self.clock.schedule(edge, phase, sample)
 
 
 def register_reply(reply, delay=1):
@@ -516,8 +523,9 @@ class MemoryExecution:
     It is not a prediction of fetch/decode/retirement or interrupt admission.
     """
 
-    def __init__(self, clock, seed, images=(), rom=b"", cache_lines=64):
+    def __init__(self, clock, seed, images=(), rom=b"", cache_lines=64, mmio=None):
         self.clock = clock
+        self.mmio = mmio
         self.backing = Backing(clock, seed, images, rom)
         self.icache = Cache(clock, self.backing, True, cache_lines)
         self.dcache = Cache(clock, self.backing, False, cache_lines)
@@ -629,7 +637,16 @@ class MemoryExecution:
                 finish(register_reply(reply))
                 return
             if not self.backing.present(port == 0, reply.data):
-                raise NotImplementedError(f"MMIO scheduling not integrated: {reply.data:#x}")
+                if port == 0:
+                    finish(Reply(reply.edge + 1, error=True))
+                elif self.mmio is None:
+                    raise NotImplementedError(f"MMIO scheduling not integrated: {reply.data:#x}")
+                else:
+                    self.mmio.submit(
+                        0, reply.edge + 1,
+                        (reply.data, width, request.access == "store", value),
+                        lambda result: finish(register_reply(result)))
+                return
             if port == 0:
                 def fetched(result):
                     raw = result.data >> ((reply.data & 7) * 8) & ((1 << (width * 8)) - 1)
