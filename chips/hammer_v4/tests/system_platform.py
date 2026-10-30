@@ -20,6 +20,7 @@ class Platform:
         self.plic = Plic(clock)
         self.cycles = Counter()
         self.transmitter = SerialTransmitter(clock, wire)
+        self.transmitter.on_empty = self._tx_empty
         self.receiver = SerialReceiver(clock, self._received)
         self.rx = deque()
         self.ier = self.lcr = self.mcr = self.scr = 0
@@ -27,6 +28,8 @@ class Platform:
         self.fifo = False
         self.trigger = 1
         self.thre_pending = self.overrun = False
+        self.timeout_pending = False
+        self._timeout_epoch = 0
         self.external = 0
         self.changed = None
         self.port = Port(clock, 1, self._route)
@@ -52,7 +55,31 @@ class Platform:
             self.rx.append((byte, 4 if error else 0))
         else:
             self.overrun = True
+        self._reset_timeout(edge)
         self._sources(edge + 1)
+
+    def _tx_empty(self, edge):
+        if self.ier & 2:
+            self.thre_pending = True
+        self._sources(edge + 1)
+
+    def _reset_timeout(self, edge):
+        self._timeout_epoch += 1
+        self.timeout_pending = False
+        if not self.fifo or not self.rx:
+            return
+        epoch = self._timeout_epoch
+        character_ticks = 16 + (5 + (self.lcr & 3)) * 16 + \
+            (16 if self.lcr & 8 else 0) + \
+            ((24 if not self.lcr & 3 else 32) if self.lcr & 4 else 16)
+        expiry = edge + 4 * character_ticks * max(1, self.divisor)
+
+        def timeout():
+            if epoch != self._timeout_epoch:
+                return
+            self.timeout_pending = True
+            self._sources(expiry + 1)
+        self.clock.schedule(expiry, Phase.UPDATE, timeout)
 
     def _sources(self, edge):
         def drive():
@@ -88,6 +115,8 @@ class Platform:
             return prefix | 6
         if self.ier & 1 and len(self.rx) >= self.trigger:
             return prefix | 4
+        if self.ier & 1 and self.fifo and self.rx and self.timeout_pending:
+            return prefix | 12
         if self.ier & 2 and self.thre_pending:
             return prefix | 2
         return prefix | 1
@@ -170,6 +199,8 @@ class Platform:
                     self.fifo = bool(value & 1)
                     self.transmitter.capacity = 16 if self.fifo else 1
                     self.trigger = (1, 4, 8, 14)[value >> 6] if self.fifo else 1
+                    if value & 2 or not self.fifo:
+                        self._reset_timeout(edge)
                 elif offset == 3:
                     self.lcr = value
                 elif offset == 4:
@@ -178,6 +209,7 @@ class Platform:
                     self.scr = value
             elif offset == 0 and not dlab and self.rx:
                 self.rx.popleft()
+                self._reset_timeout(edge)
             elif offset == 2 and read & 15 == 2:
                 self.thre_pending = False
             elif offset == 5:

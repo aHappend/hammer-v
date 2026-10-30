@@ -520,6 +520,7 @@ class SerialTransmitter:
         self._pops = set()
         self._pushes = set()
         self.completed = 0
+        self.on_empty = None
 
     @property
     def thre(self):
@@ -565,6 +566,8 @@ class SerialTransmitter:
             def update():
                 if self.queue.popleft() != byte:
                     raise AssertionError("UART FIFO changed between sample and update")
+                if not self.queue and self.on_empty is not None:
+                    self.on_empty(edge)
                 self.active = True
                 bits = (0, *[(byte >> bit) & 1 for bit in range(8)], 1)
                 for position, level in enumerate(bits):

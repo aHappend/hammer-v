@@ -233,6 +233,10 @@ class Execution:
             "python3", "tests/system_memory_rtl_checks.py",
             "--out", (out_relative / "memory-rtl").as_posix(),
         ], "memory-path-rtl-integration")
+        self.run(ROOT, [
+            "python3", "tests/system_platform_checks.py",
+            "--out", (out_relative / "uart-platform").as_posix(),
+        ], "uart-platform-integration")
         prepared = [
             self.prepare(ROOT, manifest_relative, out_relative / f"seed-{seed}", record)
             for seed, record in zip(SEEDS, self.receipt["runs"])
