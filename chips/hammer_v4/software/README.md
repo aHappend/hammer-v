@@ -20,7 +20,7 @@ cable or PCIe device identifier is required by this command.
 Required compilers are `/usr/bin/riscv64-unknown-elf-gcc` 13.2.0 and
 `/usr/bin/riscv64-linux-gnu-gcc` 13.3.0, with cross-binutils 2.42.
 Other build prerequisites are Python >=3.9, make, host gcc/g++, dtc, cpio,
-tar, xz, bash, bc, bison, flex and perl. The observed dtc/bison/flex versions
+tar, xz, bash, bc, bison, flex, perl and GNU patch. The observed dtc/bison/flex versions
 are 1.7.0/3.8.2/2.6.4; actual builder tool versions are retained with each
 build. No tools are installed by the builder. Earlier missing-tool reports do
 not override a fresh inventory; at this source handoff those three names were
@@ -37,8 +37,23 @@ da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234
 It was obtained from the public kernel.org URL recorded in
 `software/source-manifest.json`. The archive contains upstream `COPYING`,
 `LICENSES/` and per-file license notices; preserve them on redistribution.
-No third-party source is represented as original HAMMER code. No Linux source
-patch is currently applied; `linux_patches` is explicitly empty.
+No third-party source is represented as original HAMMER code.
+`software/linux-6.6.1-random-trust-config.patch` is a local GPL-2.0 compatibility
+patch, not an upstream Linux release change. Linux 6.6.1 hardcodes both random
+trust defaults to true and has no corresponding Kconfig controls. The patch
+restores both boolean controls and initializes the existing trust variables
+from them, preserving the `random.trust_cpu` and `random.trust_bootloader`
+command-line overrides. The shipped config explicitly selects
+`CONFIG_RANDOM_TRUST_BOOTLOADER=y` and `CONFIG_RANDOM_TRUST_CPU=n`; the builder
+requires both symbols to be present with those exact values.
+
+The ordered `linux_patches` manifest records the patch origin, base and SHA-256.
+The builder checks the archive and patch hashes, extracts into a fresh output
+tree, then applies each patch with GNU patch in batch/forward mode with zero
+fuzz before kernel configuration. Any patch failure stops the build. The
+upstream archive remains unchanged. Patch hashes/provenance are retained in
+`build-record.json` before application and in the successful image manifest's
+source hashes and platform inputs.
 
 The architecture is `rv64ima_zicsr_zifencei`, ABI `lp64`; firmware and init use
 no libc, libgcc, dynamic linker, compressed instructions or floating point.
@@ -53,6 +68,8 @@ frozen in the source manifest. The initramfs uses a fixed ordered specification
 with UID/GID zero and the fixed Kbuild timestamp. `/dev/console` and `/dev/null`
 are included as device nodes; no external root filesystem is needed.
 The DT rng-seed is public test data and must never be treated as secure entropy.
+Bootloader trust is enabled solely for this reproducible validation platform;
+the public seed is not suitable for production security.
 
 ## Build outputs and platform loading
 

@@ -310,7 +310,16 @@ exec, user page faults and system calls are actual Linux code.
 
 Upstream 6.6.1 `of_setup_earlycon` already reads DT `clock-frequency` and
 `current-speed` before the 8250 divisor calculation. No earlycon clock patch
-is required. The source manifest explicitly lists zero Linux patches.
+is required. The source manifest lists the local
+`linux-6.6.1-random-trust-config.patch` compatibility patch: it restores boolean
+Kconfig controls for CPU and bootloader entropy trust and uses them as the
+initial values in `drivers/char/random.c`. Existing early command-line
+overrides remain intact. The build requires explicit bootloader trust enabled
+and CPU trust disabled, verifies the archive/patch hashes, and applies patches
+in manifest order to a freshly extracted tree before configuration. The
+original upstream archive is not modified. Patch provenance/hashes accompany
+the recorded build inputs; this repair does not establish a successful build
+or boot.
 The build forces RV64IMA/Zicsr/Zifencei and LP64 for both C and assembly,
 disables C/F/D/V and optional instruction-extension alternatives, and disables
 EFI, which would otherwise select compressed entry code. Zicsr/Zifencei names

@@ -68,13 +68,15 @@ def require_config(path):
         "CONFIG_RISCV_INTC": "y", "CONFIG_RISCV_TIMER": "y",
         "CONFIG_SIFIVE_PLIC": "y", "CONFIG_BLK_DEV_INITRD": "y",
         "CONFIG_BINFMT_ELF": "y", "CONFIG_RANDOM_TRUST_BOOTLOADER": "y",
+        "CONFIG_RANDOM_TRUST_CPU": "n",
         "CONFIG_LOCALVERSION": '"-hammer-v4"',
         "CONFIG_INITRAMFS_SOURCE": '"../initramfs.list"',
     }
+    required_explicit = {"CONFIG_RANDOM_TRUST_BOOTLOADER", "CONFIG_RANDOM_TRUST_CPU"}
     mismatches = [
         f"{key}: required {value}, got {values.get(key, 'absent')}"
         for key, value in required.items()
-        if values.get(key, "n") != value
+        if values.get(key, "n") != value or (key in required_explicit and key not in values)
     ]
     if mismatches:
         raise ValueError("Kernel configuration contract failed:\n" + "\n".join(mismatches))
@@ -184,18 +186,18 @@ def main():
                 "CFLAGS", "CPPFLAGS", "MAKEFLAGS", "MFLAGS", "KBUILD_SRC"]:
         environment.pop(key, None)
 
-    def run(argv):
+    def run(argv, cwd=Path(".")):
         argv = [str(arg) for arg in argv]
         ordinal = len(record["commands"])
         stdout = commands / f"{ordinal:04d}.stdout.log"
         stderr = commands / f"{ordinal:04d}.stderr.log"
-        entry = {"argv": argv, "cwd": ".", "stdout": stdout.as_posix(),
+        entry = {"argv": argv, "cwd": cwd.as_posix(), "stdout": stdout.as_posix(),
                  "stderr": stderr.as_posix(), "started_unix": time.time()}
         record["commands"].append(entry)
         write_json(out / "build-record.json", record)
         print(f"BUILD {ordinal:04d}: {' '.join(argv)}", flush=True)
         with stdout.open("wb") as so, stderr.open("wb") as se:
-            result = subprocess.run(argv, env=environment, stdout=so, stderr=se)
+            result = subprocess.run(argv, cwd=cwd, env=environment, stdout=so, stderr=se)
         entry.update(exit_code=result.returncode, ended_unix=time.time())
         write_json(out / "build-record.json", record)
         if result.returncode:
@@ -205,7 +207,7 @@ def main():
 
     try:
         required = ["make", "gcc", "g++", "dtc", "cpio", "tar", "xz", "bash", "bc",
-                    "bison", "flex", "perl", BARE_CC, LINUX_CC, BARE_OBJCOPY,
+                    "bison", "flex", "perl", "patch", BARE_CC, LINUX_CC, BARE_OBJCOPY,
                     "/usr/bin/riscv64-linux-gnu-objcopy",
                     "/usr/bin/riscv64-unknown-elf-ld", "/usr/bin/riscv64-linux-gnu-ld"]
         missing = [tool for tool in required if shutil.which(tool) is None]
@@ -223,6 +225,7 @@ def main():
         versions["dtc"] = run(["dtc", "--version"]).strip()
         versions["bison"] = run(["bison", "--version"]).splitlines()[0]
         versions["flex"] = run(["flex", "--version"]).strip()
+        versions["patch"] = run(["patch", "--version"]).splitlines()[0]
         for prefix in ["/usr/bin/riscv64-unknown-elf-", "/usr/bin/riscv64-linux-gnu-"]:
             for name in ["ld", "objcopy"]:
                 executable = prefix + name
@@ -240,6 +243,15 @@ def main():
             raise ValueError("Pinned Linux source archive SHA-256 mismatch")
         input_files = sorted(p for p in SOURCE.iterdir() if p.is_file())
         inputs = {p.as_posix(): sha256(p) for p in input_files}
+        for patch in facts["linux_patches"]:
+            patch_path = SOURCE / patch["path"]
+            if patch_path.as_posix() not in inputs:
+                raise ValueError(f"Linux patch is not a declared software input: {patch_path}")
+            if inputs[patch_path.as_posix()] != patch["sha256"]:
+                raise ValueError(f"Linux patch SHA-256 mismatch: {patch_path}")
+        record["sources"] = inputs
+        record["linux_patches"] = facts["linux_patches"]
+        write_json(out / "build-record.json", record)
         images = out / "images"
         images.mkdir()
         common = [f"-march={ISA}", "-mabi=lp64", "-mcmodel=medany", "-mno-relax",
@@ -258,6 +270,10 @@ def main():
         run(["tar", "--extract", "--xz", "--no-same-owner", "--no-same-permissions",
              "--file", archive, "--directory", out])
         linux = out / "linux-6.6.1"
+        for patch in facts["linux_patches"]:
+            patch_path = SOURCE / patch["path"]
+            run(["patch", "--batch", "--forward", "--fuzz=0", "-p1",
+                 "--input", os.path.relpath(patch_path, linux)], cwd=linux)
         kernel = out / "linux-build"
         kernel.mkdir()
         cpio_spec = (
