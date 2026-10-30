@@ -3,9 +3,11 @@
 
 Time here is not an instruction count. All inputs are frozen before execution,
 samples precede updates, and clock counters continue during resource stalls.
-These components are not yet a full-system execution engine: fetch/pipeline,
-cache/PTW/fabric scheduling and the final expectation-generation CLI remain
-unimplemented. Do not use this module's component checks as Linux acceptance.
+The clocked RAM/cache/PTW/fabric path lives in system_memory.py and resumable
+ISA execution in system_execution.py. These are not yet a full-system engine:
+core fetch/pipeline, maintenance, atomic/MMIO integration and the final
+expectation-generation CLI remain unimplemented. Do not use the bounded
+integration diagnostics as Linux acceptance.
 """
 
 from collections import deque
@@ -670,6 +672,7 @@ class AxiRam:
 if __name__ == "__main__":
     raise SystemExit(
         "Full-system expectation generation is not available yet. This module "
-        "implements clock/scenario/platform components, not the required independent "
-        "pipeline/cache/PTW scheduler. No expected UART stream has been generated."
+        "and system_memory/system_execution implement clocked platform and RAM "
+        "execution, not the required core pipeline/maintenance/atomic/MMIO "
+        "integration. No expected UART stream has been generated."
     )

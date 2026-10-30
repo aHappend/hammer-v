@@ -339,7 +339,8 @@ def main():
         "axi": axi_cases(images),
         "remaining": [
             "independent core fetch/pipeline/dependency/redirect/interrupt-boundary schedule",
-            "cache/TLB/PTW/fabric/maintenance and MMIO timing integration",
+            "core integration with the clocked RAM/cache/TLB/PTW/fabric path",
+            "maintenance, atomic and MMIO timing integration",
             "clock-scheduled architectural execution of complete Linux images",
             "final pre-DUT UART expectation generation and immutability receipt",
             "compiled seeded DUT integration and clean full RTL reproduction",

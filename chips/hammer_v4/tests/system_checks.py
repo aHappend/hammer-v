@@ -225,6 +225,14 @@ class Execution:
             "python3", "tests/system_harness_checks.py", "--manifest", manifest_relative.as_posix(),
             "--out", (out_relative / "harness-components").as_posix(),
         ], "harness-components")
+        self.run(ROOT, [
+            "python3", "tests/system_execution_checks.py",
+            "--out", (out_relative / "architectural-memory").as_posix(),
+        ], "architectural-memory-integration")
+        self.run(ROOT, [
+            "python3", "tests/system_memory_rtl_checks.py",
+            "--out", (out_relative / "memory-rtl").as_posix(),
+        ], "memory-path-rtl-integration")
         prepared = [
             self.prepare(ROOT, manifest_relative, out_relative / f"seed-{seed}", record)
             for seed, record in zip(SEEDS, self.receipt["runs"])
