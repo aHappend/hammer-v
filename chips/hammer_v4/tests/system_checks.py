@@ -242,7 +242,7 @@ class Execution:
             "python3", "tests/system_memory_rtl_checks.py",
             "--out", (out_relative / "memory-rtl").as_posix(),
         ], "memory-path-rtl-integration")
-        for case in ("fixed", "linux-fifo", "modem", "loopback-irqs"):
+        for case in ("fixed", "linux-fifo", "modem", "loopback-irqs", "inactive-parity"):
             self.run(ROOT, [
                 "python3", "tests/system_platform_checks.py", "--case", case,
                 "--out", (out_relative / f"uart-platform-{case}").as_posix(),

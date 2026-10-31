@@ -205,7 +205,7 @@ class Platform:
                                     lambda: self._uart(edge + 1, address, width,
                                                        store, value, finish))
                 return
-            if self.lcr & 63 != 3 or self.divisor not in (0, 1):
+            if self.lcr & 15 != 3 or self.divisor not in (0, 1):
                 raise NotImplementedError(
                     "Unsupported clocked UART transmit configuration; "
                     f"preceding_mmio={list(self.uart_transactions)}")

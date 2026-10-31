@@ -65,7 +65,8 @@ endmodule
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--case", choices=("fixed", "linux-fifo", "modem", "loopback-irqs"),
+    parser.add_argument("--case", choices=(
+        "fixed", "linux-fifo", "modem", "loopback-irqs", "inactive-parity"),
                         default="fixed")
     args = parser.parse_args()
     relative = Path(args.out)
@@ -119,6 +120,12 @@ def main():
             200: (2, False, 0), 208: (5, False, 0), 216: (0, False, 0),
             224: (2, False, 0), 232: (4, True, 0), 240: (0, True, 0x5A),
         }
+    elif args.case == "inactive-parity":
+        requests = {
+            8: (3, True, 0x13), 40: (0, True, 0xA5),
+            208: (3, True, 0x23), 248: (0, True, 0xA5),
+            416: (3, True, 0x33), 456: (0, True, 0xA5),
+        }
     replies = {}
     for edge, (offset, store, value) in requests.items():
         def sample(e=edge, o=offset, s=store, v=value):
@@ -166,6 +173,15 @@ def main():
     elif args.case == "loopback-irqs":
         if observed_reads != {48: 0x20, 200: 0xC4, 208: 0x61, 216: 0xA5, 224: 0xC1}:
             raise AssertionError(f"Loopback RX interrupt/data/acknowledgment: {observed_reads}")
+    elif args.case == "inactive-parity":
+        expected = [0, 1, 0, 1, 0, 0, 1, 0, 1, 1]
+        for accepted in (40, 248, 456):
+            bits = [int(rows[accepted + 9 + 16 * index].split()[6])
+                    for index in range(10)]
+            if bits != expected:
+                raise AssertionError("Inactive UART parity selection changed the 8N1 frame")
+        if platform.transmitter.completed != 3:
+            raise AssertionError("Missing complete inactive-parity UART frames")
     (out / "bridge.sv").write_text(BENCH, encoding="ascii")
     commands = [
         ["iverilog", "-g2012", "-Wall", "-s", "tb", "-o",
