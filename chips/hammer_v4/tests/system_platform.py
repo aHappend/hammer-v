@@ -42,6 +42,7 @@ class Platform:
         self.transactions = deque(maxlen=32)
         self.uart_transactions = deque(maxlen=32)
         self.uart_modes = deque(maxlen=64)
+        self.rx_history = deque(maxlen=128)
         self._last_uart_mode = None
         self.context = None
         self.modem_previous = self.modem_delta = 0
@@ -93,6 +94,12 @@ class Platform:
         return int(self.plic.irq[context])
 
     def _received(self, edge, byte, error):
+        self.rx_history.append({
+            "edge": edge, "event": "arrival", "byte": byte, "error": error,
+            "queued_before": len(self.rx), "capacity": self.transmitter.capacity,
+            "accepted": len(self.rx) < self.transmitter.capacity,
+            "lcr": self.lcr, "ier": self.ier, "fifo": self.fifo,
+        })
         if len(self.rx) < self.transmitter.capacity:
             self.rx.append((byte, 2 if error else 0))
         else:
@@ -249,6 +256,11 @@ class Platform:
                     self.ier = value & 15
                 elif offset == 2:
                     if value & 2 or bool(value & 1) != self.fifo:
+                        self.rx_history.append({
+                            "edge": edge, "event": "clear", "fcr": value,
+                            "discarded": list(self.rx), "overrun": self.overrun,
+                            "fifo_before": self.fifo,
+                        })
                         self.rx.clear()
                         self.overrun = False
                     if value & 4 or bool(value & 1) != self.fifo:
@@ -274,6 +286,10 @@ class Platform:
                 elif offset == 7:
                     self.scr = value
             elif offset == 0 and not dlab and self.rx:
+                self.rx_history.append({
+                    "edge": edge, "event": "rbr", "byte": self.rx[0][0],
+                    "queued_before": len(self.rx), "ier": self.ier,
+                })
                 self.rx.popleft()
                 self._reset_timeout(edge)
             elif offset == 2 and read & 15 == 2:
