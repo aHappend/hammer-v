@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preparation import source_hashes
 from system_checks import relative_path
 from system_oracle import BOUND, IMAGE_LAYOUT, Scenario, canonical_json, digest, load_images
-from system_prediction import Prediction
+from system_prediction import Prediction, write_expectations
 
 
 MODULES = frozenset((
@@ -200,6 +200,8 @@ def main():
     parser.add_argument("--resume")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--diagnostic-uart-bytes", type=int)
+    parser.add_argument("--finalize", action="store_true",
+                        help="write expectations only after genuine machine completion")
     args = parser.parse_args()
     if not 0 <= args.through < BOUND or args.diagnostic_uart_bytes is not None and \
             args.diagnostic_uart_bytes <= 0:
@@ -258,6 +260,14 @@ def main():
             stream.write(canonical_json(failure))
         raise
     record = write_checkpoint(prediction, checkpoint, binding, parent)
+    if args.finalize:
+        if prediction.final_edge is not None:
+            write_expectations(prediction, out, ROOT / manifest_path, ROOT / scenario_path)
+        elif args.through == BOUND - 1:
+            raise AssertionError(
+                f"Independent workload not complete at edge {BOUND - 1}; "
+                f"retired={prediction.core.machine.commits} uart_bytes={prediction.uart_bytes}"
+            )
     print(f"CHECKPOINT edge={record['edge']} retired={record['retired']} "
           f"events={record['events']} uart_bytes={record['uart_bytes']} "
           f"final_edge={record['final_edge']} seconds={time.monotonic() - began:.3f}",

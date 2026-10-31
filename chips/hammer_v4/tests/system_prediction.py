@@ -170,6 +170,8 @@ class Prediction:
             {"name": "plic_m", "start": 0x0C200004, "end": 0x0C200008},
             {"name": "plic_s", "start": 0x0C201004, "end": 0x0C201008},
         ]
+        self.physical_ranges = tuple(dict(item) for item in self.ranges)
+        self.peripheral_aliases = []
         self.coverage = Coverage(self.ranges)
         self.before = (0,) * 32
         self.events = self.event_bytes = self.uart_bytes = 0
@@ -192,6 +194,22 @@ class Prediction:
         self.event_file.write(line)
 
     def retire(self, edge, ordinal, commit, registers, memory):
+        if memory.valid and memory.physical_address is not None:
+            for item in self.physical_ranges:
+                if not item["start"] <= memory.physical_address < item["end"]:
+                    continue
+                start = memory.address - (memory.physical_address - item["start"])
+                alias = {"name": item["name"], "start": start,
+                         "end": start + item["end"] - item["start"]}
+                if alias not in self.ranges:
+                    if any(max(alias["start"], other["start"]) <
+                           min(alias["end"], other["end"]) for other in self.ranges):
+                        raise AssertionError("Independent peripheral aliases overlap")
+                    self.ranges.append(alias)
+                    self.peripheral_aliases.append({
+                        "edge": edge, "pc": commit.pc, "virtual": memory.address,
+                        "physical": memory.physical_address, "watch": alias.copy(),
+                    })
         self.coverage.retire(commit, registers, memory, self.before)
         self.before = registers
         if selected_retirement(ordinal, commit.instruction, commit.privilege,
@@ -285,6 +303,8 @@ class Prediction:
             "uart_bytes": self.uart_bytes, "coverage": self.coverage.counts,
             "uart_context": list(self.core.platform.uart_transactions),
             "uart_modes": list(self.core.platform.uart_modes),
+            "rx_history": list(self.core.platform.rx_history),
+            "peripheral_aliases": self.peripheral_aliases,
         }
 
 
@@ -381,6 +401,8 @@ def main(argv=None):
             recent=list(prediction.core.recent),
             uart_context=list(prediction.core.platform.uart_transactions),
             uart_modes=list(prediction.core.platform.uart_modes),
+            rx_history=list(prediction.core.platform.rx_history),
+            peripheral_aliases=prediction.peripheral_aliases,
         )
         raise
     finally:

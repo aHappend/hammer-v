@@ -540,6 +540,7 @@ class MemoryExecution:
         self.atomic_physical = Port(clock, 1, self._atomic_physical)
         self.reservation = None
         self.reservation_invalidations = set()
+        self.data_translation = None
 
     def invalidate_reservation(self, edge):
         if edge in self.reservation_invalidations:
@@ -637,6 +638,9 @@ class MemoryExecution:
             if reply.error or reply.page_fault:
                 finish(register_reply(reply))
                 return
+            if port == 1:
+                self.data_translation = (reply.edge, request.address, reply.data,
+                                         width, request.access)
             if not self.backing.present(port == 0, reply.data):
                 if port == 0:
                     finish(Reply(reply.edge + 1, error=True))

@@ -66,7 +66,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
     parser.add_argument("--case", choices=(
-        "fixed", "linux-fifo", "modem", "loopback-irqs", "inactive-parity"),
+        "fixed", "linux-fifo", "modem", "loopback-irqs", "inactive-parity",
+        "premature-rx"),
                         default="fixed")
     args = parser.parse_args()
     relative = Path(args.out)
@@ -126,21 +127,40 @@ def main():
             208: (3, True, 0x23), 248: (0, True, 0xA5),
             416: (3, True, 0x33), 456: (0, True, 0xA5),
         }
+    elif args.case == "premature-rx":
+        # Replay the independently established pre-input configuration and
+        # later FIFO-enable transition in compact, explicitly rebased time.
+        requests = {
+            8: (3, True, 3), 16: (2, True, 7), 24: (2, True, 0),
+            32: (4, True, 3), 40: (1, True, 0),
+            700: (5, False, 0), 10700: (5, False, 0),
+            20700: (5, False, 0), 20716: (2, False, 0),
+            20800: (2, True, 1), 20816: (2, True, 129),
+            20832: (5, False, 0), 20848: (0, False, 0),
+            20864: (2, False, 0), 20900: (1, True, 5),
+            28000: (2, False, 0), 28016: (5, False, 0),
+            28032: (0, False, 0), 28048: (0, False, 0),
+            28064: (0, False, 0), 28080: (2, False, 0),
+        }
     replies = {}
     for edge, (offset, store, value) in requests.items():
         def sample(e=edge, o=offset, s=store, v=value):
             platform._uart(e, 0x10010000 + o, 1, s, v,
                            lambda reply: replies.__setitem__(e, reply))
         clock.schedule(edge, Phase.SAMPLE, sample)
-    previous = 1
     rx_levels = {}
-    for bit, level in enumerate((0, 1, 0, 1, 0, 0, 1, 0, 1, 1)
-                                if args.case == "fixed" else ()):
-        edge = 500 + bit * 16
-        if level != previous:
-            platform.receiver.transition(edge, level)
-            rx_levels[edge] = level
-            previous = level
+    frames = [(500, 0xA5)] if args.case == "fixed" else []
+    if args.case == "premature-rx":
+        frames = [(500 + index * 10000, byte) for index, byte in enumerate(b"v4\n")] + \
+                 [(25000 + index * 1000, byte) for index, byte in enumerate(b"v4\n")]
+    previous = 1
+    for first, byte in frames:
+        for bit, level in enumerate((0, *((byte >> index) & 1 for index in range(8)), 1)):
+            edge = first + bit * 16
+            if level != previous:
+                platform.receiver.transition(edge, level)
+                rx_levels[edge] = level
+                previous = level
     rows = []
     rx = 1
     for edge in range(1500 if args.case == "fixed" else 50000):
@@ -182,6 +202,21 @@ def main():
                 raise AssertionError("Inactive UART parity selection changed the 8N1 frame")
         if platform.transmitter.completed != 3:
             raise AssertionError("Missing complete inactive-parity UART frames")
+    elif args.case == "premature-rx":
+        expected_reads = {
+            700: 0x61, 10700: 0x63, 20700: 0x63, 20716: 1,
+            20832: 0x60, 20848: 0, 20864: 0xC1,
+            28000: 0xCC, 28016: 0x61, 28032: 118, 28048: 52,
+            28064: 10, 28080: 0xC1,
+        }
+        arrivals = [item for item in platform.rx_history if item["event"] == "arrival"]
+        if observed_reads != expected_reads or \
+                [item["accepted"] for item in arrivals] != [True, False, False, True, True, True] or \
+                [(item["edge"], item["discarded"]) for item in platform.rx_history
+                 if item["event"] == "clear" and item["discarded"]] != [(20800, [(118, 0)])]:
+            raise AssertionError(f"Premature RX loss/FIFO clear/late input: {observed_reads}")
+        if rows[20716].split()[7] != "0" or rows[28000].split()[7] != "1":
+            raise AssertionError("Premature RX versus enabled FIFO interrupt distinction")
     (out / "bridge.sv").write_text(BENCH, encoding="ascii")
     commands = [
         ["iverilog", "-g2012", "-Wall", "-s", "tb", "-o",
@@ -208,6 +243,7 @@ def main():
         "compared_edges": len(rows), "compared_mmio": len(requests),
         "read_results": observed_reads,
         "uart_modes": list(platform.uart_modes),
+        "rx_history": list(platform.rx_history),
         "vectors_sha256": digest(out / "vectors.txt"),
     }))
     print(f"COMPARED_UART_PLATFORM edges={len(rows)} mmio={len(requests)}")

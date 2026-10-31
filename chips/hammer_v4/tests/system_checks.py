@@ -122,11 +122,7 @@ class Execution:
         record["images"] = {name: digest(root / manifest["images"][name]["path"])
                             for name, _, _ in images}
         oracle_relative = out_relative / "oracle"
-        oracle_start = self.run(root, [
-            "python3", "tests/system_oracle.py", "--manifest", manifest_relative.as_posix(),
-            "--scenario", (out_relative / "scenario.json").as_posix(),
-            "--out", oracle_relative.as_posix(),
-        ], f"seed-{seed}-{'clean-' if record['clean'] else ''}oracle")
+        oracle_start = self.predict(root, manifest_relative, out_relative, record)
         oracle = root / oracle_relative
         seal = freeze_expectations(root, manifest_relative, directory / "scenario.json", oracle)
         record.update(status="expectations_frozen", seal=seal,
@@ -136,14 +132,44 @@ class Execution:
         self.save()
         return root, manifest_relative, out_relative, seal, record
 
+    def predict(self, root, manifest_relative, out_relative, record):
+        from system_oracle import BOUND
+        # Fresh processes retain one continuous machine and clock. Completing
+        # a part never qualifies a boot or permits launching the DUT.
+        part_edges = 67108864
+        previous = None
+        for index, through in enumerate(range(part_edges - 1, BOUND, part_edges)):
+            checkpoint = out_relative / "checkpoint-images" / f"oracle-{index:02d}"
+            argv = [
+                "python3", "tests/system_checkpoint.py",
+                "--manifest", manifest_relative.as_posix(),
+                "--scenario", (out_relative / "scenario.json").as_posix(),
+                "--out", (out_relative / "oracle").as_posix(),
+                "--through", str(through), "--checkpoint", checkpoint.as_posix(),
+                "--finalize",
+            ]
+            if previous is not None:
+                argv += ["--resume", previous.as_posix()]
+            result = self.run(root, argv, f"seed-{record['seed']}-oracle-part-{index:02d}")
+            state = json.loads((root / checkpoint / "checkpoint.json").read_text())
+            if state["final_edge"] is not None:
+                if not (root / out_relative / "oracle/expectations.json").is_file():
+                    raise AssertionError("Completed oracle did not finalize expectations")
+                return result
+            if state["edge"] != through:
+                raise AssertionError("Incomplete oracle part did not reach its absolute edge")
+            previous = checkpoint
+        raise AssertionError("Independent workload exhausted its continuous edge bound")
+
     def compile(self, root, out_relative):
         obj_relative = out_relative / "compile-obj"
         binary_relative = out_relative / "system-probe"
         try:
             self.run(root, [
-                "verilator", "-O3", "--cc", "--exe", "--build", "-j", "4", "-Wno-fatal",
+                "verilator", "-O3", "--cc", "--exe", "--build", "--savable",
+                "-j", "4", "-Wno-fatal",
                 "--top-module", "hammer_v4_top", "--Mdir", obj_relative.as_posix(),
-                "-CFLAGS", "-O3 -std=c++17",
+                "-CFLAGS", "-O3 -std=c++17 -DHAMMER_SYSTEM_CHECKPOINT",
                 *[path.relative_to(root).as_posix()
                   for path in sorted((root / "rtl").glob("*.sv"))],
                 # Verilator's make runs in Mdir, so its C++ prerequisite is
@@ -166,7 +192,6 @@ class Execution:
         oracle = directory / "oracle"
         actual_relative = out_relative / "rtl"
         actual = root / actual_relative
-        actual.mkdir()
         unchanged_expectations(oracle, seal)
         if digest(directory / "scenario.json") != seal["scenario_sha256"] or \
                 digest(root / manifest_relative) != seal["manifest_sha256"]:
@@ -174,11 +199,23 @@ class Execution:
         manifest, _ = load_images(root, manifest_relative)
         record.update(status="simulating", dut_started_unix=time.time())
         self.save()
-        self.run(root, [
-            executable.as_posix(),
-            *[manifest["images"][name]["path"] for name, _, _ in IMAGE_LAYOUT],
-            (out_relative / "oracle").as_posix(), actual_relative.as_posix(),
-        ], f"seed-{record['seed']}-{'clean-' if record['clean'] else ''}rtl")
+        metadata = json.loads((oracle / "expectations.json").read_text())
+        first, previous, index = 0, None, 0
+        while first <= metadata["final_edge"]:
+            through = min(first + 67108864 - 1, metadata["final_edge"])
+            checkpoint = out_relative / "checkpoint-images" / f"rtl-{index:02d}"
+            argv = [
+                "python3", "tests/system_rtl_checkpoint.py",
+                "--binary", executable.as_posix(),
+                "--manifest", manifest_relative.as_posix(),
+                "--expectations", (out_relative / "oracle").as_posix(),
+                "--out", actual_relative.as_posix(), "--through", str(through),
+                "--checkpoint", checkpoint.as_posix(),
+            ]
+            if previous is not None:
+                argv += ["--resume", previous.as_posix()]
+            self.run(root, argv, f"seed-{record['seed']}-rtl-part-{index:02d}")
+            first, previous, index = through + 1, checkpoint, index + 1
         unchanged_expectations(oracle, seal)
         if digest(directory / "scenario.json") != seal["scenario_sha256"] or \
                 digest(root / manifest_relative) != seal["manifest_sha256"]:
@@ -235,6 +272,11 @@ class Execution:
             "--out", (out_relative / "oracle-checkpoints").as_posix(),
         ], "lossless-independent-checkpoint-controls")
         self.run(ROOT, [
+            "python3", "tests/system_rtl_checkpoint_checks.py",
+            "--manifest", manifest_relative.as_posix(),
+            "--out", (out_relative / "rtl-checkpoints").as_posix(),
+        ], "lossless-rtl-checkpoint-controls")
+        self.run(ROOT, [
             "python3", "tests/system_execution_checks.py",
             "--out", (out_relative / "architectural-memory").as_posix(),
         ], "architectural-memory-integration")
@@ -242,7 +284,8 @@ class Execution:
             "python3", "tests/system_memory_rtl_checks.py",
             "--out", (out_relative / "memory-rtl").as_posix(),
         ], "memory-path-rtl-integration")
-        for case in ("fixed", "linux-fifo", "modem", "loopback-irqs", "inactive-parity"):
+        for case in ("fixed", "linux-fifo", "modem", "loopback-irqs", "inactive-parity",
+                     "premature-rx"):
             self.run(ROOT, [
                 "python3", "tests/system_platform_checks.py", "--case", case,
                 "--out", (out_relative / f"uart-platform-{case}").as_posix(),

@@ -15,11 +15,13 @@ from system_oracle import canonical_json, digest
 
 
 class PrefixExecution(Execution):
-    def run(self, root, argv, name):
-        if argv[1] != "tests/system_oracle.py":
-            raise AssertionError("Incomplete prediction must not launch another command")
-        return super().run(root, [*argv, "--diagnostic-retirements", "1",
-                                  "--diagnostic-edge-limit", "200000"], name)
+    def predict(self, root, manifest_relative, out_relative, record):
+        return self.run(root, [
+            "python3", "tests/system_oracle.py", "--manifest", manifest_relative.as_posix(),
+            "--scenario", (out_relative / "scenario.json").as_posix(),
+            "--out", (out_relative / "oracle").as_posix(),
+            "--diagnostic-retirements", "1", "--diagnostic-edge-limit", "200000",
+        ], "deliberately-incomplete-oracle")
 
 
 def main():

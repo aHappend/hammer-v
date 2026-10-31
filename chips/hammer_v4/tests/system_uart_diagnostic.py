@@ -89,6 +89,7 @@ def main():
             "rx_history": list(platform.rx_history),
             "uart_context": list(platform.uart_transactions),
             "uart_modes": list(platform.uart_modes),
+            "peripheral_aliases": prediction.peripheral_aliases,
             "checkpoint": (checkpoint / "checkpoint.json").as_posix(),
             "checkpoint_sha256": digest(ROOT / checkpoint / "checkpoint.json"),
         })

@@ -36,6 +36,7 @@ class MemoryObservation:
     mask: int = 0
     wdata: int = 0
     rdata: int = 0
+    physical_address: int | None = None
 
 
 @dataclass
@@ -306,6 +307,16 @@ class Core:
                 (operand << (8 * (address & 7))) & MASK if store else 0,
                 value if not store else 0,
             )
+            if job.opcode in (3, 0x23):
+                translated = self.memory.data_translation
+                if translated is None or translated[0] > edge or \
+                        translated[1] != address or translated[3:] != (
+                            width, "store" if store else "load"):
+                    raise AssertionError("Retirement has no matching independent translation")
+                observation = MemoryObservation(
+                    observation.valid, observation.write, observation.address,
+                    observation.mask, observation.wdata, observation.rdata, translated[2],
+                )
         self.retirement(edge, machine.commits, result, tuple(machine.registers), observation)
         self.recent.append((edge, machine.commits, result.pc, result.instruction))
         return False
