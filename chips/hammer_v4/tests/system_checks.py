@@ -115,7 +115,7 @@ class Execution:
         directory = root / out_relative
         directory.mkdir(parents=True, exist_ok=False)
         # Fixed released-edge stimuli, independent of all DUT observations.
-        scenario = Scenario(seed, 100000, (1 << 28) + seed * 1000,
+        scenario = Scenario(seed, 100000, (1 << 30) + seed * 1000,
                             tuple((name, manifest["images"][name]["sha256"])
                                   for name, _, _ in IMAGE_LAYOUT))
         record["scenario_sha256"] = scenario.freeze(directory)
