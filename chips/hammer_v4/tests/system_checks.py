@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Full seeded Linux comparison and clean RTL reproduction.
 
-No transcript-only, old-receipt or untimed-model fallback exists. The independent
-oracle must finish and all expected files must be sealed before DUT execution.
-Until the scheduler can generate those complete expectations this check fails
-at oracle generation, before compiling or launching an expensive boot.
+No transcript-only, old-receipt or untimed-model fallback exists. Cold parts
+preserve the complete machine and continuous bound; none qualifies a boot.
+The independent oracle must finish and all expected files must be sealed before
+any DUT execution. The aggregate still runs every required stage and seed.
 """
 
 import argparse

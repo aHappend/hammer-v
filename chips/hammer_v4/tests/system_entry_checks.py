@@ -24,10 +24,18 @@ class PrefixExecution(Execution):
         ], "deliberately-incomplete-oracle")
 
 
+class CheckpointPrefixExecution(Execution):
+    def run(self, root, argv, name):
+        if argv[1] != "tests/system_checkpoint.py":
+            raise AssertionError("Incomplete cold prediction must not launch another command")
+        return super().run(root, [*argv, "--diagnostic-uart-bytes", "112"], name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
     parser.add_argument("--manifest", required=True)
+    parser.add_argument("--checkpoint", action="store_true")
     args = parser.parse_args()
     relative = relative_path(ROOT, args.out, output=True)
     manifest = relative_path(ROOT, args.manifest)
@@ -35,8 +43,11 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     canonical = ROOT / "evidence/uart_linux_boot.log"
     old_canonical = digest(canonical) if canonical.is_file() else None
-    execution = PrefixExecution(out, ["python3", "tests/system_entry_checks.py",
-                                      "--out", args.out, "--manifest", args.manifest])
+    execution_type = CheckpointPrefixExecution if args.checkpoint else PrefixExecution
+    execution = execution_type(out, [
+        "python3", "tests/system_entry_checks.py", "--out", args.out, "--manifest", args.manifest,
+        *(["--checkpoint"] if args.checkpoint else []),
+    ])
     failure = None
     try:
         execution.prepare(ROOT, manifest, relative / "seed-11", execution.receipt["runs"][0])
@@ -54,7 +65,8 @@ def main():
     if failure is None:
         raise AssertionError("An incomplete prediction was accepted")
     commands = execution.receipt["commands"]
-    if len(commands) != 1 or commands[0]["argv"][1] != "tests/system_oracle.py" or \
+    producer = "tests/system_checkpoint.py" if args.checkpoint else "tests/system_oracle.py"
+    if len(commands) != 1 or commands[0]["argv"][1] != producer or \
             commands[0]["exit_code"] != 0 or commands[0]["ended_unix"] is None:
         raise AssertionError("Expected one settled prefix producer, not a tool failure")
     metadata = json.loads((out / "seed-11/oracle/expectations.json").read_text())
@@ -76,6 +88,7 @@ def main():
                                     .relative_to(ROOT).as_posix(),
         "all_four_required_boot_statuses": statuses,
         "dut_launched": False, "canonical_log_changed": False,
+        "cold_checkpoint_orchestration": args.checkpoint,
     }))
     print("COMPARED incomplete oracle rejected before DUT compilation; "
           "all four required boots retained as failed/not_run, not accepted")

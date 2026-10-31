@@ -110,6 +110,10 @@ def main():
         "independent-clocked-complete-linux"
     if metadata["scope"] != scope or metadata["bound"] != BOUND:
         raise ValueError("Wrong expectation scope or continuous bound")
+    if metadata["manifest_sha256"] != digest(ROOT / manifest_path) or metadata["images"] != {
+        name: manifest["images"][name]["sha256"] for name, _, _ in IMAGE_LAYOUT
+    }:
+        raise ValueError("RTL checkpoint expectation/software identity differs")
     if not args.diagnostic_prefix:
         from system_protocol import unchanged_expectations
         seal = json.loads((expected / "launch-seal.json").read_text())

@@ -23,13 +23,14 @@ def main():
     parser.add_argument("--out", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--retirements", type=int, default=12000)
+    parser.add_argument("--seed", type=int, choices=(11, 29, 47), default=11)
     args = parser.parse_args()
     relative = relative_path(ROOT, args.out, output=True)
     manifest_path = relative_path(ROOT, args.manifest)
     out = ROOT / relative
     out.mkdir(parents=True, exist_ok=False)
     manifest, _ = load_images(ROOT, manifest_path)
-    scenario = Scenario(11, 100000, (1 << 28) + 11000,
+    scenario = Scenario(args.seed, 100000, (1 << 28) + args.seed * 1000,
                         tuple((name, manifest["images"][name]["sha256"])
                               for name, _, _ in IMAGE_LAYOUT))
     scenario.freeze(out)
