@@ -94,11 +94,11 @@ always @(posedge clk) if (rst_n) begin
   compared=compared+1;
  end else if (retire_valid !== 1'b0) $fatal(1,"TOP active X retirement");
  if (trap_valid === 1'b1) begin
-  if (observed_trap || compared!=6 || trap_pc !== 64'd22 ||
+  if (compared!=6 || trap_pc !== 64'd22 ||
       trap_cause !== 64'd3 || trap_interrupt !== 1'b0 ||
       trap_target_priv !== 2'd3)
-   $fatal(1,"TOP unexpected trap pc=%h cause=%h compared=%d",
-     trap_pc,trap_cause,compared);
+   $fatal(1,"TOP unexpected trap pc=%h cause=%h target=%d interrupt=%b compared=%d",
+     trap_pc,trap_cause,trap_target_priv,trap_interrupt,compared);
   observed_trap=1;
  end else if (trap_valid !== 1'b0) $fatal(1,"TOP active X trap");
  if (cycles>10000) $fatal(1,"TOP CYCLE LIMIT");

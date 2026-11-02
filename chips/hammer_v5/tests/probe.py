@@ -14,6 +14,8 @@ from structure import synthesis_probe
 from mutations import numerical_mutations
 from plic import plic_probe
 from integration import top_smoke
+from memory import l2_probe
+from vector import vector_probe
 
 
 LEAF_TB = r"""
@@ -229,7 +231,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe",
                         choices=("numerical", "numerical-mutations", "compressed",
-                                 "software", "synthesis-minimum", "plic", "top-smoke"),
+                                 "software", "synthesis-minimum", "plic", "top-smoke",
+                                 "l2", "vector"),
                         required=True)
     parser.add_argument("--repair-of")
     args = parser.parse_args()
@@ -248,6 +251,10 @@ def main():
             plic_probe(ev)
         elif args.probe == "top-smoke":
             top_smoke(ev)
+        elif args.probe == "l2":
+            l2_probe(ev)
+        elif args.probe == "vector":
+            vector_probe(ev)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,
