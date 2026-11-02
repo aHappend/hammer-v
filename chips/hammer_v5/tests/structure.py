@@ -21,6 +21,7 @@ def assert_structure(path):
     modules = netlist["modules"]
     visited = set()
     states = {}
+    initializations = {}
     pending = ["hammer_v5_top"]
     while pending:
         name = pending.pop()
@@ -33,6 +34,14 @@ def assert_structure(path):
         for flag in ("blackbox", "whitebox"):
             if int(attributes.get(flag, "0"), 2):
                 raise AssertionError(f"{name}: {flag} substitute")
+        for signal, net in module.get("netnames", {}).items():
+            initial = net.get("attributes", {}).get("init")
+            if initial is not None:
+                if any(bit not in "01" for bit in initial):
+                    raise AssertionError(f"{name}.{signal}: undefined power-up state")
+                if signal.endswith(".initialized") and any(bit != "0" for bit in initial):
+                    raise AssertionError(f"{name}.{signal}: untouched RAM exposed at power-up")
+                initializations[f"{name}.{signal}"] = initial
         cells = module.get("cells", {})
         for child, expected in REQUIRED.get(human, {}).items():
             matches = [cell for key, cell in cells.items()
@@ -70,7 +79,8 @@ def assert_structure(path):
             raise AssertionError(f"{required}: no substantive retained sequential state")
     if sum(row["memory_bits"] for row in states.values()) == 0:
         raise AssertionError("integrated hierarchy lost all RAM storage")
-    return {"reachable_modules": len(visited), "retained_state": states}
+    return {"reachable_modules": len(visited), "retained_state": states,
+            "constant_power_up_state": initializations}
 
 
 def synthesis_probe(ev, sources, parameters):
@@ -81,8 +91,8 @@ def synthesis_probe(ev, sources, parameters):
         "read_verilog -sv " + " ".join(ev.relative(p) for p in sources) + "\n" +
         "hierarchy -check -top hammer_v5_top " +
         " ".join(f"-chparam {name} {value}" for name, value in parameters.items()) + "\n" +
-        "proc\nopt_expr\nopt_clean\ncheck -assert -noinit\n"
-        "memory -nomap\nopt_clean\ncheck -assert -noinit\n"
+        "proc\nopt_expr\nopt_clean\ncheck -assert\n"
+        "memory -nomap\nopt_clean\ncheck -assert\n"
         "stat\nwrite_json " + ev.relative(output) + "\n")
     from evidence import digest
     ev.record["parameters"] = parameters

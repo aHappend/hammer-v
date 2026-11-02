@@ -20,15 +20,13 @@ not been built or booted by Designer. `tests/*.py` belongs to independent
 Verifier and is not authored by Designer. Independent software builds and
 functional checks follow this handoff and remain required for acceptance.
 
-Repository intake supplied no linked source index. The requested
-`design/GENERATIONAL_HANDOFF.md` was absent at inspection. No parent timing/PPA
-values are invented. The inspected V4 boot ROM transfers control to external
-memory; it is not OpenSBI/Linux. No genuine local OpenSBI, Linux, initramfs,
-image/configuration manifests or minimal userland sources were supplied.
-Designer subsequently obtained the two genuine public release archives at the
-URLs/checksums pinned in software/boot_manifest.json. This does not establish a
-parent or V5 boot result. The authentic generational handoff remains an open
-input; no timing/PPA values or successful baseline evidence substitute for it.
+Repository intake supplied no linked source index. The now-supplied
+`design/GENERATIONAL_HANDOFF.md` has been read; it reports N/A for parent
+Quartus STA, timing/PPA and physical HIL, not parent signoff. No parent values
+are invented. The inspected V4 boot ROM transfers control to external memory;
+it is not OpenSBI/Linux. The genuine release archives and software inputs are
+now present at the URLs/checksums pinned in `software/boot_manifest.json`.
+Their presence does not establish a parent or V5 boot result.
 
 ## Ancestry and integration plan
 
@@ -70,6 +68,11 @@ halfword address indexing and expanded instruction decoding with actual byte
 length. Branch targets reject bit zero only; JALR clears bit zero. The V5 CSR
 preserves EPC bit one. Faulting cross-page fetches retain the original PC and
 the failing halfword VA supplied by the fetch leaf.
+
+The queue-head transport uses an explicit 262-bit vector for Yosys 0.33 parser
+compatibility: 128 PC/prediction bits, 64 expanded/raw instruction bits, three
+length bits, three fault/classification bits and 64 tval bits. The packed
+field order, queue storage and handshake behavior are unchanged.
 
 Custom instructions are serializing decode operations: they advance only after
 older execute/memory/writeback stages drain, block younger operations, issue from
@@ -136,6 +139,15 @@ the parent's retention of initialized code/data across reset. Absent upper
 instruction words remain padded
 zero without out-of-range bank access. The maximum added initialization state
 is IMEM_WORDS+DMEM_WORDS bits; its fit/timing remains a physical-check obligation.
+
+The generational handoff requires explicit unpacked byte-lane storage for
+byte-enabled memories of at least 2 KiB. V5 local RAM, L1 data and each L2 way
+already use separate generated 8-bit arrays, with `ramstyle = "M20K"` and
+`nomem2reg`, synchronous reads/writes and no asynchronous reset on the RAM
+ports. Generated lane arrays implement the same byte-lane separation as the
+handoff's named `mem_b0..bN` example. Actual M20K inference, fit, runtime and
+100 MHz timing remain obligations of fresh native Quartus checks; neither the
+guidance nor these attributes proves them.
 
 ## Interfaces and cycle boundaries
 
@@ -375,8 +387,8 @@ syntax/elaboration check, retained in a fresh project-relative preparation
 directory. Independent Verifier must author and execute every functional,
 reference, defect-sensitivity and synthesis suite from SPEC.md after integrated
 design handoff. The shared runtime must then execute timing and hardware gates.
-The missing authentic generational handoff and genuine software inputs do not
-justify a simulated banner, bare-metal replacement or passing skipped check.
+The supplied generational handoff and genuine software inputs do not justify
+a simulated banner, bare-metal replacement or passing skipped check.
 
 Actual Designer diagnostics:
 
@@ -386,6 +398,18 @@ Actual Designer diagnostics:
 | evidence/preparation/v5-integrated-syntax-20261102T175517006458Z/receipt.json | Icarus 12.0 default integrated top elaboration exited zero before V5 backing RAM visibility changes |
 | evidence/preparation/v5-ram-visibility-syntax-20261102T175919706197Z/receipt.json | Icarus 12.0, `iverilog -g2012 -t null -s hammer_v5_top rtl/*.sv`, final default integrated RTL elaboration exited zero |
 | evidence/preparation/v5-software-syntax-20261102T181354001989Z/receipt.json | GNU RISC-V unknown-elf GCC 13.2.0, `-fsyntax-only`, /init C and its three included headers exited zero before subsequent fault-sentinel and per-cell UART-result refinements; no object, binary or execution |
+
+Retained independent failure
+`evidence/preparation/v5-synthesis-minimum-20261102T182910707878Z/receipt.json`
+records Yosys 0.33 rejecting `$bits(fetch_t)` at the queue-head declaration.
+The explicit-width repair above requires an independent fresh rerun; no
+synthesis success is claimed. The inherited PLIC enable-array range warning
+must separately be classified for reachability by Verifier; its RTL is
+unchanged from the parent.
+
+The OpenSBI import failure and source repair are documented in
+`design/BOOT_SOFTWARE.md`. Original failed receipts, reset-release and
+mutant-classification failures and their linked repairs remain unchanged.
 
 The RTL static receipts retain exact expanded argv, source snapshots/hashes,
 reference hashes, tool version, timing, exit and raw stdout/stderr. The C receipt

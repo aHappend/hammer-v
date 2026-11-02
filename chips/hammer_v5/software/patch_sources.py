@@ -13,6 +13,14 @@ def replace(path, old, new):
 
 
 def apply(linux, opensbi, inputs):
+    for entrypoint in ("defconfig.py", "genconfig.py"):
+        replace(opensbi / "scripts/Kconfiglib" / entrypoint,
+                "import kconfiglib",
+                "from pathlib import Path\n"
+                + ("import sys\n" if entrypoint == "defconfig.py" else "")
+                + "\nsys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+                "\nimport kconfiglib")
+
     k = linux / "arch/riscv"
     replace(k / "Kconfig.socs", 'menu "SoC selection"',
             'menu "SoC selection"\n\nconfig SOC_HAMMER_V5\n'

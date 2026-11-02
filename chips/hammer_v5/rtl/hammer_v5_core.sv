@@ -148,7 +148,7 @@ module hammer_v5_core #(
         logic [63:0] tval;
     } fetch_t;
     fetch_t fetch_queue [0:3];
-    wire [$bits(fetch_t)-1:0] queue_head_bits;
+    wire [261:0] queue_head_bits;
     fetch_t queue_head;
     reg [1:0] queue_read, queue_write;
     reg [2:0] queue_count;
