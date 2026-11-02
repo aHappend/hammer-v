@@ -20,6 +20,7 @@ from boot import boot_probe, firmware_diagnosis
 from counters import counter_probe
 from defects import remaining_mutations
 from parameters import parameter_probe
+from architectural import architectural_probe
 
 
 LEAF_TB = r"""
@@ -238,11 +239,13 @@ def main():
                                  "software", "synthesis-minimum", "plic", "top-smoke",
                                  "l2", "vector", "linux-boot", "counters",
                                  "firmware-layout", "synthesis-default", "seed-matrix",
-                                 "architectural-mutations", "parameters"),
+                                 "architectural-mutations", "parameters", "isa-matrix"),
                         required=True)
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
     parser.add_argument("--cycles", type=int, default=100000000)
+    parser.add_argument("--goal", choices=("linux", "userland"), default="linux")
+    parser.add_argument("--prefetch", type=int, choices=(0, 1), default=1)
     args = parser.parse_args()
     selectors = ["rtl/*.sv", "tests/*.py", "software/*", "design/*.md"]
     ev = Evidence(f"v5-{args.probe}", selectors, args.repair_of)
@@ -266,7 +269,7 @@ def main():
         elif args.probe == "linux-boot":
             if not args.images:
                 raise ValueError("--images must identify a source-matched successful build")
-            boot_probe(ev, args.images, args.cycles)
+            boot_probe(ev, args.images, args.cycles, args.goal, args.prefetch)
         elif args.probe == "counters":
             counter_probe(ev)
         elif args.probe == "firmware-layout":
@@ -288,6 +291,8 @@ def main():
             remaining_mutations(ev)
         elif args.probe == "parameters":
             parameter_probe(ev)
+        elif args.probe == "isa-matrix":
+            architectural_probe(ev)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,

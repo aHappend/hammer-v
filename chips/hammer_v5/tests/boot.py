@@ -312,18 +312,20 @@ __INITIALIZE_INPUTS__
    if(context.gotFinish()) throw std::runtime_error("RTL terminated before boot goal");
   }
   uart.flush(); milestones.flush();
-  for(const auto &r:tail) diagnostic<<"cycle="<<r.cycle<<" pc="<<std::hex<<r.pc
-   <<" next="<<r.next<<" insn="<<r.insn<<" rd="<<r.rd<<" data="<<r.data
-   <<" priv="<<r.priv<<std::dec<<"\n";
   std::ofstream result("boot-observed.json");
   result<<"{\"cycles\":"<<cycles<<",\"retired\":"<<retired<<",\"dram_reads\":"<<reads
    <<",\"dram_writes\":"<<writes<<",\"s_retired\":"<<sretired<<",\"u_retired\":"<<uretired
    <<",\"high_va_retired\":"<<translated<<",\"u_custom\":"<<custom
-   <<",\"traps\":"<<traps<<",\"goal_reached\":"<<(done?"true":"false")<<"}\n";
+   <<",\"traps\":"<<traps<<",\"integer_checks\":"<<isa.checked
+   <<",\"m_mode_load_checks\":"<<isa.loads<<",\"m_mode_store_checks\":"<<isa.stores
+   <<",\"goal_reached\":"<<(done?"true":"false")<<"}\n";
   if(!done) throw std::runtime_error("bounded RTL boot goal not reached");
   if(!sretired) throw std::runtime_error("banner without actual S-mode retirement");
   if(goal=="userland" && (!uretired || !custom || !translated))
    throw std::runtime_error("userland marker without public architectural milestones");
+  for(const auto &r:tail) diagnostic<<"cycle="<<r.cycle<<" pc="<<std::hex<<r.pc
+   <<" next="<<r.next<<" insn="<<r.insn<<" rd="<<r.rd<<" data="<<r.data
+   <<" priv="<<r.priv<<std::dec<<"\n";
   std::cout<<"SUMMARY genuine RTL boot goal="<<goal<<" cycles="<<cycles
    <<" retired="<<retired<<std::endl;
   d.final(); return 0;
@@ -339,8 +341,7 @@ __INITIALIZE_INPUTS__
 """
 
 
-def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
-    directory, manifest = checked_images(ev, images)
+def compile_model(ev, text=HARNESS, parameters=None):
     interface = ports(ROOT / "rtl/hammer_v5_top.sv")
     initialization = "\n".join(
         f"  d.{name}=0;" for direction, _, name in interface if direction == "input")
@@ -348,15 +349,10 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
     from rv64 import CPP, decode_image
     table = ev.directory / "decode.bin"
     decode_image(table)
-    harness.write_text(HARNESS.replace("__INITIALIZE_INPUTS__", initialization)
+    harness.write_text(text.replace("__INITIALIZE_INPUTS__", initialization)
                       .replace("__ISA_ORACLE__", CPP))
     ev.record.setdefault("generated_sha256", {})[ev.relative(table)] = digest(table)
     ev.record.setdefault("generated_sha256", {})[ev.relative(harness)] = digest(harness)
-    ev.record["scope"] = {
-        "top": "hammer_v5_top", "public_pin_only": True, "goal": goal,
-        "cycle_bound": cycles, "prefetch": prefetch,
-        "not_full_linux_acceptance": goal != "userland",
-    }
     ev.version("verilator")
     ev.version("make")
     ev.version("g++")
@@ -364,10 +360,23 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
     objects.mkdir()
     sources = sorted((ROOT / "rtl").glob("*.sv"))
     ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
-            "--top-module", "hammer_v5_top", "-GPREFETCH_ENABLE=" + str(prefetch),
+            "-CFLAGS", "-O3",
+            "--top-module", "hammer_v5_top",
+            *[f"-G{name}={value}" for name, value in (parameters or {}).items()],
             "--Mdir", ".", "-o", "boot-sim",
             "../boot.cpp", *[os.path.relpath(p, objects) for p in sources]],
            "boot-compile", cwd=objects)
+    return objects
+
+
+def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
+    directory, _ = checked_images(ev, images)
+    ev.record["scope"] = {
+        "top": "hammer_v5_top", "public_pin_only": True, "goal": goal,
+        "cycle_bound": cycles, "prefetch": prefetch,
+        "not_full_linux_acceptance": goal != "userland",
+    }
+    objects = compile_model(ev, parameters={"PREFETCH_ENABLE": prefetch})
     try:
         ev.run(["./compile-obj/boot-sim",
                 os.path.relpath(directory / "opensbi.bin", ev.directory),
