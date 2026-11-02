@@ -21,11 +21,16 @@ def digest(path):
 
 
 class Evidence:
-    def __init__(self, name, selectors, repair_of=None):
-        self.directory = ROOT / "evidence" / "preparation" / f"{name}-{stamp()}"
+    def __init__(self, name, selectors, repair_of=None, preparation=True):
+        base = ROOT / "evidence"
+        if preparation:
+            base = base / "preparation"
+        self.directory = base / f"{name}-{stamp()}"
         self.directory.mkdir(parents=True, exist_ok=False)
         self.record = {
-            "schema": 1, "kind": "verifier-preparation", "start": stamp(),
+            "schema": 1,
+            "kind": "verifier-preparation" if preparation else "l1-verification",
+            "start": stamp(),
             "cwd": ".", "sources_sha256": {}, "commands": [], "tools": {},
             "exit": None,
         }

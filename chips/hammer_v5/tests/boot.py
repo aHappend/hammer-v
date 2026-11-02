@@ -406,7 +406,7 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
                 os.path.relpath(directory / "opensbi.bin", ev.directory),
                 os.path.relpath(directory / "Image", ev.directory),
                 os.path.relpath(directory / "hammer_v5.dtb", ev.directory),
-                str(cycles), goal], "boot-run", cwd=ev.directory)
+                str(cycles), goal], "boot-run", cwd=ev.directory, timeout_s=None)
         ev.record["observed"] = json.loads((ev.directory / "boot-observed.json").read_text())
         if goal == "userland":
             from userland import compare_userland

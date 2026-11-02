@@ -26,6 +26,7 @@ from prefetch import prefetch_probe
 from parser_check import parser_probe
 from mmu import mmu_probe
 from tlb import tlb_probe
+from local import local_probe
 
 
 LEAF_TB = r"""
@@ -245,7 +246,7 @@ def main():
                                  "l2", "vector", "linux-boot", "counters",
                                  "firmware-layout", "synthesis-default", "seed-matrix",
                                  "architectural-mutations", "parameters", "isa-matrix", "fetch",
-                                 "prefetch", "user-parser", "mmu", "tlb"),
+                                 "prefetch", "user-parser", "mmu", "tlb", "local-memory"),
                         required=True)
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
@@ -254,7 +255,8 @@ def main():
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=1)
     parser.add_argument("--compact", action="store_true")
     args = parser.parse_args()
-    selectors = ["rtl/*.sv", "tests/*.py", "software/*", "design/*.md"]
+    selectors = ["rtl/*.sv", "tests/*.py", "software/*", "design/*.md",
+                 "hammer_v4_reference/rtl/hammer_v4_top.sv"]
     ev = Evidence(f"v5-{args.probe}", selectors, args.repair_of)
     ev.record["argv"] = ["python3", "tests/probe.py", *sys.argv[1:]]
     ev.version("python3")
@@ -313,6 +315,8 @@ def main():
             mmu_probe(ev)
         elif args.probe == "tlb":
             tlb_probe(ev)
+        elif args.probe == "local-memory":
+            local_probe(ev)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,
