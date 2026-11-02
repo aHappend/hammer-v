@@ -89,6 +89,17 @@ def program(seed, count=1000):
         for operation in (0, 1, 4, 8, 12, 16, 20, 24, 28, 2, 3):
             emit((operation << 27) | ((0 if operation == 2 else 9) << 20) |
                  (8 << 15) | (width << 12) | (10 << 7) | 0x2F)
+    for index in range(8):
+        constant(9, rng.getrandbits(64))
+        emit(sword(8, 9, 3, index * 8))
+        emit(iword(0x13, 5, 0, 8, index * 8))
+        emit((5 << 15) | (index << 7) | 0x0B)
+    for index in range(8):
+        for operation in (1, 2, 3):
+            emit(((9 if operation == 3 else 7 - index) << 20) |
+                 (index << 15) | (operation << 12) | (10 << 7) | 0x0B)
+        emit(iword(0x13, 5, 0, 8, 128 + index * 8))
+        emit((index << 20) | (5 << 15) | (4 << 12) | 0x0B)
     end = base + len(code)
     emit(0x9002, 2)
     return code, families, end
@@ -131,9 +142,19 @@ def architectural_probe(ev, count=1000, seeds=(17, 43, 89), compact_only=False):
                         "10000000", "isa"], f"isa-{geometry}-{seed}", cwd=ev.directory)
                 import json
                 result = json.loads((ev.directory / "boot-observed.json").read_text())
+                from reference import bf16_dot
+                bf_compared = 0
+                for line in (ev.directory / "bf16-observed.txt").read_text().splitlines():
+                    a, b, actual = (int(field, 16) for field in line.split())
+                    if bf16_dot(a, b) != actual:
+                        raise AssertionError("integrated BF16 disagrees with exact rational reference")
+                    bf_compared += 1
+                if bf_compared != 8:
+                    raise AssertionError("integrated BF16 vector comparisons missing")
                 observations.append({"parameters": parameters, "seed": seed,
                                      "families": [name for _, _, name in families],
-                                     "random_arithmetic": count, "observed": result})
+                                     "random_arithmetic": count, "observed": result,
+                                     "bf16_public_compared": bf_compared})
                 ev.record["architectural_observed"] = observations
                 ev.save()
             finally:
@@ -142,7 +163,9 @@ def architectural_probe(ev, count=1000, seeds=(17, 43, 89), compact_only=False):
             destination = ev.directory / f"isa-output-{geometry}-{seed}-{digest(image)[:16]}"
             destination.mkdir()
             for name in ("boot.cpp", "decode.bin", "uart.txt", "milestones.txt",
-                         "retirement-tail.txt", "boot-observed.json"):
+                         "retirement-tail.txt", "boot-observed.json", "counter-reads.txt",
+                         "uart-events.txt", "user-ecalls.txt", "user-pids.txt",
+                         "bf16-observed.txt"):
                 (ev.directory / name).rename(destination / name)
             ev.record["generated_sha256"].pop(ev.relative(ev.directory / "boot.cpp"), None)
             ev.record["generated_sha256"].pop(ev.relative(ev.directory / "decode.bin"), None)

@@ -142,6 +142,7 @@ HARNESS = r"""
 #include <string>
 #include <unordered_map>
 #include <climits>
+#include <set>
 
 using Page = std::array<uint8_t,4096>;
 struct Memory {
@@ -180,7 +181,12 @@ int main(int argc,char **argv) {
  uint64_t cycles=0,retired=0,reads=0,writes=0,sretired=0,uretired=0;
  uint64_t translated=0,custom=0,traps=0;
  std::ofstream uart("uart.txt",std::ios::binary), milestones("milestones.txt"),
-               diagnostic("retirement-tail.txt");
+               diagnostic("retirement-tail.txt"), counters("counter-reads.txt"),
+               uart_events("uart-events.txt"), ecalls("user-ecalls.txt"),
+               pids("user-pids.txt");
+ std::set<uint64_t> observed_pids;
+ bool getpid_pending=false;
+ uint64_t getpid_return_pc=0;
  try {
   if(argc!=6) throw std::runtime_error("usage: sim firmware kernel dtb cycles goal");
   memory.load(argv[1],0x80000000); memory.load(argv[2],0x80200000);
@@ -226,7 +232,19 @@ __INITIALIZE_INPUTS__
     throw std::runtime_error("AXI read geometry");
    if(!reset && d.retire_valid) {
     retired++;
+    if(d.retire_priv==0 && getpid_pending && d.retire_pc==getpid_return_pc) {
+     if(!isa.x[10] || isa.x[10]>0x100000ULL)
+      throw std::runtime_error("invalid actual U getpid return");
+     observed_pids.insert(isa.x[10]);
+     pids<<cycles<<" "<<isa.x[10]<<"\n"; getpid_pending=false;
+    }
     isa.compare(d,cycles);
+    if(d.retire_priv==0 && (d.retire_insn&127)==0x73 &&
+       ((d.retire_insn>>12)&7) && d.retire_rd_we) {
+     unsigned address=d.retire_insn>>20;
+     if(address>=0xc00 && address<=0xc06)
+      counters<<cycles<<" "<<std::hex<<address<<" "<<d.retire_rd_data<<std::dec<<"\n";
+    }
     tail.push_back({cycles,d.retire_pc,d.retire_next_pc,d.retire_rd_data,
                     d.retire_insn,d.retire_rd,d.retire_priv});
     if(tail.size()>32) tail.pop_front();
@@ -251,6 +269,10 @@ __INITIALIZE_INPUTS__
    }
    if(!reset && d.trap_valid) {
     traps++;
+    if(!d.trap_interrupt && d.trap_cause==8) {
+     ecalls<<cycles<<" "<<isa.x[17]<<" "<<isa.x[10]<<"\n";
+     if(isa.x[17]==172) {getpid_pending=true;getpid_return_pc=d.trap_pc+4;}
+    }
     if(traps<=16) milestones<<"TRAP cycle="<<cycles<<" pc="<<std::hex<<d.trap_pc
      <<" cause="<<d.trap_cause<<" tval="<<d.trap_tval<<std::dec<<"\n";
    }
@@ -291,6 +313,7 @@ __INITIALIZE_INPUTS__
      if(!tx) throw std::runtime_error("UART stop-bit error");
      char c=char(uart_data); uart.put(c); line+=c; uart_state=0;
      if(c=='\n') {
+      uart_events<<cycles<<" "<<line;
       if(line.find("HV5 FAIL")!=std::string::npos ||
          line.find("Kernel panic")!=std::string::npos)
        throw std::runtime_error("genuine software reported failure: "+line);
@@ -318,6 +341,7 @@ __INITIALIZE_INPUTS__
    <<",\"high_va_retired\":"<<translated<<",\"u_custom\":"<<custom
    <<",\"traps\":"<<traps<<",\"integer_checks\":"<<isa.checked
    <<",\"m_mode_load_checks\":"<<isa.loads<<",\"m_mode_store_checks\":"<<isa.stores
+   <<",\"user_pid_count\":"<<observed_pids.size()
    <<",\"goal_reached\":"<<(done?"true":"false")<<"}\n";
   if(!done) throw std::runtime_error("bounded RTL boot goal not reached");
   if(!sretired) throw std::runtime_error("banner without actual S-mode retirement");
@@ -384,6 +408,9 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
                 os.path.relpath(directory / "hammer_v5.dtb", ev.directory),
                 str(cycles), goal], "boot-run", cwd=ev.directory)
         ev.record["observed"] = json.loads((ev.directory / "boot-observed.json").read_text())
+        if goal == "userland":
+            from userland import compare_userland
+            ev.record["userland_comparisons"] = compare_userland(ev.directory)
     finally:
         if objects.is_dir():
             shutil.rmtree(objects)

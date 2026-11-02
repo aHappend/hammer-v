@@ -249,6 +249,7 @@ def main():
     parser.add_argument("--cycles", type=int, default=100000000)
     parser.add_argument("--goal", choices=("linux", "userland"), default="linux")
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--compact", action="store_true")
     args = parser.parse_args()
     selectors = ["rtl/*.sv", "tests/*.py", "software/*", "design/*.md"]
     ev = Evidence(f"v5-{args.probe}", selectors, args.repair_of)
@@ -295,7 +296,10 @@ def main():
         elif args.probe == "parameters":
             parameter_probe(ev)
         elif args.probe == "isa-matrix":
-            architectural_probe(ev)
+            if args.compact:
+                architectural_probe(ev, count=16, seeds=(17,), compact_only=True)
+            else:
+                architectural_probe(ev)
         elif args.probe == "fetch":
             fetch_probe(ev)
         elif args.probe == "prefetch":

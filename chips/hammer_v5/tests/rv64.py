@@ -18,6 +18,8 @@ struct ISA {
  std::array<uint64_t,32> x{};
  std::array<uint32_t,65536> expanded{};
  std::array<bool,65536> illegal{};
+ std::array<uint64_t,8> vector{};
+ std::ofstream bf_observed{"bf16-observed.txt"};
  Memory bytes;
  uint64_t checked=0,loads=0,stores=0;
  ISA() {
@@ -165,7 +167,46 @@ struct ISA {
    }
    case 0x73: check_next=f3!=0; break;
    case 0x0f: break;
-   case 0x0b: break;
+   case 0x0b: {
+    if(f7 || f3>4) throw std::runtime_error("illegal custom instruction retired");
+    if(f3==0 || f3==4) {
+     if((a&7) || !d.retire_mem_valid || d.retire_mem_addr!=a ||
+        bool(d.retire_mem_write)!=(f3==4) || d.retire_rd_we)
+      throw std::runtime_error("custom load/store architectural metadata");
+     if(f3==0) {
+      if(rs2 || rd>7) throw std::runtime_error("illegal vector load fields retired");
+      if(d.retire_priv==3 && a>=0x80000000ULL && a<0x100000000ULL &&
+         bytes.word(a)!=d.retire_mem_rdata)
+       mismatch("vector coherent load",bytes.word(a),d.retire_mem_rdata);
+      vector[rd]=d.retire_mem_rdata;
+     } else {
+      if(rd || rs2>7 || d.retire_mem_wmask!=255 ||
+         d.retire_mem_wdata!=vector[rs2])
+       mismatch("vector store/state",vector[rs2&7],d.retire_mem_wdata);
+      if(d.retire_priv==3 && a>=0x80000000ULL && a<0x100000000ULL)
+       for(unsigned i=0;i<8;i++) bytes.write(a+i,vector[rs2]>>(8*i));
+     }
+    } else {
+     if(rs1>7 || (f3!=3 && rs2>7))
+      throw std::runtime_error("illegal vector source fields retired");
+     if(f3==2) {
+      if(bool(d.retire_rd_we)!=(rd!=0) || (rd && d.retire_rd!=rd))
+       throw std::runtime_error("BF16 scalar architectural write metadata");
+      if(rd) bf_observed<<std::hex<<vector[rs1]<<" "<<vector[rs2]<<" "
+       <<d.retire_rd_data<<std::dec<<"\n";
+      break;
+     }
+     value=f3==3?b:0;
+     for(unsigned lane=0;lane<8;lane++) {
+      unsigned ba=(vector[rs1]>>(8*lane))&255;
+      unsigned bb=(vector[rs2&7]>>(8*lane))&255;
+      int av=ba<128?int(ba):int(ba)-256,bv=bb<128?int(bb):int(bb)-256;
+      value+=uint64_t(av*(f3==3?av:bv));
+     }
+     known=true;
+    }
+    break;
+   }
    default: throw std::runtime_error("unsupported retired opcode in integer ISA oracle");
   }
   if(check_next && d.retire_next_pc!=next)
