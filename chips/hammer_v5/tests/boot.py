@@ -1,0 +1,354 @@
+"""Genuine firmware layout and public-pin RTL boot experiments."""
+import json
+import os
+import shutil
+import struct
+
+from evidence import ROOT, digest
+from integration import ports
+
+
+def firmware_layout(ev, directory):
+    elf = directory / "opensbi.elf"
+    ev.version("riscv64-unknown-elf-readelf")
+    for flag, label in (("-S", "sections"), ("-l", "segments"), ("-s", "symbols")):
+        ev.run(["riscv64-unknown-elf-readelf", "-W", flag, ev.relative(elf)],
+               "firmware-" + label)
+    data = elf.read_bytes()
+    if data[:7] != b"\x7fELF\x02\x01\x01":
+        raise AssertionError("firmware must be little-endian ELF64")
+    header = struct.unpack_from("<HHIQQQIHHHHHH", data, 16)
+    elf_type, machine, _, entry, phoff, shoff, _, _, phsize, phnum, shsize, shnum, _ = header
+    if machine != 243:
+        raise AssertionError("firmware is not RISC-V ELF")
+    sections = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + i * shsize)
+                for i in range(shnum)]
+    symbols = {}
+    for section in sections:
+        if section[1] not in (2, 11):
+            continue
+        strings = sections[section[6]]
+        table = data[strings[4]:strings[4] + strings[5]]
+        for off in range(section[4], section[4] + section[5], section[9]):
+            name, _, _, _, value, _ = struct.unpack_from("<IBBHQQ", data, off)
+            end = table.find(b"\0", name)
+            symbols[table[name:end].decode()] = value
+    names = ("_fw_start", "_fw_rw_start", "_fw_end",
+             "__rel_dyn_start", "__rel_dyn_end")
+    if any(name not in symbols for name in names[:3]):
+        raise AssertionError("firmware missing required layout symbols")
+    start, split, end = (symbols[name] for name in names[:3])
+    span = split - start
+    if start != 0x80000000 or entry != start or span <= 0 or span & (span - 1):
+        raise AssertionError("firmware entry or power-of-two RX separation incorrect")
+    if start & (span - 1) or not split <= end < 0x80200000:
+        raise AssertionError("firmware PMP alignment or Linux overlap")
+    relocation_symbols = [name in symbols for name in names[3:]]
+    if all(relocation_symbols):
+        if not start <= symbols[names[3]] <= symbols[names[4]] <= split:
+            raise AssertionError("firmware relocations fall outside RX region")
+    elif any(relocation_symbols) or elf_type != 2 or any(
+            section[1] in (4, 9, 11) and section[5] for section in sections):
+        raise AssertionError("nonempty/PIE relocations lack required boundary symbols")
+    # GNU ld omits unreferenced PROVIDE symbols for the empty non-PIE section.
+    for section in sections:
+        _, _, flags, address, _, size, _, _, _, _ = section
+        if not flags & 2 or size == 0:
+            continue
+        if not start <= address <= address + size <= end:
+            raise AssertionError("allocated firmware section outside image")
+        if flags & 1 and address < split:
+            raise AssertionError("writable section precedes RX/RW split")
+        if not flags & 1 and address + size > split:
+            raise AssertionError("read-only section crosses RX/RW split")
+    segments = []
+    for i in range(phnum):
+        kind, flags, offset, va, pa, filesz, memsz, alignment = struct.unpack_from(
+            "<IIQQQQQQ", data, phoff + i * phsize)
+        if kind != 1:
+            continue
+        if va != pa or not start <= pa <= pa + memsz <= end:
+            raise AssertionError("firmware load segment outside declared image")
+        if flags & 2 and pa < split:
+            raise AssertionError("writable firmware load segment precedes RX/RW split")
+        if not flags & 2 and pa + memsz > split:
+            raise AssertionError("read-only firmware load segment crosses RX/RW split")
+        if filesz > memsz or offset + filesz > len(data):
+            raise AssertionError("invalid firmware load segment")
+        segments.append({"flags": flags, "address": pa, "file_bytes": filesz,
+                         "memory_bytes": memsz, "alignment": alignment})
+    if not segments:
+        raise AssertionError("firmware has no load segments")
+    result = {"symbols": {name: symbols[name] for name in names if name in symbols},
+              "elf_type": elf_type, "relocation_bounds_present": all(relocation_symbols),
+              "rx_span": span, "segments": segments, "entry": entry}
+    ev.record["firmware_layout"] = result
+    ev.save()
+    return result
+
+
+def checked_images(ev, directory):
+    directory = (ROOT / directory).resolve()
+    directory.relative_to(ROOT)
+    receipt_path = directory / "receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    if receipt["exit"] != 0:
+        raise AssertionError("cannot consume unsuccessful software build")
+    for name, expected in receipt["inputs"].items():
+        if digest(ROOT / name) != expected:
+            raise AssertionError(f"stale software input: {name}")
+    for name, expected in receipt["outputs"].items():
+        if digest(ROOT / name) != expected:
+            raise AssertionError(f"corrupt software artifact: {name}")
+    manifest = json.loads((directory / "images.json").read_text())
+    for image in manifest["images"]:
+        if digest(directory / image["file"]) != image["sha256"]:
+            raise AssertionError("boot image checksum mismatch")
+    ev.record["software_build"] = {
+        "receipt": ev.relative(receipt_path), "sha256": digest(receipt_path),
+        "images": manifest["images"], "inputs": receipt["inputs"],
+    }
+    ev.save()
+    firmware_layout(ev, directory)
+    return directory, manifest
+
+
+HARNESS = r"""
+#include "Vhammer_v5_top.h"
+#include "verilated.h"
+#include <array>
+#include <chrono>
+#include <cstdint>
+#include <deque>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+
+using Page = std::array<uint8_t,4096>;
+struct Memory {
+ std::unordered_map<uint64_t,std::unique_ptr<Page>> pages;
+ void valid(uint64_t a) {
+  if(a < 0x80000000ULL || a >= 0x100000000ULL)
+   throw std::runtime_error("DRAM address out of inherited aperture");
+ }
+ uint8_t read(uint64_t a) {
+  valid(a); auto p=pages.find(a>>12);
+  return p==pages.end() ? 0 : (*p->second)[a&4095];
+ }
+ void write(uint64_t a,uint8_t v) {
+  valid(a); auto &p=pages[a>>12];
+  if(!p) p=std::make_unique<Page>();
+  (*p)[a&4095]=v;
+ }
+ uint64_t word(uint64_t a) {
+  uint64_t v=0; for(unsigned i=0;i<8;i++) v|=uint64_t(read(a+i))<<(8*i);
+  return v;
+ }
+ void load(const std::string &path,uint64_t address) {
+  std::ifstream f(path,std::ios::binary);
+  if(!f) throw std::runtime_error("missing actual boot image");
+  char c; while(f.get(c)) write(address++,uint8_t(c));
+ }
+};
+struct Record {uint64_t cycle,pc,next,data; uint32_t insn; unsigned rd,priv;};
+int main(int argc,char **argv) {
+ VerilatedContext context; context.commandArgs(argc,argv);
+ Vhammer_v5_top d(&context);
+ Memory memory;
+ std::deque<Record> tail;
+ uint64_t cycles=0,retired=0,reads=0,writes=0,sretired=0,uretired=0;
+ uint64_t translated=0,custom=0,traps=0;
+ std::ofstream uart("uart.txt",std::ios::binary), milestones("milestones.txt"),
+               diagnostic("retirement-tail.txt");
+ try {
+  if(argc!=6) throw std::runtime_error("usage: sim firmware kernel dtb cycles goal");
+  memory.load(argv[1],0x80000000); memory.load(argv[2],0x80200000);
+  memory.load(argv[3],0x87e00000);
+  uint64_t limit=std::stoull(argv[4]);
+  std::string goal=argv[5],line;
+  bool aw=false,wd=false,read_pending=false,write_pending=false;
+  uint64_t awaddr=0,wdata=0,rdata=0; unsigned wmask=0,rdelay=0,bdelay=0;
+  uint32_t rng=17;
+  unsigned divisor=1,lcr=0,uart_state=0,uart_bit=0,uart_data=0,bit_cycles=16;
+  uint64_t sample_cycle=0; bool last_tx=true,done=false;
+  auto next_heartbeat=std::chrono::steady_clock::now()+std::chrono::seconds(30);
+__INITIALIZE_INPUTS__
+  d.uart_rx=1;
+  for(cycles=0;cycles<limit && !done;cycles++) {
+   bool reset=cycles<4;
+   rng^=rng<<13; rng^=rng>>17; rng^=rng<<5;
+   d.rst_n=!reset; d.start=!reset;
+   d.m_mem_axi_awready=!reset && !aw && !write_pending && ((rng&3)!=0);
+   d.m_mem_axi_wready=!reset && !wd && !write_pending && ((rng&12)!=0);
+   d.m_mem_axi_arready=!reset && !read_pending && ((rng&48)!=0);
+   d.m_mem_axi_rvalid=!reset && read_pending && rdelay==0;
+   d.m_mem_axi_rdata=d.m_mem_axi_rvalid ? rdata : 0;
+   d.m_mem_axi_rlast=d.m_mem_axi_rvalid;
+   d.m_mem_axi_bvalid=!reset && write_pending && bdelay==0;
+   d.clk=0; d.eval();
+   bool accept_aw=d.m_mem_axi_awvalid && d.m_mem_axi_awready;
+   bool accept_w=d.m_mem_axi_wvalid && d.m_mem_axi_wready;
+   bool accept_ar=d.m_mem_axi_arvalid && d.m_mem_axi_arready;
+   bool accept_r=d.m_mem_axi_rvalid && d.m_mem_axi_rready;
+   bool accept_b=d.m_mem_axi_bvalid && d.m_mem_axi_bready;
+   uint64_t captured_aw=d.m_mem_axi_awaddr,captured_ar=d.m_mem_axi_araddr;
+   uint64_t captured_w=d.m_mem_axi_wdata;
+   unsigned captured_mask=d.m_mem_axi_wstrb;
+   if(accept_aw && (d.m_mem_axi_awlen!=0 || d.m_mem_axi_awsize!=3 ||
+       d.m_mem_axi_awburst!=1 || d.m_mem_axi_awid!=0 || (captured_aw&7)))
+    throw std::runtime_error("AXI write geometry");
+   if(accept_w && !d.m_mem_axi_wlast) throw std::runtime_error("AXI missing WLAST");
+   if(accept_ar && (d.m_mem_axi_arlen!=0 || d.m_mem_axi_arsize!=3 ||
+       d.m_mem_axi_arburst!=1 || d.m_mem_axi_arid!=0 || (captured_ar&7)))
+    throw std::runtime_error("AXI read geometry");
+   if(!reset && d.retire_valid) {
+    retired++;
+    tail.push_back({cycles,d.retire_pc,d.retire_next_pc,d.retire_rd_data,
+                    d.retire_insn,d.retire_rd,d.retire_priv});
+    if(tail.size()>32) tail.pop_front();
+    if(d.retire_priv==1 && ++sretired==1)
+     milestones<<"S_MODE cycle="<<cycles<<" pc="<<std::hex<<d.retire_pc<<std::dec<<"\n";
+    if(d.retire_priv==0 && ++uretired==1)
+     milestones<<"U_MODE cycle="<<cycles<<" pc="<<std::hex<<d.retire_pc<<std::dec<<"\n";
+    if(d.retire_priv<3 && d.retire_pc>=0xffffffc000000000ULL) {
+     if(++translated==1) milestones<<"HIGH_VA_RETIRED cycle="<<cycles<<"\n";
+    }
+    if(d.retire_priv==0 && (d.retire_insn&127)==11) {
+     if(++custom==1) milestones<<"U_CUSTOM cycle="<<cycles<<"\n";
+    }
+    if(d.retire_mem_valid && d.retire_mem_write &&
+       d.retire_mem_addr>=0x10010000 && d.retire_mem_addr<0x10010008) {
+     unsigned offset=d.retire_mem_addr&7;
+     unsigned byte=(d.retire_mem_wdata>>(offset*8))&255;
+     if(offset==3) lcr=byte;
+     if((lcr&128) && offset==0) divisor=(divisor&0xff00)|byte;
+     if((lcr&128) && offset==1) divisor=(divisor&255)|(byte<<8);
+    }
+   }
+   if(!reset && d.trap_valid) {
+    traps++;
+    if(traps<=16) milestones<<"TRAP cycle="<<cycles<<" pc="<<std::hex<<d.trap_pc
+     <<" cause="<<d.trap_cause<<" tval="<<d.trap_tval<<std::dec<<"\n";
+   }
+   if(d.boot_error) throw std::runtime_error("boot loader error");
+   d.clk=1; d.eval(); context.timeInc(10);
+   if(reset) {aw=wd=read_pending=write_pending=false;}
+   else {
+    if(accept_r) read_pending=false;
+    else if(read_pending && rdelay) rdelay--;
+    if(accept_b) write_pending=false;
+    else if(write_pending && bdelay) bdelay--;
+    if(accept_aw) {aw=true; awaddr=captured_aw;}
+    if(accept_w) {wd=true; wdata=captured_w; wmask=captured_mask;}
+    if(aw && wd) {
+     for(unsigned i=0;i<8;i++) if((wmask>>i)&1) memory.write(awaddr+i,wdata>>(8*i));
+     writes++; aw=wd=false; write_pending=true; bdelay=1+((rng>>6)&3);
+    }
+    if(accept_ar) {
+     rdata=memory.word(captured_ar); reads++; read_pending=true; rdelay=1+((rng>>8)&3);
+    }
+   }
+   bool tx=d.uart_tx;
+   if(!reset && !uart_state && last_tx && !tx) {
+    if((lcr&3)!=3 || (lcr&12))
+     throw std::runtime_error("boot UART requires actual 8N1 programming");
+    bit_cycles=16*(divisor ? divisor : 1);
+    uart_state=1; sample_cycle=cycles+bit_cycles/2; uart_data=uart_bit=0;
+   }
+   if(uart_state && cycles==sample_cycle) {
+    if(uart_state==1) {
+     if(tx) throw std::runtime_error("UART false start");
+     uart_state=2; sample_cycle+=bit_cycles;
+    } else if(uart_state==2) {
+     uart_data|=unsigned(tx)<<uart_bit++;
+     sample_cycle+=bit_cycles;
+     if(uart_bit==8) uart_state=3;
+    } else {
+     if(!tx) throw std::runtime_error("UART stop-bit error");
+     char c=char(uart_data); uart.put(c); line+=c; uart_state=0;
+     if(c=='\n') {
+      if(line.find("HV5 FAIL")!=std::string::npos ||
+         line.find("Kernel panic")!=std::string::npos)
+       throw std::runtime_error("genuine software reported failure: "+line);
+      if(goal=="userland" && line.find("HV5 DONE")!=std::string::npos) done=true;
+      if(goal=="linux" && line.find("Linux version")!=std::string::npos) done=true;
+      line.clear();
+     }
+     if(line.size()>4096) throw std::runtime_error("UART line bound");
+    }
+   }
+   last_tx=tx;
+   auto now=std::chrono::steady_clock::now();
+   if(now>=next_heartbeat) {
+    std::cout<<"PROGRESS boot cycles="<<cycles<<" retired="<<retired
+     <<" reads="<<reads<<" S="<<sretired<<" U="<<uretired<<std::endl;
+    uart.flush(); milestones.flush();
+    next_heartbeat=now+std::chrono::seconds(30);
+   }
+   if(context.gotFinish()) throw std::runtime_error("RTL terminated before boot goal");
+  }
+  uart.flush(); milestones.flush();
+  for(const auto &r:tail) diagnostic<<"cycle="<<r.cycle<<" pc="<<std::hex<<r.pc
+   <<" next="<<r.next<<" insn="<<r.insn<<" rd="<<r.rd<<" data="<<r.data
+   <<" priv="<<r.priv<<std::dec<<"\n";
+  std::ofstream result("boot-observed.json");
+  result<<"{\"cycles\":"<<cycles<<",\"retired\":"<<retired<<",\"dram_reads\":"<<reads
+   <<",\"dram_writes\":"<<writes<<",\"s_retired\":"<<sretired<<",\"u_retired\":"<<uretired
+   <<",\"high_va_retired\":"<<translated<<",\"u_custom\":"<<custom
+   <<",\"traps\":"<<traps<<",\"goal_reached\":"<<(done?"true":"false")<<"}\n";
+  if(!done) throw std::runtime_error("bounded RTL boot goal not reached");
+  if(!sretired) throw std::runtime_error("banner without actual S-mode retirement");
+  if(goal=="userland" && (!uretired || !custom || !translated))
+   throw std::runtime_error("userland marker without public architectural milestones");
+  std::cout<<"SUMMARY genuine RTL boot goal="<<goal<<" cycles="<<cycles
+   <<" retired="<<retired<<std::endl;
+  d.final(); return 0;
+ } catch(const std::exception &e) {
+  uart.flush(); milestones.flush();
+  for(const auto &r:tail) diagnostic<<"cycle="<<r.cycle<<" pc="<<std::hex<<r.pc
+   <<" next="<<r.next<<" insn="<<r.insn<<" rd="<<r.rd<<" data="<<r.data
+   <<" priv="<<r.priv<<std::dec<<"\n";
+  std::cerr<<"BOOT EXPERIMENT FAILED: "<<e.what()<<std::endl;
+  d.final(); return 1;
+ }
+}
+"""
+
+
+def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
+    directory, manifest = checked_images(ev, images)
+    interface = ports(ROOT / "rtl/hammer_v5_top.sv")
+    initialization = "\n".join(
+        f"  d.{name}=0;" for direction, _, name in interface if direction == "input")
+    harness = ev.directory / "boot.cpp"
+    harness.write_text(HARNESS.replace("__INITIALIZE_INPUTS__", initialization))
+    ev.record.setdefault("generated_sha256", {})[ev.relative(harness)] = digest(harness)
+    ev.record["scope"] = {
+        "top": "hammer_v5_top", "public_pin_only": True, "goal": goal,
+        "cycle_bound": cycles, "prefetch": prefetch,
+        "not_full_linux_acceptance": goal != "userland",
+    }
+    ev.version("verilator")
+    ev.version("make")
+    ev.version("g++")
+    objects = ev.directory / "compile-obj"
+    objects.mkdir()
+    sources = sorted((ROOT / "rtl").glob("*.sv"))
+    ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
+            "--top-module", "hammer_v5_top", "-GPREFETCH_ENABLE=" + str(prefetch),
+            "--Mdir", ".", "-o", "boot-sim",
+            "../boot.cpp", *[os.path.relpath(p, objects) for p in sources]],
+           "boot-compile", cwd=objects)
+    try:
+        ev.run(["./compile-obj/boot-sim",
+                os.path.relpath(directory / "opensbi.bin", ev.directory),
+                os.path.relpath(directory / "Image", ev.directory),
+                os.path.relpath(directory / "hammer_v5.dtb", ev.directory),
+                str(cycles), goal], "boot-run", cwd=ev.directory)
+        ev.record["observed"] = json.loads((ev.directory / "boot-observed.json").read_text())
+    finally:
+        if objects.is_dir():
+            shutil.rmtree(objects)

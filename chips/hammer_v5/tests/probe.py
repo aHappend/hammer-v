@@ -16,6 +16,7 @@ from plic import plic_probe
 from integration import top_smoke
 from memory import l2_probe
 from vector import vector_probe
+from boot import boot_probe
 
 
 LEAF_TB = r"""
@@ -232,9 +233,11 @@ def main():
     parser.add_argument("--probe",
                         choices=("numerical", "numerical-mutations", "compressed",
                                  "software", "synthesis-minimum", "plic", "top-smoke",
-                                 "l2", "vector"),
+                                 "l2", "vector", "linux-boot"),
                         required=True)
     parser.add_argument("--repair-of")
+    parser.add_argument("--images")
+    parser.add_argument("--cycles", type=int, default=100000000)
     args = parser.parse_args()
     selectors = ["rtl/*.sv", "tests/*.py", "software/*", "design/*.md"]
     ev = Evidence(f"v5-{args.probe}", selectors, args.repair_of)
@@ -255,6 +258,10 @@ def main():
             l2_probe(ev)
         elif args.probe == "vector":
             vector_probe(ev)
+        elif args.probe == "linux-boot":
+            if not args.images:
+                raise ValueError("--images must identify a source-matched successful build")
+            boot_probe(ev, args.images, args.cycles)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,
