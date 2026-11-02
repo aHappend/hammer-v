@@ -2,21 +2,22 @@
 
 ## Current implementation boundary
 
-This is a **partial Designer implementation**, not an integrated or accepted SoC.
+This is a **partial Designer implementation**, not a verified or accepted SoC.
 The frozen acceptance contract is SPEC.md. No simulation, numerical comparison,
 synthesis, boot, benchmark, timing, physical HIL or independent verification is
 claimed here.
 
-The supplied 42-file V4 reference is unchanged. Current V5 files implement the
-decompressor, halfword fetch path, vector execution/commit leaf, INT8 reduction,
-BF16/FP32 arithmetic pipeline, CSR/HPM leaf and unified L2 leaf. They are not yet
-instantiated by a V5 core/SoC/top. Their presence does not satisfy integrated
-hierarchy, CPU execution, Linux or coherence acceptance.
+The supplied 42-file V4 reference is unchanged. The V5 core/SoC/top now instantiate
+the decompressor/fetch path, vector commit unit, separate INT8/BF16 datapaths,
+CSR/HPM and unified L2. All transitive RTL dependencies are present in `rtl/`;
+the delivered top does not instantiate modules from the reference directory.
+This is source integration, not evidence of correct execution or timing.
 
-`hammer_v5_core`, `hammer_v5_soc`, `hammer_v5_top`, inherited standalone RTL
-dependencies, genuine boot software/build recipe and the kernel context patch
+Genuine boot software/build recipe, userland kernels and the Linux context patch
 remain to be implemented. `tests/*.py` belongs to independent Verifier and is
-not authored by Designer.
+not authored by Designer. A completed software implementation is still required
+before a ready design handoff. Independent functional checks follow that
+handoff and remain required for engineering acceptance.
 
 Repository intake supplied no linked source index. The requested
 `design/GENERATIONAL_HANDOFF.md` was absent at inspection. No parent timing/PPA
@@ -40,43 +41,98 @@ prerequisites, not skipped tests or successful baseline evidence.
 | hammer_v5_vector | New eight-vector architectural state and disposition controller |
 | hammer_v5_csr | Derived from V3 CSR; retains trap/status logic, extends EPC/misa/HPM/vxctl |
 | hammer_v5_l2 | New four-way synchronous write-through unified DRAM cache |
+| hammer_v5_core | Derived from V3 core; raw/expanded instruction metadata, variable fallthrough/link length, serialized custom execution |
+| hammer_v5_decode | Derived from V2 decoder; custom-0 legality and scalar operand dependencies |
+| hammer_v5_predictor | Derived from V2 predictor; halfword-indexed BTB and actual instruction fallthrough |
+| hammer_v5_soc | Derived from V3 top; translated vector memory, L1/L2 events and serialized maintenance integration |
+| hammer_v5_top | Derived from V4 top; identical external ports, V4 boot ROM, V5 SoC and added L2 parameters |
+| hammer_v5_cache, hammer_v5_icache, hammer_v5_dcache | Derived from V3 L1 modules; preserve writeback/refill behavior, add demand events and memory traffic classification |
+| hammer_v5_fabric | Derived from V3 fabric; preserve arbitration, map and local memories, carry demand classification |
+| hammer_v5_cache_maintenance | New L1-completion-to-L2-maintenance sequencing controller |
+| hammer_v5_ram, hammer_v5_imem, hammer_v5_dmem | Derived from V2 backing RAM/wrappers; power-up initialization metadata hides untouched storage while retaining initialized RAM across reset |
 
-Future ancestors must be derived from actual supplied parent sources, not an
-older checkout. Copy needed inherited modules into `rtl/` without editing the
-reference. Rename the modified V3 core/top to V5 core/SoC and the V4 wrapper to
-V5 top. Wire the literal hierarchy in SPEC.md; do not instantiate new leaves
-beside an unchanged V3 processor.
+The 21 unchanged inherited dependencies copied into `rtl/` are V2 ALU,
+AXI-Lite, CLINT, hazard, iterative multiply/divide, scalar register file and
+trap selection; V3 accelerator bridge, atomic
+controller, AXI geometry/master, cache arbiter, data translation/router, MMU,
+page-leaf, PLIC, PTW, TLB and UART; and V4 boot ROM. Modified ancestors retain V5
+names rather than changing the supplied reference. The required instance names
+from SPEC.md are retained inside the legal-geometry generate scopes.
 
-The parent core requires coordinated queue/ID/execute/memory/writeback changes:
-carry raw instruction, expanded instruction, byte length, fetch fault tval and
-compressed illegality separately. Its predictor currently sees a fixed-width
-instruction and assumes four-byte fallthrough. Update predictor fallthrough
-and link/recovery logic, branch alignment and return paths, not only decode.
-The parent CSR clears EPC bit one; the V5 CSR now clears only bit zero.
+The fetch queue and decode state carry raw instruction, expanded instruction,
+byte length, fetch fault tval and compressed illegality separately. Execute
+carries length through link/fallthrough calculation; memory/writeback carry raw
+bits through retirement and illegal-instruction reporting. The V5 predictor uses
+halfword address indexing and expanded instruction decoding with actual byte
+length. Branch targets reject bit zero only; JALR clears bit zero. The V5 CSR
+preserves EPC bit one. Faulting cross-page fetches retain the original PC and
+the failing halfword VA supplied by the fetch leaf.
 
-The vector instruction must drain older potentially faulting pipeline operations
-before its accepting edge. Decode scalar dependencies from the custom encoding,
-not the vector register field numbers: loads/stores read scalar rs1, RMS reads
-scalar rs2, dots read neither scalar source. Gate U instructions using
-vector_user_enable before issuing the leaf request. Serialize interrupts,
-fences and ownership transitions until vector completion/disposition.
-Route memory through the translated ordinary data path with size=8 bytes,
-load/store access classification and non-physical addresses. Detect/retain
-misalignment separately when mapping the vector response to architectural
-causes. Select GPR writeback only for successful arithmetic; loads/stores do
-not write a GPR.
+Custom instructions are serializing decode operations: they advance only after
+older execute/memory/writeback stages drain, block younger operations, issue from
+memory stage, and remain serializing through writeback disposition. Loads/stores
+read scalar rs1, RMS reads scalar rs2, and dots read neither scalar source.
+U-mode permission is checked before issuing the leaf request. Vector memory
+multiplexes into the same translated data path as scalar memory, with size=8
+bytes, VA addressing and appropriate load/store access permissions. Alignment
+errors map to causes 4/6, access errors to 5/7, page faults to 13/15, and illegal
+encodings to cause 2. Loads/stores do not write a scalar GPR. Actual accepted
+vector store data is captured for retirement rather than interpreting its vector
+index field as a scalar operand. Writeback commits successful results/state or
+aborts a completed faulting operation; committed lane counts feed CSR on that
+same disposition edge. Interrupts remain at empty-pipeline boundaries.
 
-The parent fabric provides deterministic three-requester round-robin arbitration
-and routes only external DRAM traffic toward its AXI master. Insert L2 between
-that DRAM output and the inherited master. Retain AXI protection and decode-error
-classification around this insertion; the L2's boolean error is not permission
-to discard DECERR. L1 instruction/data refills, page-table traffic and accelerator
-traffic must all traverse this point. UART/CLINT/PLIC bypass it.
-Connect L2 maintenance after L1 drain and before acknowledging fences or
-host/accelerator ownership changes. FENCE.I and coherent ownership must invalidate
-stale instruction/data lines as required. `prefetch_block` must reflect reset,
-halt drain, host maintenance and accelerator quiescence. It is an integration
-control, not an independent clock or permission to interrupt accepted writes.
+The fabric's deterministic three-requester round-robin arbitration routes only
+external DRAM toward L2. An inherited cache-style arbiter merges fabric requests
+with instruction/data maintenance, then feeds `u_l2` before the AXI master.
+Protection is captured from the admitted fabric transaction; downstream DECERR
+is retained through L2 response and arbiter buffering rather than converted to
+SLVERR. L1 refills/writebacks, page-table traffic and accelerator requests all
+traverse this insertion; local RAM and UART/CLINT/PLIC retain their bypasses.
+
+Each new L1 maintenance wrapper first consumes successful L1 completion, then
+issues the same maintenance command to L2, waits for completion, and only then
+responds to its original requester. An L1 failure responds as an error without
+claiming a completed L2 flush. FENCE/FENCE.I, core halt cleaning and inherited
+host/accelerator ownership cleaning therefore include L2 serialization. Host and
+accelerator transitions retain the parent's data-then-instruction invalidation
+sequence. Prefetch is blocked during core halt, explicit halt requests, exclusive
+accelerator ownership, host access/dirty state and SoC maintenance. Accepted
+downstream transfers still drain normally.
+
+| Integration boundary | Registered sequencing and degenerate behavior |
+|---|---|
+| Custom decode acceptance | Older X/M/W empty; scalar dependencies follow opcode function, not vector indices |
+| Vector memory request edge | Capture actual store bytes/mask for retirement; no vector register update |
+| Vector response edge | Move result/fault to W once; leaf awaits disposition |
+| Vector W commitment/trap edge | Exactly one commit/abort; faulting/unissued operations never produce MAC events |
+| L1 maintenance response edge | Capture error, or start L2 maintenance on the following registered state |
+| L2 maintenance acceptance | Serialize after accepted fabric traffic; no early upstream flush response |
+| L2 maintenance response edge | Retain result until the original requester accepts it |
+| Simultaneous I/D event pulses | Add two one-bit events into a two-bit count, not a bitmap |
+| L1 retry after refill | One demand lookup event; internal relookup is not a second hit event |
+| Singleton L1/L2 geometry | Explicit zero set index; four beats/ways and all maintenance requesters remain connected |
+| Power-up untouched local RAM read | Word initialization metadata returns defined zero, never an uninitialized RAM value |
+| First masked local RAM write | Initialize unselected lanes to zero, write selected lanes, then mark word initialized |
+| Subsequent masked local RAM write | Preserve unselected initialized lanes; zero mask is a no-op |
+| Local RAM read/write on one edge | Retain parent's read-before-write observation, including zero on a first write |
+| Reset during pending local access | Discard responses and reset response visibility; retain initialized words and their metadata with RAM contents |
+
+Source inspection found that the inherited backing RAM can return an
+uninitialized value, including the read-before-write payload on the first host
+write. This is a source-level reset-observability gap, not a demonstrated parent
+simulation failure. V5's backing RAM defines untouched local words as zero using
+one FPGA-power-up-initialized bit per instruction/data word. On the first nonzero
+masked write, it initializes all remaining byte lanes to zero; thereafter it
+preserves normal byte-mask behavior. Synchronous RAM reads and writes remain
+in reset-free clocked blocks. The initialized bitmap has a synthesizable constant
+FPGA power-up value, retains across functional reset alongside the parent RAM
+contents, and changes only with an accepted nonzero masked write. Response
+visibility capture is synchronous and asynchronously reset. This avoids changing
+the parent's retention of initialized code/data across reset. Absent upper
+instruction words remain padded
+zero without out-of-range bank access. The maximum added initialization state
+is IMEM_WORDS+DMEM_WORDS bits; its fit/timing remains a physical-check obligation.
 
 ## Interfaces and cycle boundaries
 
@@ -126,12 +182,13 @@ staged destination and result until commit. Fault/illegal flags prevent commit
 updates. Arithmetic leaves share the vector unit's accepting edge and expose
 their response directly, preserving the specified E6/E12 latency.
 
-The core must transfer the response, then supply one mutually exclusive commit
-or abort pulse. Disposition may coincide with the response transfer. It must not
-precede that transfer. Readiness remains low while awaiting disposition.
+The core transfers the response from M to W, then supplies one mutually exclusive
+commit or abort pulse at W disposition. The leaf interface also permits
+disposition to coincide with response transfer, but never to precede it.
+Readiness remains low while awaiting disposition.
 `event_macs[3:0]` is the combinational committed-lane count for the disposition
 edge: eight INT8/RMS, four BF16, otherwise zero. It is zero on abort/fault/reset.
-The core must connect it to CSR counting at that same commitment edge.
+The core connects it to CSR counting at that same commitment edge.
 
 vload/vstore use one aligned eight-byte request. The unit captures store data
 when accepting the instruction, holds the memory request under stalls, and waits
@@ -221,8 +278,12 @@ lookups), event_l2_access/event_l2_hit, event_vector_macs[3:0] and
 vector_user_enable. L1/L2 events must come from accepted demand lookups,
 not instruction retirement or merely asserted requests. L2 pulses access after
 the accepting lookup edge and hit after tag selection; they exclude prefetch,
-maintenance and invalid requests. The core/SoC must account for these event
-edges without duplicating them.
+maintenance and invalid requests. The SoC adds concurrent I/D pulses as counts,
+and the CSR consumes each registered event once. L1's initial accepted demand
+lookup is counted; its refill relookup is not a second lookup/hit. Maintenance
+writebacks carry non-demand classification through the V5 fabric. L2's access/hit
+pulses are gated by the captured transaction classification so those writebacks
+do not contribute demand counters. Accelerator demand transactions do contribute.
 
 Four full-width counters select events 0..5 with reset selectors 1..4.
 Unsupported mhpmevent writes are WARL to zero. Counter aliases require
@@ -232,11 +293,57 @@ writes override that edge's increment. Other control writes affect subsequent
 increments. Rollover is modulo 2^64. The inherited time/privilege/status/trap
 register behavior is retained; new C support preserves EPC bit one.
 
-Boot software must use the actual parent map: local instruction storage at
-zero, local data at 0x10000000, UART at 0x10010000, external DRAM beginning at
-0x80000000 and ending before 0x100000000. Exact CLINT/PLIC descriptions must be
-taken from the inherited integration before writing a project-owned DTB.
-Do not substitute a stock virtual-machine UART address.
+The initial owned software inputs are:
+
+| Input | Implemented content and remaining integration |
+|---|---|
+| software/hammer_v5_isa.h | GNU RISC-V custom-0 instruction macros and actual hardware cycle/retirement/HPM CSR reads; not a numerical reference model |
+| software/hammer_v5_context.S | Callable save/restore of all eight vectors through aligned kernel memory; not yet wired into a pinned kernel |
+| software/hammer_v5.dts | Actual UART, CLINT, PLIC and DRAM map; must still be compiled by the genuine boot build |
+
+ISA macro vector indices must be unsuffixed literal tokens 0..7, matching the
+instruction's vector field. The header uses C11 static assertions, GNU assembly
+`.insn r` and RV64 integer registers; no scalar F or standard V is needed.
+Vload/vstore pointers must be eight-byte aligned and accessible under the
+executing privilege. The macros deliberately retain memory/compiler barriers
+around custom operations and counter reads. U callers require kernel vxctl and
+architectural counter permission setup; these inputs do not silently enable it.
+
+The context helper ABI takes a pointer to eight aligned little-endian 64-bit
+words in a0, clobbers only caller-saved a0, and returns through scalar ra.
+Assembly x0..x7 source/destination fields name vectors; stores do not clobber
+scalar x1/ra, and loads into vector vr1 do not clobber scalar ra. The helpers
+must only receive mapped kernel storage, not unchecked user signal-frame
+pointers. Kernel signal integration must copy and validate the entire saved
+state before restoring it, with normal user-copy fault handling.
+
+The pending pinned kernel patch must add per-thread state and wire eager
+save/restore at context switch, snapshot parent state on fork, zero state on
+exec, save state to an explicit extensible signal context, and restore it on
+sigreturn. Nested signals and signals on alternate stacks must preserve their
+own snapshots. Kernel context management must not issue arithmetic on user
+vectors or disable task preemption as a substitute for saving state. Kernel
+setup must enable vxctl for U and scounteren through bit six; OpenSBI must
+explicitly permit those reads in mcounteren and expose machine event programming
+needed by the benchmark. None of this kernel/OpenSBI wiring is claimed present
+merely because the two assembly helpers exist.
+
+The parent map is local instruction storage at zero, local data at 0x10000000,
+UART at 0x10010000, CLINT at 0x02000000, PLIC at 0x0c000000, and external
+DRAM at 0x80000000..0xffffffff. UART is an eight-byte register block, byte IO
+without register shifts; UART is PLIC source one and the CPU has M/S contexts.
+CLINT mtime increments on every clock edge, so its declared 100 MHz timebase
+matches the target clock. The DTS describes the fixed 2 GiB accessible DRAM
+aperture and limits this boot configuration's Linux managed RAM to 128 MiB via
+`mem=128M`. Backing memory must support the declared DRAM aperture, including
+next-line prefetches outside the Linux-managed subset. A sparse AXI backing
+model can do this without a giant generated image. This description is not proof
+of board memory availability.
+
+The unchanged V4 ROM sets hart ID a0=0, DTB a1=0x87e00000 and jumps to
+0x80000000. The genuine boot build must place firmware there, Linux at a declared
+nonoverlapping entry (planned 0x80200000), and DTB at the ROM's actual address.
+No stock virtual-machine UART or firmware banner replaces these interfaces.
 
 Future software inputs must pin OpenSBI/Linux revisions, configurations,
 checksums, licenses and compiler/build dependencies; `software/build.py` must
@@ -255,3 +362,19 @@ reference, defect-sensitivity and synthesis suite from SPEC.md after integrated
 design handoff. The shared runtime must then execute timing and hardware gates.
 The missing authentic generational handoff and genuine software inputs do not
 justify a simulated banner, bare-metal replacement or passing skipped check.
+
+Actual Designer diagnostics:
+
+| Receipt | Actual result and scope |
+|---|---|
+| evidence/preparation/v5-leaves-syntax-20261102T174500022778Z/receipt.json | Prior ten-leaf static Icarus elaboration exited zero; no integrated top |
+| evidence/preparation/v5-integrated-syntax-20261102T175517006458Z/receipt.json | Icarus 12.0 default integrated top elaboration exited zero before V5 backing RAM visibility changes |
+| evidence/preparation/v5-ram-visibility-syntax-20261102T175919706197Z/receipt.json | Icarus 12.0, `iverilog -g2012 -t null -s hammer_v5_top rtl/*.sv`, final default integrated RTL elaboration exited zero |
+
+The static receipts retain exact expanded argv, source snapshots/hashes,
+reference hashes, tool version, timing, exit and raw stdout/stderr. No functional
+failure or repair experiment is claimed. Software was not compiled; geometry,
+numerical, coherence, context, Linux and speed checks remain independent Verifier
+work. The backing RAM change follows a source-inspection finding, not a claimed
+simulation failure/repair. Later documentation updates do not change the RTL
+captured by the final static receipt.

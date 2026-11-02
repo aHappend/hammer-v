@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "top": "hammer_v5_top",
+  "sources": [
+    {
+      "file": "linux-6.6.1.tar.xz",
+      "root": "linux-6.6.1",
+      "version": "6.6.1",
+      "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.1.tar.xz",
+      "sha256": "da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234",
+      "license": "GPL-2.0-only, per-file SPDX exceptions and compatible licenses",
+      "license_files": ["COPYING", "LICENSES/preferred/GPL-2.0"]
+    },
+    {
+      "file": "opensbi-1.4.tar.gz",
+      "root": "opensbi-1.4",
+      "version": "1.4",
+      "url": "https://codeload.github.com/riscv-software-src/opensbi/tar.gz/refs/tags/v1.4",
+      "sha256": "319b62a4186fbce9b81a0c5f0ec9f003a10c808397a72138bc9745d9b87b1eb1",
+      "license": "BSD-2-Clause; bundled libfdt BSD-2-Clause OR GPL-2.0-or-later",
+      "license_files": ["COPYING.BSD", "lib/utils/libfdt/libfdt.h"]
+    }
+  ],
+  "software_inputs": [
+    "boot_manifest.json", "build.py", "patch_sources.py",
+    "linux.config", "opensbi.config", "hammer_v5.dts",
+    "hammer_v5_isa.h", "hammer_v5_context.S",
+    "linux_hammer_v5.h", "linux_hammer_v5.c", "opensbi_hammer_v5.c",
+    "hammer_ieee.h", "init.c", "init_start.S", "user_syscall.h"
+  ],
+  "required_tools": [
+    "python3", "make", "gcc", "bc", "bison", "flex", "perl",
+    "riscv64-linux-gnu-gcc", "riscv64-linux-gnu-objcopy",
+    "riscv64-unknown-elf-gcc", "riscv64-unknown-elf-objcopy"
+  ],
+  "memory": {
+    "dram_base": "0x80000000",
+    "dram_size": "0x80000000",
+    "linux_managed_size": "0x08000000",
+    "firmware_address": "0x80000000",
+    "firmware_limit": "0x80200000",
+    "linux_address": "0x80200000",
+    "dtb_address": "0x87e00000",
+    "uart_address": "0x10010000",
+    "timebase_hz": 100000000
+  },
+  "userland": {
+    "abi": "RV64 LP64; integer RV64IM plus explicit custom-0",
+    "libc": "none; direct genuine Linux system calls",
+    "seeds": [17, 43, 89],
+    "dot_reduction": 256,
+    "repetitions": 32,
+    "int8_tile": [8, 8, 64],
+    "bf16_tile": [4, 4, 32],
+    "expected_firmware_abi": "0x48563501",
+    "counter_sbi_extension": "0x09000000"
+  },
+  "network_during_build": false
+}
