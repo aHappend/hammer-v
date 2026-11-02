@@ -12,21 +12,21 @@ module hammer_v5_core #(
     output wire halted,
     input wire [4:0] dbg_raddr,
     output wire [63:0] dbg_rdata,
-    output reg trap_valid,
-    output reg [63:0] trap_pc, trap_cause, trap_tval,
-    output reg [1:0] trap_target_priv,
-    output reg trap_interrupt,
-    output reg retire_valid,
-    output reg [63:0] retire_pc, retire_next_pc,
-    output reg [31:0] retire_insn,
-    output reg [1:0] retire_priv,
-    output reg retire_rd_we,
-    output reg [4:0] retire_rd,
-    output reg [63:0] retire_rd_data,
-    output reg retire_mem_valid, retire_mem_write,
-    output reg [63:0] retire_mem_addr,
-    output reg [7:0] retire_mem_wmask,
-    output reg [63:0] retire_mem_wdata, retire_mem_rdata,
+    output wire trap_valid,
+    output wire [63:0] trap_pc, trap_cause, trap_tval,
+    output wire [1:0] trap_target_priv,
+    output wire trap_interrupt,
+    output wire retire_valid,
+    output wire [63:0] retire_pc, retire_next_pc,
+    output wire [31:0] retire_insn,
+    output wire [1:0] retire_priv,
+    output wire retire_rd_we,
+    output wire [4:0] retire_rd,
+    output wire [63:0] retire_rd_data,
+    output wire retire_mem_valid, retire_mem_write,
+    output wire [63:0] retire_mem_addr,
+    output wire [7:0] retire_mem_wmask,
+    output wire [63:0] retire_mem_wdata, retire_mem_rdata,
     output wire stall_load_use, stall_mem, stall_muldiv,
     output wire redirect_valid,
     output wire [63:0] redirect_pc,
@@ -75,6 +75,43 @@ module hammer_v5_core #(
     input wire [55:0] at_rsp_pa,
     input wire at_rsp_error, at_rsp_page_fault
 );
+    reg trap_valid_q;
+    reg [63:0] trap_pc_q, trap_cause_q, trap_tval_q;
+    reg [1:0] trap_target_priv_q;
+    reg trap_interrupt_q;
+    reg retire_valid_q;
+    reg [63:0] retire_pc_q, retire_next_pc_q;
+    reg [31:0] retire_insn_q;
+    reg [1:0] retire_priv_q;
+    reg retire_rd_we_q;
+    reg [4:0] retire_rd_q;
+    reg [63:0] retire_rd_data_q;
+    reg retire_mem_valid_q, retire_mem_write_q;
+    reg [63:0] retire_mem_addr_q;
+    reg [7:0] retire_mem_wmask_q;
+    reg [63:0] retire_mem_wdata_q, retire_mem_rdata_q;
+
+    assign trap_valid = rst_n && trap_valid_q;
+    assign trap_pc = trap_valid ? trap_pc_q : 64'b0;
+    assign trap_cause = trap_valid ? trap_cause_q : 64'b0;
+    assign trap_tval = trap_valid ? trap_tval_q : 64'b0;
+    assign trap_target_priv = trap_valid ? trap_target_priv_q : 2'b0;
+    assign trap_interrupt = trap_valid && trap_interrupt_q;
+    assign retire_valid = rst_n && retire_valid_q;
+    assign retire_pc = retire_valid ? retire_pc_q : 64'b0;
+    assign retire_next_pc = retire_valid ? retire_next_pc_q : 64'b0;
+    assign retire_insn = retire_valid ? retire_insn_q : 32'b0;
+    assign retire_priv = retire_valid ? retire_priv_q : 2'b0;
+    assign retire_rd_we = retire_valid && retire_rd_we_q;
+    assign retire_rd = retire_rd_we ? retire_rd_q : 5'b0;
+    assign retire_rd_data = retire_rd_we ? retire_rd_data_q : 64'b0;
+    assign retire_mem_valid = retire_valid && retire_mem_valid_q;
+    assign retire_mem_write = retire_mem_valid && retire_mem_write_q;
+    assign retire_mem_addr = retire_mem_valid ? retire_mem_addr_q : 64'b0;
+    assign retire_mem_wmask = retire_mem_valid ? retire_mem_wmask_q : 8'b0;
+    assign retire_mem_wdata = retire_mem_valid ? retire_mem_wdata_q : 64'b0;
+    assign retire_mem_rdata = retire_mem_valid ? retire_mem_rdata_q : 64'b0;
+
     initial begin
         if (IMEM_WORDS < 1 || IMEM_WORDS > 16384)
             $fatal(1, "PARAMETER ERROR: IMEM_WORDS must be 1..16384");
@@ -647,70 +684,70 @@ module hammer_v5_core #(
             w <= '0;
             redirect_event <= 1'b0;
             redirect_event_pc <= 64'b0;
-            trap_valid <= 1'b0;
-            trap_pc <= 64'b0;
-            trap_cause <= 64'b0;
-            trap_tval <= 64'b0;
-            trap_target_priv <= 2'b0;
-            trap_interrupt <= 1'b0;
-            retire_valid <= 1'b0;
-            retire_pc <= 64'b0;
-            retire_next_pc <= 64'b0;
-            retire_insn <= 32'b0;
-            retire_priv <= 2'b0;
-            retire_rd_we <= 1'b0;
-            retire_rd <= 5'b0;
-            retire_rd_data <= 64'b0;
-            retire_mem_valid <= 1'b0;
-            retire_mem_write <= 1'b0;
-            retire_mem_addr <= 64'b0;
-            retire_mem_wmask <= 8'b0;
-            retire_mem_wdata <= 64'b0;
-            retire_mem_rdata <= 64'b0;
+            trap_valid_q <= 1'b0;
+            trap_pc_q <= 64'b0;
+            trap_cause_q <= 64'b0;
+            trap_tval_q <= 64'b0;
+            trap_target_priv_q <= 2'b0;
+            trap_interrupt_q <= 1'b0;
+            retire_valid_q <= 1'b0;
+            retire_pc_q <= 64'b0;
+            retire_next_pc_q <= 64'b0;
+            retire_insn_q <= 32'b0;
+            retire_priv_q <= 2'b0;
+            retire_rd_we_q <= 1'b0;
+            retire_rd_q <= 5'b0;
+            retire_rd_data_q <= 64'b0;
+            retire_mem_valid_q <= 1'b0;
+            retire_mem_write_q <= 1'b0;
+            retire_mem_addr_q <= 64'b0;
+            retire_mem_wmask_q <= 8'b0;
+            retire_mem_wdata_q <= 64'b0;
+            retire_mem_rdata_q <= 64'b0;
         end else begin
             redirect_event <= trap_enter || serial_commit || branch_redirect;
             redirect_event_pc <= trap_enter ? entry_vector :
                 serial_commit ? wb_next : branch_redirect ? actual_next : 64'b0;
-            retire_valid <= 1'b0;
-            retire_pc <= 64'b0;
-            retire_next_pc <= 64'b0;
-            retire_insn <= 32'b0;
-            retire_priv <= 2'b0;
-            retire_rd_we <= 1'b0;
-            retire_rd <= 5'b0;
-            retire_rd_data <= 64'b0;
-            retire_mem_valid <= 1'b0;
-            retire_mem_write <= 1'b0;
-            retire_mem_addr <= 64'b0;
-            retire_mem_wmask <= 8'b0;
-            retire_mem_wdata <= 64'b0;
-            retire_mem_rdata <= 64'b0;
+            retire_valid_q <= 1'b0;
+            retire_pc_q <= 64'b0;
+            retire_next_pc_q <= 64'b0;
+            retire_insn_q <= 32'b0;
+            retire_priv_q <= 2'b0;
+            retire_rd_we_q <= 1'b0;
+            retire_rd_q <= 5'b0;
+            retire_rd_data_q <= 64'b0;
+            retire_mem_valid_q <= 1'b0;
+            retire_mem_write_q <= 1'b0;
+            retire_mem_addr_q <= 64'b0;
+            retire_mem_wmask_q <= 8'b0;
+            retire_mem_wdata_q <= 64'b0;
+            retire_mem_rdata_q <= 64'b0;
             if (!LEGACY_TRAPS) begin
-                trap_valid <= 1'b0;
-                trap_pc <= 64'b0;
-                trap_cause <= 64'b0;
-                trap_tval <= 64'b0;
-                trap_target_priv <= 2'b0;
-                trap_interrupt <= 1'b0;
+                trap_valid_q <= 1'b0;
+                trap_pc_q <= 64'b0;
+                trap_cause_q <= 64'b0;
+                trap_tval_q <= 64'b0;
+                trap_target_priv_q <= 2'b0;
+                trap_interrupt_q <= 1'b0;
             end
             if (wb_commit) begin
-                retire_valid <= 1'b1;
-                retire_pc <= w.pc;
-                retire_next_pc <= wb_next;
-                retire_insn <= w.raw;
-                retire_priv <= w.priv;
-                retire_rd_we <= wb_we;
+                retire_valid_q <= 1'b1;
+                retire_pc_q <= w.pc;
+                retire_next_pc_q <= wb_next;
+                retire_insn_q <= w.raw;
+                retire_priv_q <= w.priv;
+                retire_rd_we_q <= wb_we;
                 if (wb_we) begin
-                    retire_rd <= w.rd;
-                    retire_rd_data <= wb_data;
+                    retire_rd_q <= w.rd;
+                    retire_rd_data_q <= wb_data;
                 end
-                retire_mem_valid <= w.mem_valid;
+                retire_mem_valid_q <= w.mem_valid;
                 if (w.mem_valid) begin
-                    retire_mem_addr <= w.addr;
-                    retire_mem_write <= w.mem_write;
-                    retire_mem_wmask <= w.mask;
-                    retire_mem_wdata <= w.wdata;
-                    retire_mem_rdata <= w.rdata;
+                    retire_mem_addr_q <= w.addr;
+                    retire_mem_write_q <= w.mem_write;
+                    retire_mem_wmask_q <= w.mask;
+                    retire_mem_wdata_q <= w.wdata;
+                    retire_mem_rdata_q <= w.rdata;
                 end
                 committed_next <= wb_next;
             end
@@ -959,12 +996,12 @@ module hammer_v5_core #(
                     if (w.wfi && !trap_wake) sleeping <= 1'b1;
                 end
                 if (trap_enter) begin
-                    trap_valid <= 1'b1;
-                    trap_pc <= entry_epc;
-                    trap_cause <= entry_cause;
-                    trap_tval <= entry_tval;
-                    trap_target_priv <= trap_destination;
-                    trap_interrupt <= trap_is_interrupt;
+                    trap_valid_q <= 1'b1;
+                    trap_pc_q <= entry_epc;
+                    trap_cause_q <= entry_cause;
+                    trap_tval_q <= entry_tval;
+                    trap_target_priv_q <= trap_destination;
+                    trap_interrupt_q <= trap_is_interrupt;
                     committed_next <= entry_vector;
                     fetch_pc <= entry_vector;
                     id_v <= 1'b0;

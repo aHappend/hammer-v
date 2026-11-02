@@ -16,7 +16,8 @@ module hammer_v3_plic (
 );
     reg [32:1] source_meta, source_sync, pending, in_service, owner;
     reg [2:0] priority_q [0:32];
-    reg [32:1] enable_q [0:1];
+    // Storage bit n represents source n+1; use zero-based packed array words.
+    reg [31:0] enable_q [0:1];
     reg [2:0] threshold [0:1];
     reg response_q, error_q, meip_q, seip_q;
     reg [63:0] data_q;
@@ -48,7 +49,7 @@ module hammer_v3_plic (
         for (genvar s = 0; s < 32; s = s + 1) begin : g_source
             localparam [5:0] SOURCE_ID = s + 1;
             assign rank[c][32+s] =
-                pending[s+1] && !in_service[s+1] && enable_q[c][s+1] &&
+                pending[s+1] && !in_service[s+1] && enable_q[c][s] &&
                 priority_q[s+1] > threshold[c] ?
                 {priority_q[s+1],~SOURCE_ID} : 9'b0;
         end
@@ -95,8 +96,8 @@ module hammer_v3_plic (
                     register_kind = ENABLE;
                     context_id = req_addr[7];
                     upper_word = req_addr[2];
-                    read_word = req_addr[2] ? {31'b0,enable_q[context_id][32]} :
-                        {enable_q[context_id][31:1],1'b0};
+                    read_word = req_addr[2] ? {31'b0,enable_q[context_id][31]} :
+                        {enable_q[context_id][30:0],1'b0};
                 end
                 64'h0c200000,64'h0c201000: begin
                     decoded = 1'b1;
@@ -156,8 +157,8 @@ module hammer_v3_plic (
                             PRIORITY: if (priority_id != 0)
                                 priority_q[priority_id] <= write_word[2:0];
                             ENABLE: begin
-                                if (upper_word) enable_q[context_id][32] <= write_word[0];
-                                else enable_q[context_id][31:1] <= write_word[31:1];
+                                if (upper_word) enable_q[context_id][31] <= write_word[0];
+                                else enable_q[context_id][30:0] <= write_word[31:1];
                             end
                             THRESHOLD: threshold[context_id] <= write_word[2:0];
                             default: begin end

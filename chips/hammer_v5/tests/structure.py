@@ -87,6 +87,8 @@ def synthesis_probe(ev, sources, parameters):
     ev.version("yosys", ("-V",))
     output = ev.directory / "netlist.json"
     script = ev.directory / "synthesis.ys"
+    # FPGA RAM-visibility bits have legal constant power-up initialization.
+    # check -noinit rejects that attribute itself; assert_structure checks it.
     script.write_text(
         "read_verilog -sv " + " ".join(ev.relative(p) for p in sources) + "\n" +
         "hierarchy -check -top hammer_v5_top " +

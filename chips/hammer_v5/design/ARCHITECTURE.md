@@ -51,13 +51,15 @@ Their presence does not establish a parent or V5 boot result.
 | hammer_v5_fabric | Derived from V3 fabric; preserve arbitration, map and local memories, carry demand classification |
 | hammer_v5_cache_maintenance | New L1-completion-to-L2-maintenance sequencing controller |
 | hammer_v5_ram, hammer_v5_imem, hammer_v5_dmem | Derived from V2 backing RAM/wrappers; power-up initialization metadata hides untouched storage while retaining initialized RAM across reset |
+| hammer_v3_plic | Delivered V3 derivative with zero-based packed enable storage for synthesis compatibility; unchanged public map and source IDs |
 
-The 21 unchanged inherited dependencies copied into `rtl/` are V2 ALU,
+The 20 unchanged inherited dependencies copied into `rtl/` are V2 ALU,
 AXI-Lite, CLINT, hazard, iterative multiply/divide, scalar register file and
 trap selection; V3 accelerator bridge, atomic
 controller, AXI geometry/master, cache arbiter, data translation/router, MMU,
-page-leaf, PLIC, PTW, TLB and UART; and V4 boot ROM. Modified ancestors retain V5
-names rather than changing the supplied reference. The required instance names
+page-leaf, PTW, TLB and UART; and V4 boot ROM. Modified ancestors normally retain V5
+names; the delivered PLIC retains its existing module name and interface.
+No supplied reference file is changed. The required instance names
 from SPEC.md are retained inside the legal-geometry generate scopes.
 
 The fetch queue and decode state carry raw instruction, expanded instruction,
@@ -108,6 +110,11 @@ downstream transfers still drain normally.
 
 | Integration boundary | Registered sequencing and degenerate behavior |
 |---|---|
+| Core reset assertion, including time zero before reset NBA updates | Gate retirement/trap valid directly with rst_n and zero inactive payloads; asynchronous reset clears their backing registers |
+| First post-reset edge | Retirement/trap backing valid remains clear unless a real completion occurs; no extra pipeline stage |
+| Legacy trap reporting | Preserve sticky trap state until reset; hide it immediately during reset |
+| PLIC source boundary | Enable storage bit 0 maps to source 1, bit 31 to source 32; MMIO word bit zero remains reserved in the lower word |
+| PLIC request/claim edge | Sample pre-edge selected source, context and write word; register response and ownership once; preserve existing pending/claim/completion priority |
 | Custom decode acceptance | Older X/M/W empty; scalar dependencies follow opcode function, not vector indices |
 | Vector memory request edge | Capture actual store bytes/mask for retirement; no vector register update |
 | Vector response edge | Move result/fault to W once; leaf awaits disposition |
@@ -398,14 +405,31 @@ Actual Designer diagnostics:
 | evidence/preparation/v5-integrated-syntax-20261102T175517006458Z/receipt.json | Icarus 12.0 default integrated top elaboration exited zero before V5 backing RAM visibility changes |
 | evidence/preparation/v5-ram-visibility-syntax-20261102T175919706197Z/receipt.json | Icarus 12.0, `iverilog -g2012 -t null -s hammer_v5_top rtl/*.sv`, final default integrated RTL elaboration exited zero |
 | evidence/preparation/v5-software-syntax-20261102T181354001989Z/receipt.json | GNU RISC-V unknown-elf GCC 13.2.0, `-fsyntax-only`, /init C and its three included headers exited zero before subsequent fault-sentinel and per-cell UART-result refinements; no object, binary or execution |
+| evidence/preparation/v5-design-repairs-syntax-20261102T184521977637Z/receipt.json | Icarus 12.0, default `hammer_v5_top` static elaboration exited zero after PLIC indexing and core reset-output repairs, with empty compiler stdout/stderr; no simulation, synthesis or firmware build |
 
 Retained independent failure
 `evidence/preparation/v5-synthesis-minimum-20261102T182910707878Z/receipt.json`
 records Yosys 0.33 rejecting `$bits(fetch_t)` at the queue-head declaration.
-The explicit-width repair above requires an independent fresh rerun; no
-synthesis success is claimed. The inherited PLIC enable-array range warning
-must separately be classified for reachability by Verifier; its RTL is
-unchanged from the parent.
+The subsequent independent minimum-synthesis receipt
+`evidence/preparation/v5-synthesis-minimum-20261102T183857122104Z/receipt.json`
+passes for its captured sources, not the later repairs or complete design.
+
+The inherited PLIC warning is reachable: the independent RTL probe compared
+13 accesses, while Yosys-lowered execution returned zero instead of two from
+enable address 0x0c002000. The failure remains at
+`evidence/preparation/v5-plic-20261102T183857131797Z/receipt.json`.
+Yosys 0.33 warned that a dynamic array read's temporary lost the nonzero packed
+lower bound. Delivered enable storage now uses [31:0], with all rank, read and
+masked-write indices mapped consistently to unchanged source IDs 1..32.
+This is a repair of inherited synthesis incompatibility, not a V5 regression.
+
+The independent compact top probe observed X retirement/trap valid at time zero:
+`evidence/preparation/v5-top-smoke-20261102T184210350731Z/receipt.json`.
+Core retirement/trap state now resides in asynchronously reset backing registers
+and drives reset-gated public valid and inactive-zero payload wires. This changes
+reset observability, not retirement latency, commitment or legacy sticky traps.
+Independent RTL/lowered PLIC and integrated reset/architectural reruns remain
+required; no repaired functional result is claimed.
 
 The OpenSBI import failure and source repair are documented in
 `design/BOOT_SOFTWARE.md`. Original failed receipts, reset-release and
@@ -414,7 +438,7 @@ mutant-classification failures and their linked repairs remain unchanged.
 The RTL static receipts retain exact expanded argv, source snapshots/hashes,
 reference hashes, tool version, timing, exit and raw stdout/stderr. The C receipt
 retains its exact argv, four source snapshots/hashes, tool version, timing, exit
-and raw stdout/stderr. No functional failure or repair experiment is claimed.
+and raw stdout/stderr. Designer ran no functional failure/repair experiment.
 No software object/image was built; geometry,
 numerical, coherence, context, Linux and speed checks remain independent Verifier
 work. The backing RAM change follows a source-inspection finding, not a claimed

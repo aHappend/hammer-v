@@ -1,6 +1,6 @@
 {
   "gate": "rtl-timing-lint",
-  "timestamp_utc": "2026-11-02T18:32:06.605110+00:00",
+  "timestamp_utc": "2026-11-02T18:43:21.426534+00:00",
   "root": "/data/sufeng/hammer-v5-line/workspace/project",
   "status": "passed",
   "max_comb_div_width": 0,
@@ -32,7 +32,7 @@
     "rtl/hammer_v5_bf16_mul.sv": "5b4c713855271e51597af1eabf1161a31a212c4fc4926c6103388347481953f8",
     "rtl/hammer_v5_cache.sv": "badf6ee99f85332d4bbf13a75a2c584b5963a3e430f0bf0cb94a56d256c7ac26",
     "rtl/hammer_v5_cache_maintenance.sv": "f799133ca134d2786d65ba6873685f5f9aedcf38676b15e3d2bbfa9113ac961b",
-    "rtl/hammer_v5_core.sv": "eb0b33ea23cbb9ad62e8ce34d72c369f1cf029d97fc2f10967b47849c3f858fb",
+    "rtl/hammer_v5_core.sv": "28dda3dde5e55ee6c616c4449cf50e60b3b81260db114eeb2ad3f659b2944c0c",
     "rtl/hammer_v5_csr.sv": "7104cfd9c8dca4be7f46d1a4264f5ad3921daffe938feb3af5555c03d0787e12",
     "rtl/hammer_v5_dcache.sv": "687a4b706aa632fd499a39167efc8154bbd35dc14a6e81b708329daa741015c6",
     "rtl/hammer_v5_decode.sv": "57b3f6f2315ba89991d497c2a4cf569a6ad015de22bae7f043c5afe729d59420",

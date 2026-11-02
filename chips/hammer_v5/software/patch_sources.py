@@ -13,6 +13,9 @@ def replace(path, old, new):
 
 
 def apply(linux, opensbi, inputs):
+    # Archive symbol hiding is unnecessary for this standalone firmware image.
+    replace(opensbi / "Makefile",
+            "ELFFLAGS\t+=\t-Wl,--exclude-libs,ALL\n", "")
     for entrypoint in ("defconfig.py", "genconfig.py"):
         replace(opensbi / "scripts/Kconfiglib" / entrypoint,
                 "import kconfiglib",
