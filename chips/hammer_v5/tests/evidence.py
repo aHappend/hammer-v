@@ -95,7 +95,8 @@ class Evidence:
             finally:
                 command["end"] = stamp()
                 self.save()
-        if command["timed_out"] or command["exit"] != expected_exit:
+        permitted = (expected_exit,) if isinstance(expected_exit, int) else tuple(expected_exit)
+        if command["timed_out"] or command["exit"] not in permitted:
             raise RuntimeError(
                 f"{label}: exit={command['exit']} timeout={command['timed_out']}; "
                 f"see {command['stderr']} and {command['stdout']}")

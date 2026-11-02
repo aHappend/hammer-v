@@ -9,6 +9,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evidence import Evidence, ROOT, digest
 from reference import bf16_dot, int8_dot, rms, self_check
+from compressed import decode
+from structure import synthesis_probe
+from mutations import numerical_mutations
 
 
 LEAF_TB = r"""
@@ -151,8 +154,10 @@ def numerical(ev):
     ev.run(["iverilog", "-g2012", "-Wall", "-s", "probe_tb",
             "-o", ev.relative(ev.directory / "smoke.vvp"),
             ev.relative(testbench), *map(ev.relative, sources)], "iverilog-compile")
-    ev.run(["vvp", "./smoke.vvp", "+cases=smoke.txt"],
-           "icarus-smoke", cwd=ev.directory)
+    smoke = ev.run(["vvp", "./smoke.vvp", "+cases=smoke.txt"],
+                   "icarus-smoke", cwd=ev.directory)
+    if "SUMMARY compared=275" not in smoke:
+        raise AssertionError("Icarus did not compare all compact smoke cases")
     ev.run(["verilator", "--binary", "--timing", "--top-module", "probe_tb",
             "-Wno-fatal", "--Mdir", ev.relative(ev.directory / "compile-obj"),
             "-o", "probe-sim", ev.relative(testbench), *map(ev.relative, sources)],
@@ -167,9 +172,63 @@ def numerical(ev):
     shutil.rmtree(ev.directory / "compile-obj")
 
 
+def compressed(ev):
+    families = {}
+    cases = []
+    for c in range(65536):
+        word, bad, family = decode(c)
+        cases.append(f"{word:08x} {int(bad)}\n")
+        families[family] = families.get(family, 0) + 1
+    table = ev.directory / "compressed.txt"
+    table.write_text("".join(cases))
+    tb = ev.directory / "decode_tb.sv"
+    tb.write_text(r"""
+module decode_tb;
+reg [15:0] insn16;
+wire [31:0] insn32;
+wire illegal;
+reg [31:0] expected;
+integer bad, file, i, status;
+hammer_v5_decompress u_decode(.insn16(insn16),.insn32(insn32),.illegal(illegal));
+initial begin
+ file=$fopen("compressed.txt","r");
+ if (!file) $fatal(1,"missing independent decode table");
+ for (i=0;i<65536;i=i+1) begin
+   status=$fscanf(file,"%h %d\n",expected,bad);
+   if (status != 2) $fatal(1,"invalid independent decode record");
+   insn16=i; #1;
+   if (insn32 !== expected || illegal !== (bad != 0))
+     $fatal(1,"DECODE halfword=%h expected=%h illegal=%0d observed=%h illegal=%b",
+       insn16,expected,bad,insn32,illegal);
+ end
+ $fclose(file);
+ $display("SUMMARY compared=65536");
+ $finish;
+end
+endmodule
+""")
+    ev.record["generated_sha256"] = {
+        ev.relative(path): digest(path) for path in (table, tb)}
+    ev.record["scope"] = {"exhaustive_halfword_decode": True,
+                         "not_architectural_family_execution": True,
+                         "independent_family_counts": families}
+    ev.version("iverilog", ("-V",))
+    ev.version("vvp", ("-V",))
+    ev.run(["iverilog", "-g2012", "-Wall", "-s", "decode_tb",
+            "-o", ev.relative(ev.directory / "decode.vvp"), ev.relative(tb),
+            "rtl/hammer_v5_decompress.sv"], "decode-compile")
+    result = ev.run(["vvp", "./decode.vvp"], "decode-exhaustive", cwd=ev.directory)
+    if "SUMMARY compared=65536" not in result:
+        raise AssertionError("exhaustive decode comparison did not complete")
+    ev.record["observed"] = {"decode_compared": 65536, "families": families}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--probe", choices=("numerical", "software"), required=True)
+    parser.add_argument("--probe",
+                        choices=("numerical", "numerical-mutations", "compressed",
+                                 "software", "synthesis-minimum"),
+                        required=True)
     parser.add_argument("--repair-of")
     args = parser.parse_args()
     selectors = ["rtl/*.sv", "tests/*.py", "software/*", "design/*.md"]
@@ -177,8 +236,18 @@ def main():
     ev.record["argv"] = ["python3", "tests/probe.py", *sys.argv[1:]]
     ev.version("python3")
     try:
-        if args.probe == "numerical":
+        if args.probe in ("numerical", "numerical-mutations"):
             numerical(ev)
+            if args.probe == "numerical-mutations":
+                numerical_mutations(ev)
+        elif args.probe == "compressed":
+            compressed(ev)
+        elif args.probe == "synthesis-minimum":
+            synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
+                "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,
+                "BTB_ENTRIES": 1, "ICACHE_LINES": 1, "DCACHE_LINES": 1,
+                "ITLB_ENTRIES": 1, "DTLB_ENTRIES": 1, "BOOT_ENABLE": 0, "L2_SETS": 1,
+            })
         else:
             ev.run(["python3", "software/build.py", "--output",
                     ev.relative(ev.directory / ("boot-build-" + ev.directory.name.rsplit("-", 1)[1])),
