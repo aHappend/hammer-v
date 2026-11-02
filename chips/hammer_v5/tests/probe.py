@@ -27,6 +27,8 @@ from parser_check import parser_probe
 from mmu import mmu_probe
 from tlb import tlb_probe
 from local import local_probe
+from fabric import fabric_probe
+from coherence import coherence_probe
 
 
 LEAF_TB = r"""
@@ -246,7 +248,8 @@ def main():
                                  "l2", "vector", "linux-boot", "counters",
                                  "firmware-layout", "synthesis-default", "seed-matrix",
                                  "architectural-mutations", "parameters", "isa-matrix", "fetch",
-                                 "prefetch", "user-parser", "mmu", "tlb", "local-memory"),
+                                 "prefetch", "user-parser", "mmu", "tlb", "local-memory", "fabric",
+                                 "coherence"),
                         required=True)
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
@@ -317,6 +320,10 @@ def main():
             tlb_probe(ev)
         elif args.probe == "local-memory":
             local_probe(ev)
+        elif args.probe == "fabric":
+            fabric_probe(ev)
+        elif args.probe == "coherence":
+            coherence_probe(ev)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,

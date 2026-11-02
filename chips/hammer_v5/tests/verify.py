@@ -13,8 +13,10 @@ from probe import compressed, numerical
 from architectural import architectural_probe
 from boot import boot_probe
 from counters import counter_probe
+from coherence import coherence_probe
 from defects import remaining_mutations
 from fetch import fetch_probe
+from fabric import fabric_probe
 from integration import top_smoke
 from local import local_probe
 from memory import l2_probe
@@ -106,6 +108,8 @@ def behavior(ev):
         ("sv39-ptw", mmu_probe),
         ("tlb", tlb_probe),
         ("local-memory", local_probe),
+        ("fabric-arbitration", fabric_probe),
+        ("integrated-ownership-fences", coherence_probe),
         ("plic", plic_probe),
         ("architectural-mutants", architecture_defects),
         ("uart-parser-sensitivity", parser_probe),
@@ -147,6 +151,7 @@ def reproduce_worker(ev):
     component(ev, "compiled-custom", lambda child: architectural_probe(
         child, count=16, seeds=(17,), compact_only=True))
     component(ev, "coherence", prefetch_probe)
+    component(ev, "integrated-ownership-fences", coherence_probe)
     component(ev, "local-host-maintenance", local_probe)
     component(ev, "synthesis", lambda child: synthesis_probe(
         child, sorted((ROOT / "rtl").glob("*.sv")), MINIMUM))
