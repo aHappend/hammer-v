@@ -244,6 +244,7 @@ static void faults(void)
     memory[0] = task_state[0];
     HAMMER_VLOAD(0, memory);
     check_state(task_state, "successful custom user load");
+    memory[0] = ~task_state[0];
 
     require(hammer_call(HV_MPROTECT, mapped, 4096, 0) == 0, "PROT_NONE");
     expected_signal = HV_SIGSEGV;
@@ -255,7 +256,7 @@ static void faults(void)
     expected_address = (uintptr_t)memory;
     HAMMER_VSTORE(0, memory);
     require(!expected_signal, "missing protected vstore fault");
-    require(memory[0] == task_state[0], "faulting store memory changed");
+    require(memory[0] == ~task_state[0], "faulting store memory changed");
     require(hammer_call(HV_MPROTECT, mapped, 4096, 3) == 0, "PROT_READ_WRITE");
     expected_signal = HV_SIGBUS;
     expected_address = (uintptr_t)memory + 1;
@@ -509,6 +510,7 @@ static void directed(unsigned seed)
 
 static void tiles(unsigned seed, uint32_t *state)
 {
+    uint64_t results_i[8][8], results_b[4][4];
     uint64_t digest_i = UINT64_C(14695981039346656037);
     uint64_t digest_b = digest_i;
     for (unsigned row = 0; row < 8; ++row)
@@ -529,6 +531,7 @@ static void tiles(unsigned seed, uint32_t *state)
             uint64_t scalar = scalar_int(int_matrix_a[row], int_matrix_b[column], 8);
             uint64_t vector = vector_int(int_matrix_a[row], int_matrix_b[column], 8);
             require(vector == scalar, "INT8 8x8x64 tensor tile");
+            results_i[row][column] = vector;
             digest_i = hash_word(digest_i, vector);
         }
     for (unsigned row = 0; row < 4; ++row)
@@ -536,11 +539,26 @@ static void tiles(unsigned seed, uint32_t *state)
             uint64_t scalar = scalar_bf(bf_matrix_a[row], bf_matrix_b[column], 8);
             uint64_t vector = vector_bf(bf_matrix_a[row], bf_matrix_b[column], 8);
             require(vector == scalar, "BF16 4x4x32 tensor tile");
+            results_b[row][column] = vector;
             digest_b = hash_word(digest_b, vector);
         }
     uint64_t cycles = hammer_cycle() - start;
     uint64_t macs = hammer_hpm6() - mac_start;
     require(macs == 4096 + 512, "tensor MAC count");
+    for (unsigned kind = 0; kind < 2; ++kind) {
+        unsigned dimension = kind ? 4 : 8;
+        for (unsigned row = 0; row < dimension; ++row)
+            for (unsigned column = 0; column < dimension; ++column) {
+                begin("RESULT");
+                append(" seed="); decimal(seed);
+                append(kind ? " kind=bf16" : " kind=int8");
+                append(" row="); decimal(row);
+                append(" column="); decimal(column);
+                append(" result="); hex(kind ? results_b[row][column] :
+                                              results_i[row][column]);
+                emit();
+            }
+    }
     begin("TILE");
     append(" seed="); decimal(seed);
     append(" int8_shape=8x8x64 bf16_shape=4x4x32 int8_hash="); hex(digest_i);

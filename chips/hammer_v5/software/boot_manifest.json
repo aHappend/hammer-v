@@ -22,7 +22,7 @@
     }
   ],
   "software_inputs": [
-    "boot_manifest.json", "build.py", "patch_sources.py",
+    "boot_manifest.json", "LICENSE", "build.py", "patch_sources.py",
     "linux.config", "opensbi.config", "hammer_v5.dts",
     "hammer_v5_isa.h", "hammer_v5_context.S",
     "linux_hammer_v5.h", "linux_hammer_v5.c", "opensbi_hammer_v5.c",
@@ -33,6 +33,11 @@
     "riscv64-linux-gnu-gcc", "riscv64-linux-gnu-objcopy",
     "riscv64-unknown-elf-gcc", "riscv64-unknown-elf-objcopy"
   ],
+  "host_utilities": [
+    "sh", "awk", "sed", "grep", "find", "readlink", "cp", "ln",
+    "mkdir", "rm", "touch", "date", "sort", "head", "tr", "uname"
+  ],
+  "minimum_python": [3, 12],
   "memory": {
     "dram_base": "0x80000000",
     "dram_size": "0x80000000",

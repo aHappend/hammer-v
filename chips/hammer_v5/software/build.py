@@ -123,6 +123,11 @@ def main():
 
     try:
         manifest = json.loads((INPUTS / "boot_manifest.json").read_text())
+        minimum_python = tuple(manifest["minimum_python"])
+        if sys.version_info[:2] < minimum_python:
+            raise RuntimeError(
+                f"required Python {minimum_python[0]}.{minimum_python[1]}+ missing: "
+                f"running {sys.version_info.major}.{sys.version_info.minor}")
         for item in manifest["software_inputs"]:
             path = INPUTS / item
             if not path.is_file():
@@ -157,6 +162,9 @@ def main():
                                      "version": text.decode(errors="replace")}
             if version.returncode:
                 raise RuntimeError(f"tool version query failed: {tool}")
+        for tool in manifest["host_utilities"]:
+            if shutil.which(tool) is None:
+                raise FileNotFoundError(f"required installed host utility missing: {tool}")
 
         sources = []
         for source in manifest["sources"]:
@@ -181,7 +189,8 @@ def main():
         prefix = ["riscv64-unknown-elf-gcc", "-O2", "-std=gnu11", "-ffreestanding",
                   "-fno-builtin", "-fno-stack-protector", "-nostdlib", "-static",
                   "-mabi=lp64", "-march=rv64im_zicsr_zifencei", "-mstrict-align",
-                  "-mno-relax", "-mcmodel=medany", "-Wall", "-Wextra", "-Werror",
+                  "-mno-relax", "-mcmodel=medany", "-fno-tree-loop-distribute-patterns",
+                  "-Wall", "-Wextra", "-Werror",
                   "-Wl,--build-id=none", "-Wl,-e,_start",
                   f"-ffile-prefix-map={relative(INPUTS)}=software",
                   "-Isoftware"]

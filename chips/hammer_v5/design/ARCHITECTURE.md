@@ -2,7 +2,7 @@
 
 ## Current implementation boundary
 
-This is a **partial Designer implementation**, not a verified or accepted SoC.
+This is a **Designer source handoff**, not a verified or accepted SoC.
 The frozen acceptance contract is SPEC.md. No simulation, numerical comparison,
 synthesis, boot, benchmark, timing, physical HIL or independent verification is
 claimed here.
@@ -13,19 +13,22 @@ CSR/HPM and unified L2. All transitive RTL dependencies are present in `rtl/`;
 the delivered top does not instantiate modules from the reference directory.
 This is source integration, not evidence of correct execution or timing.
 
-Genuine boot software/build recipe, userland kernels and the Linux context patch
-remain to be implemented. `tests/*.py` belongs to independent Verifier and is
-not authored by Designer. A completed software implementation is still required
-before a ready design handoff. Independent functional checks follow that
-handoff and remain required for engineering acceptance.
+Pinned genuine OpenSBI 1.4 and Linux 6.6.1 source archives, the offline build
+recipe, userland kernels and the dedicated Linux context integration are present
+in `software/`. BOOT_SOFTWARE.md specifies their construction and ABI. They have
+not been built or booted by Designer. `tests/*.py` belongs to independent
+Verifier and is not authored by Designer. Independent software builds and
+functional checks follow this handoff and remain required for acceptance.
 
 Repository intake supplied no linked source index. The requested
 `design/GENERATIONAL_HANDOFF.md` was absent at inspection. No parent timing/PPA
 values are invented. The inspected V4 boot ROM transfers control to external
 memory; it is not OpenSBI/Linux. No genuine local OpenSBI, Linux, initramfs,
 image/configuration manifests or minimal userland sources were supplied.
-The authentic handoff and provenance-pinned genuine boot inputs remain open
-prerequisites, not skipped tests or successful baseline evidence.
+Designer subsequently obtained the two genuine public release archives at the
+URLs/checksums pinned in software/boot_manifest.json. This does not establish a
+parent or V5 boot result. The authentic generational handoff remains an open
+input; no timing/PPA values or successful baseline evidence substitute for it.
 
 ## Ancestry and integration plan
 
@@ -201,8 +204,9 @@ be rolled back by a later disposition pulse.
 Privilege gating is owned by the core, not a duplicated privilege register in
 the vector unit. vxctl is at 0x800, reset bit zero clear; U writes are illegal,
 M/S writes select bit zero, other bits read zero. U may read it.
-The kernel must save/restore every vector for task switch and signal context;
-no kernel patch can be claimed complete against an unspecified Linux source.
+The dedicated kernel integration targets only the manifest-pinned Linux 6.6.1
+source. It saves/restores every vector at task switch, forks and signal contexts;
+its actual execution and preservation must still be independently verified.
 
 ## Fetch assembly
 
@@ -293,13 +297,19 @@ writes override that edge's increment. Other control writes affect subsequent
 increments. Rollover is modulo 2^64. The inherited time/privilege/status/trap
 register behavior is retained; new C support preserves EPC bit one.
 
-The initial owned software inputs are:
+The owned software inputs are:
 
-| Input | Implemented content and remaining integration |
+| Input | Implemented content |
 |---|---|
 | software/hammer_v5_isa.h | GNU RISC-V custom-0 instruction macros and actual hardware cycle/retirement/HPM CSR reads; not a numerical reference model |
-| software/hammer_v5_context.S | Callable save/restore of all eight vectors through aligned kernel memory; not yet wired into a pinned kernel |
-| software/hammer_v5.dts | Actual UART, CLINT, PLIC and DRAM map; must still be compiled by the genuine boot build |
+| software/hammer_v5_context.S | Save/restore of all eight vectors through aligned memory, used by both the kernel context hooks and /init |
+| software/hammer_v5.dts | Actual UART, CLINT, PLIC and DRAM map, compiled with pinned Linux's built dtc |
+| software/boot_manifest.json and release archives | Genuine pinned Linux 6.6.1/OpenSBI 1.4 sources, SHA-256, licensing, software inputs, tools and boot addresses |
+| software/build.py, patch_sources.py, linux.config, opensbi.config | Offline fresh-output build and deterministic dedicated-kernel/firmware source integration; receipts and source/image hashes |
+| software/linux_hammer_v5.h, linux_hammer_v5.c | Eager per-thread context hooks, custom signal ABI and privileged counter-configuration device |
+| software/opensbi_hammer_v5.c | Compatible-matched platform override, counter permissions and vendor SBI service |
+| software/init_start.S, user_syscall.h, init.c | Freestanding genuine Linux /init, two tasks/nested signals, Sv39 faults, numerical kernels, matrix tiles and hardware cycle measurements |
+| software/hammer_ieee.h | Software-only exact integer IEEE reference, independent of RTL implementation; Verifier must additionally derive its own reference |
 
 ISA macro vector indices must be unsuffixed literal tokens 0..7, matching the
 instruction's vector field. The header uses C11 static assertions, GNU assembly
@@ -317,16 +327,19 @@ must only receive mapped kernel storage, not unchecked user signal-frame
 pointers. Kernel signal integration must copy and validate the entire saved
 state before restoring it, with normal user-copy fault handling.
 
-The pending pinned kernel patch must add per-thread state and wire eager
-save/restore at context switch, snapshot parent state on fork, zero state on
-exec, save state to an explicit extensible signal context, and restore it on
-sigreturn. Nested signals and signals on alternate stacks must preserve their
-own snapshots. Kernel context management must not issue arithmetic on user
-vectors or disable task preemption as a substitute for saving state. Kernel
-setup must enable vxctl for U and scounteren through bit six; OpenSBI must
-explicitly permit those reads in mcounteren and expose machine event programming
-needed by the benchmark. None of this kernel/OpenSBI wiring is claimed present
-merely because the two assembly helpers exist.
+`patch_sources.py` adds eight words to thread_struct and wires eager state
+switching, parent snapshot before fork, kernel-thread zero initialization, exec
+clearing and an extensible signal record. Signal data is copied to a complete
+kernel-local snapshot; sigreturn installs it only after record, terminator and
+alternate-stack validation. Nested signals use distinct frame snapshots.
+Preemption is enabled in linux.config. Only bounded snapshot/install sequences
+disable preemption; neither benchmarks nor tasks suppress normal scheduling.
+Context code never uses vector arithmetic. The compatible-matched kernel device
+enables vxctl and scounteren bits 0..6 only after probing the firmware ABI.
+The OpenSBI override restores mcounteren/scounteren permissions and default
+event selectors after generic initialization and provides validated machine
+event programming for the privileged kernel ioctl. These are implemented source
+hooks, not claims that Linux ran or task/signal preservation passed.
 
 The parent map is local instruction storage at zero, local data at 0x10000000,
 UART at 0x10010000, CLINT at 0x02000000, PLIC at 0x0c000000, and external
@@ -344,14 +357,16 @@ The unchanged V4 ROM sets hart ID a0=0, DTB a1=0x87e00000 and jumps to
 0x80000000. The genuine boot build must place firmware there, Linux at a declared
 nonoverlapping entry (planned 0x80200000), and DTB at the ROM's actual address.
 No stock virtual-machine UART or firmware banner replaces these interfaces.
-
-Future software inputs must pin OpenSBI/Linux revisions, configurations,
-checksums, licenses and compiler/build dependencies; `software/build.py` must
-consume project-local inputs with networking disabled and report absent
-prerequisites unsuccessfully. Genuine S-mode Linux and U-mode Sv39 execution,
-task/signal context management, tensor tiles and measured benchmark speed remain
-mandatory. Tool versions are not guessed from command discovery; record actual
-versions with execution receipts.
+The build uses firmware fw_jump at 0x80000000, Linux Image at 0x80200000,
+an embedded deterministic initramfs and DTB at 0x87e00000. Its images.json binds
+the actual resulting images to input/configuration hashes.
+The recipe uses only project-local inputs and contains no download, installation,
+simulation, synthesis, deployment or hardware-access operations. Missing inputs,
+checksum mismatches and missing tools fail explicitly. Independent verification
+must disable networking in its execution environment and record actual versions,
+build/configuration hashes, privilege/translation observations and user records.
+Genuine S-mode Linux/U-mode Sv39 execution, context preservation, tensor results
+and measured speed remain mandatory.
 
 ## Evidence boundary
 
@@ -370,11 +385,14 @@ Actual Designer diagnostics:
 | evidence/preparation/v5-leaves-syntax-20261102T174500022778Z/receipt.json | Prior ten-leaf static Icarus elaboration exited zero; no integrated top |
 | evidence/preparation/v5-integrated-syntax-20261102T175517006458Z/receipt.json | Icarus 12.0 default integrated top elaboration exited zero before V5 backing RAM visibility changes |
 | evidence/preparation/v5-ram-visibility-syntax-20261102T175919706197Z/receipt.json | Icarus 12.0, `iverilog -g2012 -t null -s hammer_v5_top rtl/*.sv`, final default integrated RTL elaboration exited zero |
+| evidence/preparation/v5-software-syntax-20261102T181354001989Z/receipt.json | GNU RISC-V unknown-elf GCC 13.2.0, `-fsyntax-only`, /init C and its three included headers exited zero before subsequent fault-sentinel and per-cell UART-result refinements; no object, binary or execution |
 
-The static receipts retain exact expanded argv, source snapshots/hashes,
-reference hashes, tool version, timing, exit and raw stdout/stderr. No functional
-failure or repair experiment is claimed. Software was not compiled; geometry,
+The RTL static receipts retain exact expanded argv, source snapshots/hashes,
+reference hashes, tool version, timing, exit and raw stdout/stderr. The C receipt
+retains its exact argv, four source snapshots/hashes, tool version, timing, exit
+and raw stdout/stderr. No functional failure or repair experiment is claimed.
+No software object/image was built; geometry,
 numerical, coherence, context, Linux and speed checks remain independent Verifier
 work. The backing RAM change follows a source-inspection finding, not a claimed
 simulation failure/repair. Later documentation updates do not change the RTL
-captured by the final static receipt.
+captured by the final RTL static receipt.
