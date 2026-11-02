@@ -199,13 +199,13 @@ def cases(seed=17, count=100):
     return rows
 
 
-def vector_probe(ev):
+def vector_probe(ev, count=100, seeds=(17,)):
     ev.version("iverilog", ("-V",))
     ev.version("vvp", ("-V",))
     ev.version("verilator")
     ev.version("make")
     ev.version("g++")
-    rows = cases()
+    rows = cases(seed=seeds[0], count=min(count, 100))
     table = ev.directory / "vector.txt"
     table.write_text("".join(
         f"{insn:08x} {rs1:016x} {rs2:016x} {loaded:016x} {expected:016x} "
@@ -232,8 +232,23 @@ def vector_probe(ev):
     ev.run(["verilator", "--binary", "--timing", "--top-module", "vector_tb",
             "-Wno-fatal", "--Mdir", ev.relative(objects), "-o", "vector-sim",
             ev.relative(tb), *map(ev.relative, sources)], "vector-verilator-compile")
-    text = ev.run(["./compile-obj/vector-sim"], "vector-verilator-run", cwd=ev.directory)
-    if summary not in text:
-        raise AssertionError("missing compiled vector-state comparisons")
-    ev.record["observed"]["verilator_compared"] = len(rows)
-    shutil.rmtree(objects)
+    observations = []
+    try:
+        for seed in seeds:
+            seeded = cases(seed, count)
+            seed_table = ev.directory / f"vector-seed-{seed}.txt"
+            seed_table.write_text("".join(
+                f"{insn:08x} {rs1:016x} {rs2:016x} {loaded:016x} {expected:016x} "
+                f"{flags} {mem_kind} {store:016x} {dispose} {tval:016x} {macs} {stall}\n"
+                for insn, rs1, rs2, loaded, expected, flags, mem_kind, store, dispose,
+                tval, macs, stall in seeded))
+            ev.record["generated_sha256"][ev.relative(seed_table)] = digest(seed_table)
+            text = ev.run(["./compile-obj/vector-sim", f"+cases={seed_table.name}"],
+                          f"vector-verilator-seed-{seed}", cwd=ev.directory)
+            if f"SUMMARY VECTOR compared={len(seeded)}" not in text:
+                raise AssertionError("missing compiled vector-state comparisons")
+            observations.append({"seed": seed, "per_operation": count,
+                                 "compared": len(seeded)})
+        ev.record["observed"]["compiled"] = observations
+    finally:
+        shutil.rmtree(objects)

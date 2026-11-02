@@ -57,6 +57,11 @@ class Evidence:
     def run(self, argv, label, cwd=ROOT, timeout_s=3600, expected_exit=0):
         stdout = self.directory / f"{label}.stdout.txt"
         stderr = self.directory / f"{label}.stderr.txt"
+        serial = 1
+        while stdout.exists() or stderr.exists():
+            serial += 1
+            stdout = self.directory / f"{label}-{serial}.stdout.txt"
+            stderr = self.directory / f"{label}-{serial}.stderr.txt"
         command = {
             "argv": [str(arg) for arg in argv], "cwd": self.relative(cwd),
             "start": stamp(), "timeout_s": timeout_s, "timed_out": False,

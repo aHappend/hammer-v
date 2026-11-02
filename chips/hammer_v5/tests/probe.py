@@ -18,6 +18,8 @@ from memory import l2_probe
 from vector import vector_probe
 from boot import boot_probe, firmware_diagnosis
 from counters import counter_probe
+from defects import remaining_mutations
+from parameters import parameter_probe
 
 
 LEAF_TB = r"""
@@ -235,7 +237,8 @@ def main():
                         choices=("numerical", "numerical-mutations", "compressed",
                                  "software", "synthesis-minimum", "plic", "top-smoke",
                                  "l2", "vector", "linux-boot", "counters",
-                                 "firmware-layout"),
+                                 "firmware-layout", "synthesis-default", "seed-matrix",
+                                 "architectural-mutations", "parameters"),
                         required=True)
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
@@ -270,6 +273,21 @@ def main():
             if not args.images:
                 raise ValueError("--images must identify a source-matched successful build")
             firmware_diagnosis(ev, args.images)
+        elif args.probe == "seed-matrix":
+            l2_probe(ev, count=2000, seeds=(17, 43, 89))
+            memory_observed = ev.record["observed"]
+            vector_probe(ev, count=1000, seeds=(17, 43, 89))
+            ev.record["observed"]["l2"] = memory_observed
+        elif args.probe == "synthesis-default":
+            synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {})
+        elif args.probe == "architectural-mutations":
+            top_smoke(ev)
+            l2_probe(ev)
+            vector_probe(ev)
+            counter_probe(ev)
+            remaining_mutations(ev)
+        elif args.probe == "parameters":
+            parameter_probe(ev)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,

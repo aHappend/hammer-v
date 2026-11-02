@@ -227,7 +227,7 @@ def cases(sets, seed, count):
     return rows
 
 
-def l2_probe(ev, count=200):
+def l2_probe(ev, count=200, seeds=(17,)):
     sources = [ROOT / "rtl/hammer_v5_l2.sv"]
     ev.version("iverilog", ("-V",))
     ev.version("vvp", ("-V",))
@@ -238,7 +238,7 @@ def l2_probe(ev, count=200):
     for sets in (1, 64):
         directory = ev.directory / f"sets-{sets}"
         directory.mkdir()
-        rows = cases(sets, 17, count)
+        rows = cases(sets, seeds[0], min(count, 200))
         table = directory / "memory.txt"
         table.write_text("".join(
             f"{cmd} {addr:016x} {value:016x} {mask:02x} {expected:016x} "
@@ -260,10 +260,22 @@ def l2_probe(ev, count=200):
         ev.run(["verilator", "--binary", "--timing", "--top-module", "memory_tb",
                 "-Wno-fatal", "--Mdir", ev.relative(objects), "-o", "memory-sim",
                 ev.relative(tb), *map(ev.relative, sources)], label + "-verilator-compile")
-        text = ev.run(["./compile-obj/memory-sim"], label + "-verilator", cwd=directory)
-        if summary not in text:
-            raise AssertionError("missing compiled L2 independent comparison count")
-        shutil.rmtree(objects)
-        observations.append({"sets": sets, "seed": 17, "compared": len(rows)})
+        try:
+            for seed in seeds:
+                seeded = cases(sets, seed, count)
+                seed_table = directory / f"memory-seed-{seed}.txt"
+                seed_table.write_text("".join(
+                    f"{cmd} {addr:016x} {value:016x} {mask:02x} {expected:016x} "
+                    f"{error} {inject} {stall} {hit}\n"
+                    for cmd, addr, value, mask, expected, error, inject, stall, hit in seeded))
+                ev.record["generated_sha256"][ev.relative(seed_table)] = digest(seed_table)
+                text = ev.run(["./compile-obj/memory-sim", f"+cases={seed_table.name}"],
+                              label + f"-verilator-seed-{seed}", cwd=directory)
+                if f"SUMMARY L2 compared={len(seeded)} " not in text:
+                    raise AssertionError("missing compiled L2 independent comparison count")
+                observations.append({"sets": sets, "seed": seed,
+                                     "random_operations": count, "compared": len(seeded)})
+        finally:
+            shutil.rmtree(objects)
         ev.record["observed"] = observations
         ev.save()
