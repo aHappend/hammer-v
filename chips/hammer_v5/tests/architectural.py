@@ -1,5 +1,4 @@
 """Compiled integrated ISA workloads with public retirement comparisons."""
-import os
 import random
 import shutil
 
@@ -41,7 +40,7 @@ def program(seed, count=1000):
         representatives.setdefault(family, half)
     for family, half in sorted(representatives.items()):
         for rd in (1, 2, *range(8, 16)):
-            constant(rd, 0x80010000)
+            constant(rd, 0x80100000)
         word, _, _ = decode(half)
         if family in ("beqz", "bnez"):
             emit(iword(0x13, (word >> 15) & 31, 0, 0, family == "bnez"))
@@ -79,7 +78,7 @@ def program(seed, count=1000):
             rng.choice((0, 4, 5, 6, 7)) if opcode == 0x3B and f7 == 1 else
             rng.choice((0, 1, 5)) if opcode == 0x3B else rng.randrange(8))
         emit(rword(opcode, rng.randrange(32), f3, 5, 6, f7))
-    constant(8, 0x80010000)
+    constant(8, 0x80100000)
     constant(9, 0x8877665544332211)
     for f3 in range(4):
         emit(sword(8, 9, f3, 0))

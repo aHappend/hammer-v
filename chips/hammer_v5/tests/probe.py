@@ -21,6 +21,8 @@ from counters import counter_probe
 from defects import remaining_mutations
 from parameters import parameter_probe
 from architectural import architectural_probe
+from fetch import fetch_probe
+from prefetch import prefetch_probe
 
 
 LEAF_TB = r"""
@@ -239,7 +241,8 @@ def main():
                                  "software", "synthesis-minimum", "plic", "top-smoke",
                                  "l2", "vector", "linux-boot", "counters",
                                  "firmware-layout", "synthesis-default", "seed-matrix",
-                                 "architectural-mutations", "parameters", "isa-matrix"),
+                                 "architectural-mutations", "parameters", "isa-matrix", "fetch",
+                                 "prefetch"),
                         required=True)
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
@@ -293,6 +296,10 @@ def main():
             parameter_probe(ev)
         elif args.probe == "isa-matrix":
             architectural_probe(ev)
+        elif args.probe == "fetch":
+            fetch_probe(ev)
+        elif args.probe == "prefetch":
+            prefetch_probe(ev)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,
