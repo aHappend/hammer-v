@@ -23,6 +23,9 @@ from parameters import parameter_probe
 from architectural import architectural_probe
 from fetch import fetch_probe
 from prefetch import prefetch_probe
+from parser_check import parser_probe
+from mmu import mmu_probe
+from tlb import tlb_probe
 
 
 LEAF_TB = r"""
@@ -242,7 +245,7 @@ def main():
                                  "l2", "vector", "linux-boot", "counters",
                                  "firmware-layout", "synthesis-default", "seed-matrix",
                                  "architectural-mutations", "parameters", "isa-matrix", "fetch",
-                                 "prefetch"),
+                                 "prefetch", "user-parser", "mmu", "tlb"),
                         required=True)
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
@@ -304,6 +307,12 @@ def main():
             fetch_probe(ev)
         elif args.probe == "prefetch":
             prefetch_probe(ev)
+        elif args.probe == "user-parser":
+            parser_probe(ev)
+        elif args.probe == "mmu":
+            mmu_probe(ev)
+        elif args.probe == "tlb":
+            tlb_probe(ev)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,
