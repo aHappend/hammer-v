@@ -16,6 +16,11 @@ def apply(linux, opensbi, inputs):
     # Archive symbol hiding is unnecessary for this standalone firmware image.
     replace(opensbi / "Makefile",
             "ELFFLAGS\t+=\t-Wl,--exclude-libs,ALL\n", "")
+    replace(opensbi / "firmware/fw_base.ldS",
+            "\t. = ALIGN(1 << LOG2CEIL((SIZEOF(.rodata) + SIZEOF(.text)\n"
+            "\t\t\t\t+ SIZEOF(.dynsym) + SIZEOF(.rela.dyn))));",
+            "\t/* Include section padding; .dynsym need not exist without PIE. */\n"
+            "\t. = ALIGN(1 << LOG2CEIL(. - FW_TEXT_START));")
     for entrypoint in ("defconfig.py", "genconfig.py"):
         replace(opensbi / "scripts/Kconfiglib" / entrypoint,
                 "import kconfiglib",

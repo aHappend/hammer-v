@@ -35,6 +35,8 @@ always @(posedge clk or negedge clk) if(!rst_n) reset_check();
 integer file,status,kind,expected_flags,dispose,macs,mem_kind,compared=0;
 integer stall,age,j;
 reg [63:0] expected,expected_store,loaded,expected_tval;
+reg [31:0] input_insn;
+reg [63:0] input_rs1,input_rs2;
 reg [1023:0] cases;
 task response_check;
 begin
@@ -53,11 +55,12 @@ initial begin
  if(!file) $fatal(1,"VECTOR missing independent cases");
  while(!$feof(file)) begin
   status=$fscanf(file,"%h %h %h %h %h %d %d %h %d %h %d %d\n",
-    req_insn,req_rs1_data,req_rs2_data,loaded,expected,
+    input_insn,input_rs1,input_rs2,loaded,expected,
     expected_flags,mem_kind,expected_store,dispose,expected_tval,macs,stall);
   if(status!=12) $fatal(1,"VECTOR malformed case");
   @(negedge clk); #1;
   if(req_ready !== 1'b1) $fatal(1,"VECTOR missing idle readiness");
+  req_insn=input_insn; req_rs1_data=input_rs1; req_rs2_data=input_rs2;
   req_valid=1;
   @(posedge clk);
   if(rsp_valid !== 1'b0 || event_macs !== 0) $fatal(1,"VECTOR premature result");
@@ -68,8 +71,10 @@ initial begin
       mem_req_write !== (mem_kind==2) ||
       mem_req_wdata !== expected_store ||
       mem_req_wstrb !== (mem_kind==2 ? 8'hff : 8'h00))
-    $fatal(1,"VECTOR MEMORY MISMATCH case=%d expected_store=%h observed=%h addr=%h",
-      compared,expected_store,mem_req_wdata,mem_req_addr);
+    $fatal(1,"VECTOR MEMORY MISMATCH case=%d insn=%h rs1=%h valid=%b write=%b flags=%b ready=%b expected_store=%h observed=%h addr=%h",
+      compared,req_insn,req_rs1_data,mem_req_valid,mem_req_write,
+      {rsp_illegal,rsp_mem_error,rsp_page_fault},req_ready,
+      expected_store,mem_req_wdata,mem_req_addr);
    repeat(3) begin
     @(posedge clk); #1;
     if(mem_req_valid !== 1'b1 || mem_req_addr !== req_rs1_data ||
