@@ -113,6 +113,21 @@ def checked_images(ev, directory):
     return directory, manifest
 
 
+def firmware_diagnosis(ev, images):
+    directory, _ = checked_images(ev, images)
+    ev.version("riscv64-unknown-elf-addr2line")
+    ev.version("riscv64-unknown-elf-objdump")
+    ev.run(["riscv64-unknown-elf-addr2line", "-f", "-e",
+            ev.relative(directory / "opensbi.elf"), "0x8000dde0", "0x80002ff2"],
+           "boot-tail-functions")
+    for start, end, label in (
+            ("0x8000dd80", "0x8000de80", "caller"),
+            ("0x80002fe0", "0x80003030", "comparison")):
+        ev.run(["riscv64-unknown-elf-objdump", "-d",
+                "--start-address=" + start, "--stop-address=" + end,
+                ev.relative(directory / "opensbi.elf")], "boot-tail-" + label)
+
+
 HARNESS = r"""
 #include "Vhammer_v5_top.h"
 #include "verilated.h"
@@ -126,6 +141,7 @@ HARNESS = r"""
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <climits>
 
 using Page = std::array<uint8_t,4096>;
 struct Memory {
@@ -153,11 +169,13 @@ struct Memory {
   char c; while(f.get(c)) write(address++,uint8_t(c));
  }
 };
+__ISA_ORACLE__
 struct Record {uint64_t cycle,pc,next,data; uint32_t insn; unsigned rd,priv;};
 int main(int argc,char **argv) {
  VerilatedContext context; context.commandArgs(argc,argv);
  Vhammer_v5_top d(&context);
  Memory memory;
+ ISA isa;
  std::deque<Record> tail;
  uint64_t cycles=0,retired=0,reads=0,writes=0,sretired=0,uretired=0;
  uint64_t translated=0,custom=0,traps=0;
@@ -167,6 +185,8 @@ int main(int argc,char **argv) {
   if(argc!=6) throw std::runtime_error("usage: sim firmware kernel dtb cycles goal");
   memory.load(argv[1],0x80000000); memory.load(argv[2],0x80200000);
   memory.load(argv[3],0x87e00000);
+  isa.bytes.load(argv[1],0x80000000); isa.bytes.load(argv[2],0x80200000);
+  isa.bytes.load(argv[3],0x87e00000);
   uint64_t limit=std::stoull(argv[4]);
   std::string goal=argv[5],line;
   bool aw=false,wd=false,read_pending=false,write_pending=false;
@@ -206,6 +226,7 @@ __INITIALIZE_INPUTS__
     throw std::runtime_error("AXI read geometry");
    if(!reset && d.retire_valid) {
     retired++;
+    isa.compare(d,cycles);
     tail.push_back({cycles,d.retire_pc,d.retire_next_pc,d.retire_rd_data,
                     d.retire_insn,d.retire_rd,d.retire_priv});
     if(tail.size()>32) tail.pop_front();
@@ -324,7 +345,12 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
     initialization = "\n".join(
         f"  d.{name}=0;" for direction, _, name in interface if direction == "input")
     harness = ev.directory / "boot.cpp"
-    harness.write_text(HARNESS.replace("__INITIALIZE_INPUTS__", initialization))
+    from rv64 import CPP, decode_image
+    table = ev.directory / "decode.bin"
+    decode_image(table)
+    harness.write_text(HARNESS.replace("__INITIALIZE_INPUTS__", initialization)
+                      .replace("__ISA_ORACLE__", CPP))
+    ev.record.setdefault("generated_sha256", {})[ev.relative(table)] = digest(table)
     ev.record.setdefault("generated_sha256", {})[ev.relative(harness)] = digest(harness)
     ev.record["scope"] = {
         "top": "hammer_v5_top", "public_pin_only": True, "goal": goal,

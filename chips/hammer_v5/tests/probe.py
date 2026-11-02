@@ -16,7 +16,8 @@ from plic import plic_probe
 from integration import top_smoke
 from memory import l2_probe
 from vector import vector_probe
-from boot import boot_probe
+from boot import boot_probe, firmware_diagnosis
+from counters import counter_probe
 
 
 LEAF_TB = r"""
@@ -233,7 +234,8 @@ def main():
     parser.add_argument("--probe",
                         choices=("numerical", "numerical-mutations", "compressed",
                                  "software", "synthesis-minimum", "plic", "top-smoke",
-                                 "l2", "vector", "linux-boot"),
+                                 "l2", "vector", "linux-boot", "counters",
+                                 "firmware-layout"),
                         required=True)
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
@@ -262,6 +264,12 @@ def main():
             if not args.images:
                 raise ValueError("--images must identify a source-matched successful build")
             boot_probe(ev, args.images, args.cycles)
+        elif args.probe == "counters":
+            counter_probe(ev)
+        elif args.probe == "firmware-layout":
+            if not args.images:
+                raise ValueError("--images must identify a source-matched successful build")
+            firmware_diagnosis(ev, args.images)
         elif args.probe == "synthesis-minimum":
             synthesis_probe(ev, sorted((ROOT / "rtl").glob("*.sv")), {
                 "IMEM_WORDS": 1, "DMEM_WORDS": 1, "PRED_MODE": 0,
