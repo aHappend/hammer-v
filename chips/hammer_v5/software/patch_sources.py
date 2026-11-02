@@ -52,23 +52,32 @@ def apply(linux, opensbi, inputs):
     signal = k / "kernel/signal.c"
     replace(signal, "#include <asm/cacheflush.h>",
             "#include <asm/cacheflush.h>\n#include <asm/hammer_v5.h>")
-    replace(signal, "\t__u32 rsvd;\n\tlong err;",
-            "\t__u32 rsvd;\n\tlong err;\n\tu64 hammer_state[8];\n"
-            "\tbool hammer_seen = false;")
+    replace(signal, "\tstruct sigcontext __user *sc)\n{",
+            "\tstruct sigcontext __user *sc, u64 *hammer_state,\n"
+            "\tbool *hammer_seen)\n{")
     replace(signal, "\t\t\treturn 0;\n\t\tcase RISCV_V_MAGIC:",
-            "\t\t\tif (hammer_v5_present && !hammer_seen)\n"
+            "\t\t\tif (hammer_v5_present && !*hammer_seen)\n"
             "\t\t\t\treturn -EINVAL;\n"
-            "\t\t\tif (hammer_seen)\n"
-            "\t\t\t\thammer_v5_install(hammer_state);\n"
             "\t\t\treturn 0;\n"
             "\t\tcase HAMMER_V5_MAGIC:\n"
-            "\t\t\tif (!hammer_v5_present || hammer_seen ||\n"
+            "\t\t\tif (!hammer_v5_present || *hammer_seen ||\n"
             "\t\t\t    size != HAMMER_V5_SC_SIZE)\n"
             "\t\t\t\treturn -EINVAL;\n"
             "\t\t\terr = copy_from_user(hammer_state, sc_ext_ptr,\n"
-            "\t\t\t\t\t     sizeof(hammer_state));\n"
-            "\t\t\thammer_seen = true;\n"
+            "\t\t\t\t\t     8 * sizeof(*hammer_state));\n"
+            "\t\t\t*hammer_seen = true;\n"
             "\t\t\tbreak;\n\t\tcase RISCV_V_MAGIC:")
+    replace(signal, "\tsigset_t set;\n",
+            "\tsigset_t set;\n\tu64 hammer_state[8];\n"
+            "\tbool hammer_seen = false;\n")
+    replace(signal, "\tif (restore_sigcontext(regs, &frame->uc.uc_mcontext))",
+            "\tif (restore_sigcontext(regs, &frame->uc.uc_mcontext,\n"
+            "\t\t\t       hammer_state, &hammer_seen))")
+    replace(signal, "\tif (restore_altstack(&frame->uc.uc_stack))\n"
+            "\t\tgoto badframe;",
+            "\tif (restore_altstack(&frame->uc.uc_stack))\n"
+            "\t\tgoto badframe;\n"
+            "\tif (hammer_seen)\n\t\thammer_v5_install(hammer_state);")
     replace(signal, "\tframe_size = sizeof(*frame);",
             "\tframe_size = sizeof(*frame);\n"
             "\tif (hammer_v5_present ||\n"

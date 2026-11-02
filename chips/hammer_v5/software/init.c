@@ -5,6 +5,7 @@
 
 extern void hammer_vx_save(uint64_t *);
 extern void hammer_vx_restore(const uint64_t *);
+extern void hammer_try_vxctl_write(void);
 
 static char line[768];
 static unsigned line_used;
@@ -19,12 +20,37 @@ static uint64_t int_a[32], int_b[32], bf_a[64], bf_b[64];
 static uint64_t int_matrix_a[8][8], int_matrix_b[8][8];
 static uint64_t bf_matrix_a[4][8], bf_matrix_b[4][8];
 
-static unsigned length(const char *text)
+void *memcpy(void *destination, const void *source, size_t count)
 {
-    unsigned n = 0;
-    while (text[n])
-        ++n;
-    return n;
+    uint8_t *d = destination;
+    const uint8_t *s = source;
+    for (size_t i = 0; i < count; ++i)
+        d[i] = s[i];
+    return destination;
+}
+
+void *memset(void *destination, int value, size_t count)
+{
+    uint8_t *d = destination;
+    for (size_t i = 0; i < count; ++i)
+        d[i] = (uint8_t)value;
+    return destination;
+}
+
+void *memmove(void *destination, const void *source, size_t count)
+{
+    uint8_t *d = destination;
+    const uint8_t *s = source;
+    if ((uintptr_t)d <= (uintptr_t)s) {
+        for (size_t i = 0; i < count; ++i)
+            d[i] = s[i];
+    } else {
+        while (count) {
+            --count;
+            d[count] = s[count];
+        }
+    }
+    return destination;
 }
 
 static void append(const char *text)
@@ -158,6 +184,9 @@ static void signal_handler(int signal, void *info, void *context)
     (void)info;
     (void)context;
     uint64_t clobbered[8] __attribute__((aligned(8)));
+    require((uintptr_t)clobbered >= (uintptr_t)signal_stack &&
+            (uintptr_t)clobbered < (uintptr_t)signal_stack + sizeof(signal_stack),
+            "signal alternate stack");
     if (signal == HV_SIGUSR2) {
         ++nested_count;
         clobber_state(UINT64_C(0x8877665544332211), clobbered);
@@ -188,7 +217,7 @@ static void install_handlers(void)
 {
     hammer_stack stack = {signal_stack, 0, 0, sizeof(signal_stack)};
     hammer_sigaction action = {signal_handler,
-        HV_SA_SIGINFO | HV_SA_ONSTACK | HV_SA_NODEFER, 0, 0};
+        HV_SA_SIGINFO | HV_SA_ONSTACK | HV_SA_NODEFER, 0};
     require(hammer_call(HV_SIGALTSTACK, (long)&stack, 0, 0) == 0, "sigaltstack");
     require(hammer_syscall(HV_RT_SIGACTION, HV_SIGUSR1, (long)&action,
                           0, 8, 0, 0) == 0, "SIGUSR1 handler");
@@ -237,6 +266,10 @@ static void faults(void)
     expected_address = (uintptr_t)memory + 4096;
     HAMMER_VLOAD(0, (uint8_t *)memory + 4096);
     require(!expected_signal, "missing unmapped vload fault");
+    expected_signal = HV_SIGILL;
+    expected_address = (uintptr_t)hammer_try_vxctl_write;
+    hammer_try_vxctl_write();
+    require(!expected_signal, "U vxctl write was not denied");
     check_state(task_state, "fault sigreturn state");
     require(hammer_call(HV_MUNMAP, mapped, 4096, 0) == 0, "unmap first page");
     begin("FAULTS");
@@ -267,7 +300,7 @@ static void context_task(unsigned identity)
             "task signal counts");
     begin("CONTEXT");
     append(" task="); decimal(identity);
-    append(" switches=64 signals=64 nested=64 vr0_to_vr7=1");
+    append(" yield_requests=64 signals=64 nested=64 vr0_to_vr7=1");
     emit();
 }
 
@@ -391,6 +424,15 @@ static void benchmark(unsigned seed, unsigned bf)
     }
     uint64_t mac_delta = hammer_hpm6() - mac_start;
     require(mac_delta == 32 * 256, "complete benchmark committed MAC delta");
+    for (unsigned repeat = 0; repeat < 32; ++repeat) {
+        begin("SAMPLE");
+        append(" seed="); decimal(seed);
+        append(bf ? " kind=bf16" : " kind=int8");
+        append(" repeat="); decimal(repeat);
+        append(" scalar_complete_cycles="); decimal(scalar_cycles[repeat]);
+        append(" vector_complete_cycles="); decimal(vector_cycles[repeat]);
+        emit();
+    }
     uint64_t sc = median(scalar_cycles), vc = median(vector_cycles);
     begin("BENCH");
     append(" seed="); decimal(seed);

@@ -16,5 +16,12 @@ _start:
     ecall
 1:  j 1b
     .size _start, .-_start
+    .balign 4
+    .globl hammer_try_vxctl_write
+    .type hammer_try_vxctl_write, @function
+hammer_try_vxctl_write:
+    csrrw zero, 0x800, zero
+    ret
+    .size hammer_try_vxctl_write, .-hammer_try_vxctl_write
     .option pop
     .section .note.GNU-stack, "", @progbits

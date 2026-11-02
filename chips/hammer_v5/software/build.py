@@ -140,11 +140,20 @@ def main():
             if shutil.which(tool) is None:
                 raise FileNotFoundError(f"required installed build tool missing: {tool}")
             argv = [tool, "--version"] if tool != "perl" else [tool, "-v"]
+            start = stamp()
             version = subprocess.run(argv, cwd=ROOT, env=env,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            end = stamp()
+            version_out = out / f"{tool}.version.stdout.txt"
+            version_err = out / f"{tool}.version.stderr.txt"
+            version_out.write_bytes(version.stdout)
+            version_err.write_bytes(version.stderr)
             text = version.stdout + version.stderr
             stdout.write(b"\nVERSION " + tool.encode() + b"\n" + text)
-            receipt["tools"][tool] = {"argv": argv, "exit": version.returncode,
+            receipt["tools"][tool] = {"argv": argv, "cwd": ".", "start": start,
+                                     "end": end, "exit": version.returncode,
+                                     "stdout": relative(version_out),
+                                     "stderr": relative(version_err),
                                      "version": text.decode(errors="replace")}
             if version.returncode:
                 raise RuntimeError(f"tool version query failed: {tool}")
@@ -159,6 +168,8 @@ def main():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.apply(linux, opensbi, INPUTS)
+        shutil.copyfile(INPUTS / "opensbi.config",
+                        opensbi / "platform/generic/configs/hammer_v5_defconfig")
         patched = {}
         for source_dir in sources:
             for path in sorted(source_dir.rglob("*")):
@@ -183,8 +194,8 @@ def main():
         shutil.copyfile(INPUTS / "linux.config", kbuild / ".config")
         config = kbuild / ".config"
         with config.open("a") as stream:
-            # Linux treats this as relative to its source working directory.
-            cpio_relative = os.path.relpath(out / "initramfs.cpio", linux)
+            # Kbuild executes recipes from the O= output directory.
+            cpio_relative = os.path.relpath(out / "initramfs.cpio", kbuild)
             stream.write(f'CONFIG_INITRAMFS_SOURCE="{cpio_relative}"\n')
         kernel_make = ["make", "-C", relative(linux),
                        "O=" + os.path.relpath(kbuild, linux), "ARCH=riscv",
@@ -209,8 +220,6 @@ def main():
              "-p", "4096", "-o", relative(out / "hammer_v5.dtb"),
              "software/hammer_v5.dts"])
 
-        shutil.copyfile(INPUTS / "opensbi.config",
-                        opensbi / "platform/generic/configs/hammer_v5_defconfig")
         obuild = out / "opensbi-build"
         firmware_make = ["make", "-C", relative(opensbi), "O=" + relative(obuild),
                          "PLATFORM=generic", "PLATFORM_DEFCONFIG=hammer_v5_defconfig",

@@ -36,7 +36,6 @@ static inline long hammer_call(long number, long a0, long a1, long a2)
 typedef struct {
     void (*handler)(int, void *, void *);
     unsigned long flags;
-    void (*restorer)(void);
     uint64_t mask;
 } hammer_sigaction;
 
@@ -56,6 +55,7 @@ typedef struct {
 } hammer_ucontext;
 
 _Static_assert(offsetof(hammer_ucontext, gpr) == 176, "pinned RV64 ucontext ABI");
+_Static_assert(sizeof(hammer_sigaction) == 24, "pinned RV64 rt_sigaction ABI");
 
 #define HV_SIGUSR1 10
 #define HV_SIGUSR2 12
