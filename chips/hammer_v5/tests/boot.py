@@ -8,6 +8,8 @@ import tarfile
 from evidence import ROOT, digest, remaining_seconds, stamp
 from integration import ports
 
+MODEL_FLAGS = ("-O3", "--flatten")
+
 
 def firmware_layout(ev, directory):
     elf = directory / "opensbi.elf"
@@ -252,7 +254,7 @@ __ISA_ORACLE__
 struct Record {uint64_t cycle,pc,next,data; uint32_t insn; unsigned rd,priv;};
 int main(int argc,char **argv) {
  std::signal(SIGTERM, [](int) {stop_requested=1;});
- VerilatedContext context; context.commandArgs(argc,argv);
+ VerilatedContext context; context.threads(1); context.commandArgs(argc,argv);
  Vhammer_v5_top d(&context);
  Memory memory;
  ISA isa;
@@ -521,6 +523,7 @@ def compile_model(ev, text=HARNESS, parameters=None):
     objects.mkdir()
     sources = sorted((ROOT / "rtl").glob("*.sv"))
     ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
+            *MODEL_FLAGS,
             "-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3",
             "--top-module", "hammer_v5_top",
             *[f"-G{name}={value}" for name, value in (parameters or {}).items()],

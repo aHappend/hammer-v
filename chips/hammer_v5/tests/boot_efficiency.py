@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from boot import HARNESS, checked_images, custom_fault_expectations
+from boot import HARNESS, MODEL_FLAGS, checked_images, custom_fault_expectations
 from boot_support import CPP as SUPPORT
 from evidence import Evidence, ROOT, digest
 from integration import ports
@@ -98,6 +98,8 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False):
     objects.mkdir()
     options = (["-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3"]
                if optimized else ["-CFLAGS", "-O3"])
+    if optimized:
+        options += MODEL_FLAGS
     if profile:
         ev.version("gprof")
         options += ["-CFLAGS", "-pg", "-LDFLAGS", "-pg"]
@@ -153,6 +155,7 @@ def main():
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=0)
     parser.add_argument("--profile-only", action="store_true",
                         help="sample the current compiled model with existing GNU gprof")
+    parser.add_argument("--options-only", action="store_true", help="retain installed compiler options")
     args = parser.parse_args()
     if not 1 <= args.cycles <= 20000000:
         raise ValueError("efficiency diagnostic requires 1..20000000 edges")
@@ -162,6 +165,11 @@ def main():
                           "prefetch": args.prefetch, "no_linux_acceptance": True}
     try:
         ev.version("python3")
+        if args.options_only:
+            ev.version("verilator")
+            ev.run(["verilator", "--help"], "verilator-help")
+            print(json.dumps({"exit": 0, "receipt": ev.finish(0)}))
+            return 0
         baseline = (ROOT / args.baseline).resolve()
         baseline.relative_to(ROOT)
         baseline_receipt = args.baseline_receipt or args.repair_of
