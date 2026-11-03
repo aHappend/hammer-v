@@ -8,7 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from evidence import Evidence, ROOT, digest, stamp
+from evidence import Evidence, ROOT, digest, remaining_seconds, stamp
 from probe import compressed, numerical
 from architectural import architectural_probe
 from boot import boot_probe
@@ -57,6 +57,7 @@ def bind_outputs(ev):
 
 
 def component(parent, name, execute, selectors=("rtl/*.sv", "tests/*.py")):
+    remaining_seconds()
     child = Evidence("v5-" + parent.record["suite"] + "-" + name,
                      selectors, preparation=False)
     child.record["invoked_by"] = parent.relative(parent.directory / "receipt.json")
@@ -115,6 +116,7 @@ def behavior(ev):
         ("uart-parser-sensitivity", parser_probe),
     )
     for name, execute in checks:
+        remaining_seconds()
         selectors = ("rtl/*.sv", "tests/*.py")
         if name in ("top-smoke", "architectural-mutants"):
             selectors += ("hammer_v4_reference/rtl/hammer_v4_top.sv",)

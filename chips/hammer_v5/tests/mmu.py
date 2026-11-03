@@ -139,7 +139,11 @@ initial begin
  $display("SUMMARY PTW compared=%d page_table_reads=%d",compared,lookups);
  $finish;
 end
+`ifdef VERILATOR
 initial begin #50000000; $fatal(1,"PTW CYCLE LIMIT 5000000"); end
+`else
+initial begin #5000000; $fatal(1,"PTW INTERPRETED CYCLE LIMIT 500000"); end
+`endif
 endmodule
 """
 

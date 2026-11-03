@@ -143,6 +143,7 @@ HARNESS = r"""
 #include <unordered_map>
 #include <climits>
 #include <set>
+#include <map>
 
 using Page = std::array<uint8_t,4096>;
 struct Memory {
@@ -180,10 +181,27 @@ int main(int argc,char **argv) {
  std::deque<Record> tail;
  uint64_t cycles=0,retired=0,reads=0,writes=0,sretired=0,uretired=0;
  uint64_t translated=0,custom=0,traps=0;
+ uint64_t last_pc=0,mtimer=0,stimer=0,timer_calls=0,time_reads=0;
+ std::map<uint64_t,uint64_t> pc_samples;
+ auto wall_start=std::chrono::steady_clock::now();
  std::ofstream uart("uart.txt",std::ios::binary), milestones("milestones.txt"),
                diagnostic("retirement-tail.txt"), counters("counter-reads.txt"),
                uart_events("uart-events.txt"), ecalls("user-ecalls.txt"),
                pids("user-pids.txt");
+ std::ofstream timing("timekeeping-events.txt");
+ auto profile=[&]() {
+  std::ofstream samples("pc-samples.txt");
+  for(const auto &entry:pc_samples)
+   samples<<std::hex<<entry.first<<std::dec<<" "<<entry.second<<"\n";
+  double seconds=std::chrono::duration<double>(
+      std::chrono::steady_clock::now()-wall_start).count();
+  std::ofstream report("boot-profile.json");
+  report<<"{\"cycles\":"<<cycles<<",\"seconds\":"<<seconds
+   <<",\"cycles_per_second\":"<<(seconds>0?cycles/seconds:0)
+   <<",\"m_timer_traps\":"<<mtimer<<",\"s_timer_traps\":"<<stimer
+   <<",\"sbi_timer_calls\":"<<timer_calls<<",\"time_reads\":"<<time_reads
+   <<",\"sample_period_cycles\":1024}\n";
+ };
  std::set<uint64_t> observed_pids;
  bool getpid_pending=false;
  uint64_t getpid_return_pc=0;
@@ -232,6 +250,12 @@ __INITIALIZE_INPUTS__
     throw std::runtime_error("AXI read geometry");
    if(!reset && d.retire_valid) {
     retired++;
+    last_pc=d.retire_pc;
+    if((d.retire_insn>>20)==0xc01 && (d.retire_insn&127)==0x73 &&
+       ((d.retire_insn>>12)&7) && d.retire_rd_we) {
+     if(++time_reads<=16)
+      timing<<"TIME "<<cycles<<" "<<d.retire_rd_data<<"\n";
+    }
     if(d.retire_priv==0 && getpid_pending && d.retire_pc==getpid_return_pc) {
      if(!isa.x[10] || isa.x[10]>0x100000ULL)
       throw std::runtime_error("invalid actual U getpid return");
@@ -269,6 +293,13 @@ __INITIALIZE_INPUTS__
    }
    if(!reset && d.trap_valid) {
     traps++;
+    if(d.trap_interrupt && d.trap_cause==7) mtimer++;
+    if(d.trap_interrupt && d.trap_cause==5) stimer++;
+    if(!d.trap_interrupt && d.trap_cause==9 &&
+       (isa.x[17]==0 || (isa.x[17]==0x54494d45 && isa.x[16]==0))) {
+     if(++timer_calls<=16)
+      timing<<"SET_TIMER "<<cycles<<" "<<isa.x[10]<<"\n";
+    }
     if(!d.trap_interrupt && d.trap_cause==8) {
      ecalls<<cycles<<" "<<isa.x[17]<<" "<<isa.x[10]<<"\n";
      if(isa.x[17]==172) {getpid_pending=true;getpid_return_pc=d.trap_pc+4;}
@@ -325,11 +356,13 @@ __INITIALIZE_INPUTS__
     }
    }
    last_tx=tx;
+   if((cycles&1023)==0) pc_samples[last_pc]++;
    auto now=std::chrono::steady_clock::now();
    if(now>=next_heartbeat) {
     std::cout<<"PROGRESS boot cycles="<<cycles<<" retired="<<retired
      <<" reads="<<reads<<" S="<<sretired<<" U="<<uretired<<std::endl;
     uart.flush(); milestones.flush();
+    profile();
     next_heartbeat=now+std::chrono::seconds(30);
    }
    if(context.gotFinish()) throw std::runtime_error("RTL terminated before boot goal");
@@ -355,6 +388,7 @@ __INITIALIZE_INPUTS__
   d.final(); return 0;
  } catch(const std::exception &e) {
   uart.flush(); milestones.flush();
+  profile();
   for(const auto &r:tail) diagnostic<<"cycle="<<r.cycle<<" pc="<<std::hex<<r.pc
    <<" next="<<r.next<<" insn="<<r.insn<<" rd="<<r.rd<<" data="<<r.data
    <<" priv="<<r.priv<<std::dec<<"\n";

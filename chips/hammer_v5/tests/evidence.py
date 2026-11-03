@@ -6,9 +6,75 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
+DEADLINE_ENV = "HAMMER_V5_CHECK_DEADLINE"
+_deadline = None
+
+
+def invocation_deadline():
+    global _deadline
+    if _deadline is None:
+        inherited = float(os.environ.get(DEADLINE_ENV, "inf"))
+        _deadline = min(inherited, time.time() + 2700)
+        if not 0 < _deadline < float("inf"):
+            raise ValueError("invalid inherited verification deadline")
+        os.environ[DEADLINE_ENV] = str(_deadline)
+    return _deadline
+
+
+def remaining_seconds():
+    remaining = invocation_deadline() - time.time()
+    if remaining <= 0:
+        raise RuntimeError("absolute verification invocation deadline exhausted")
+    return remaining
+
+
+def process_identity(pid):
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return int(fields[1]), fields[19]
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
+def cancel_owned_process(process, identity):
+    """Signal only the launched process and descendants with rechecked identities."""
+    root = process.pid
+    if identity is None or process_identity(root) != identity:
+        return []
+    identities = {}
+    for path in Path("/proc").iterdir():
+        if path.name.isdecimal():
+            observed = process_identity(int(path.name))
+            if observed is not None:
+                identities[int(path.name)] = observed
+    owned = {root: identity}
+    while True:
+        added = {pid: token for pid, token in identities.items()
+                 if token[0] in owned and pid not in owned}
+        if not added:
+            break
+        owned.update(added)
+    signaled = []
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid, token in reversed(list(owned.items())):
+            current = process_identity(pid)
+            # A descendant may be reparented after its parent exits.
+            if current is not None and current[1] == token[1]:
+                try:
+                    os.kill(pid, sig)
+                    signaled.append({"pid": pid, "start_ticks": token[1],
+                                     "signal": sig.name})
+                except ProcessLookupError:
+                    pass
+        if sig == signal.SIGTERM:
+            time.sleep(1)
+    process.wait()
+    return signaled
 
 
 def stamp():
@@ -22,6 +88,7 @@ def digest(path):
 
 class Evidence:
     def __init__(self, name, selectors, repair_of=None, preparation=True):
+        remaining_seconds()
         base = ROOT / "evidence"
         if preparation:
             base = base / "preparation"
@@ -33,6 +100,7 @@ class Evidence:
             "start": stamp(),
             "cwd": ".", "sources_sha256": {}, "commands": [], "tools": {},
             "exit": None,
+            "absolute_deadline_unix": invocation_deadline(),
         }
         if repair_of is not None:
             prior = ROOT / repair_of
@@ -44,6 +112,7 @@ class Evidence:
             if not files:
                 raise FileNotFoundError(f"source selector has no matches: {selector}")
             for source in files:
+                remaining_seconds()
                 if source.is_file():
                     relative = source.relative_to(ROOT)
                     destination = self.directory / "sources" / relative
@@ -60,6 +129,11 @@ class Evidence:
             json.dumps(self.record, indent=2) + "\n")
 
     def run(self, argv, label, cwd=ROOT, timeout_s=3600, expected_exit=0):
+        budget = remaining_seconds()
+        interpreted = Path(str(argv[0])).name == "vvp"
+        requested_timeout = timeout_s
+        timeout_s = min(budget, timeout_s if timeout_s is not None else budget,
+                        600 if interpreted else budget)
         stdout = self.directory / f"{label}.stdout.txt"
         stderr = self.directory / f"{label}.stderr.txt"
         serial = 1
@@ -70,6 +144,8 @@ class Evidence:
         command = {
             "argv": [str(arg) for arg in argv], "cwd": self.relative(cwd),
             "start": stamp(), "timeout_s": timeout_s, "timed_out": False,
+            "requested_timeout_s": requested_timeout,
+            "absolute_deadline_unix": invocation_deadline(),
             "exit": None, "stdout": self.relative(stdout),
             "stderr": self.relative(stderr),
         }
@@ -81,23 +157,26 @@ class Evidence:
             try:
                 process = subprocess.Popen(
                     command["argv"], cwd=cwd, env=environment, stdout=out, stderr=err)
-                started = datetime.now(timezone.utc)
+                identity = process_identity(process.pid)
+                command["process"] = {"pid": process.pid,
+                                      "identity": identity}
+                self.save()
+                started = time.monotonic()
                 while True:
                     try:
-                        command["exit"] = process.wait(timeout=30)
+                        elapsed = time.monotonic() - started
+                        wait = min(30, max(0, timeout_s - elapsed),
+                                   max(0, invocation_deadline() - time.time()))
+                        command["exit"] = process.wait(timeout=wait)
                         break
                     except subprocess.TimeoutExpired:
-                        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+                        elapsed = time.monotonic() - started
                         print(f"PROGRESS {label}: tool executing, elapsed={int(elapsed)}s",
                               flush=True)
-                        if timeout_s is not None and elapsed >= timeout_s:
+                        if elapsed >= timeout_s or time.time() >= invocation_deadline():
                             command["timed_out"] = True
-                            process.terminate()
-                            try:
-                                command["exit"] = process.wait(timeout=10)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                                command["exit"] = process.wait()
+                            command["cancellation"] = cancel_owned_process(process, identity)
+                            command["exit"] = process.returncode
                             break
             except OSError as error:
                 err.write((str(error) + "\n").encode())
