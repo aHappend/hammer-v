@@ -22,6 +22,43 @@ def scheduler_configuration(ev):
     return configuration
 
 
+def boot_specialization(ev):
+    """Expose the existing boot stimulus constants to the compiler, with pin guards."""
+    source = ROOT / "rtl/hammer_v5_top.sv"
+    interface = ports(source)
+    dynamic = {
+        "clk", "rst_n", "start", "m_mem_axi_awready", "m_mem_axi_wready",
+        "m_mem_axi_arready", "m_mem_axi_rvalid", "m_mem_axi_rdata",
+        "m_mem_axi_rlast", "m_mem_axi_bvalid",
+    }
+    constants = {name: int(name == "uart_rx") for direction, _, name in interface
+                 if direction == "input" and name not in dynamic}
+    declarations = [f"    {direction} wire {width} {name}"
+                    for direction, width, name in interface]
+    parameters = source.read_text().split("#(", 1)[1].split(") (", 1)[0]
+    import re
+    names = re.findall(r"parameter integer (\w+)\s*=", parameters)
+    if not names or not dynamic <= {name for _, _, name in interface}:
+        raise AssertionError("boot specialization no longer matches top interface")
+    connections = [f".{name}(" + (("'1" if constants[name] else "'0")
+                    if name in constants else name) + ")" for _, _, name in interface]
+    guards = " ||\n        ".join(
+        f"({name} !== " + ("'1" if value else "'0") + ")"
+        for name, value in constants.items())
+    wrapper = ev.directory / "boot-specialization.sv"
+    wrapper.write_text(
+        "module hammer_v5_boot_model #(" + parameters + ") (\n" +
+        ",\n".join(declarations) + "\n);\n"
+        "    always @* if (" + guards + ")\n"
+        '        $fatal(1,"BOOT STIMULUS CONSTANT CHANGED");\n'
+        "    hammer_v5_top #(" + ",".join(f".{name}({name})" for name in names) +
+        ") dut (\n        " + ",\n        ".join(connections) + ");\nendmodule\n")
+    ev.record.setdefault("generated_sha256", {})[ev.relative(wrapper)] = digest(wrapper)
+    ev.record["boot_stimulus_constants"] = constants
+    ev.save()
+    return wrapper
+
+
 def firmware_layout(ev, directory):
     elf = directory / "opensbi.elf"
     ev.version("riscv64-unknown-elf-readelf")

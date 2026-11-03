@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from boot import (BUILD_FLAGS, HARNESS, MODEL_FLAGS, checked_images, compile_model,
-                  custom_fault_expectations, scheduler_configuration)
+                  custom_fault_expectations, scheduler_configuration, boot_specialization)
 from boot_support import CPP as SUPPORT
 from evidence import Evidence, ROOT, digest
 from integration import ports
@@ -71,6 +71,9 @@ def instrument(text):
  uint64_t sampled_eval_ns=0,sampled_host_ns=0,samples=0;
  std::chrono::steady_clock::time_point sample_start,sample_low,sample_high;
 """
+    output_hash = "\n".join(f"   mix(uint64_t(d.{name}));"
+                            for direction, _, name in ports(ROOT / "rtl/hammer_v5_top.sv")
+                            if direction == "output")
     pairs = (
         (" Memory memory;", " Memory memory;\n" + declaration),
         ("   d.clk=0; d.eval();", r"""
@@ -78,7 +81,7 @@ def instrument(text):
    if(sample) sample_start=std::chrono::steady_clock::now();
    d.clk=0; d.eval();
    if(sample) sample_low=std::chrono::steady_clock::now();
-"""),
+""" + output_hash),
         ("   d.clk=1; d.eval(); context.timeInc(10);", r"""
    if(sample) sample_high=std::chrono::steady_clock::now();
    d.clk=1; d.eval(); context.timeInc(10);
@@ -101,7 +104,7 @@ def instrument(text):
    if(accept_r) {mix(cycles);mix(rdata);}
    if(accept_b) mix(cycles);
    mix(uint64_t(d.uart_tx));
-"""),
+""" + output_hash),
         ("  if(!done) throw", r"""
   std::ofstream signature("efficiency-observed.json");
   signature<<"{\"pin_hash\":"<<pin_hash<<",\"sampled_eval_ns\":"<<sampled_eval_ns
@@ -122,6 +125,11 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
     custom_fault_expectations(ev, directory)
     initialize = "\n".join(f" d.{name}=0;" for direction, _, name in
                            ports(ROOT / "rtl/hammer_v5_top.sv") if direction == "input")
+    if "--threads" in extra_flags:
+        threads = int(extra_flags[extra_flags.index("--threads") + 1])
+        if not 1 <= threads <= 4 or text.count("context.threads(1)") != 1:
+            raise ValueError("bounded model-thread experiment requires 1..4 context threads")
+        text = text.replace("context.threads(1)", f"context.threads({threads})")
     source = ev.directory / "boot.cpp"
     source.write_text(instrument(text).replace("__INITIALIZE_INPUTS__", initialize)
                       .replace("__ISA_ORACLE__", CPP).replace("__BOOT_SUPPORT__", SUPPORT))
@@ -140,10 +148,17 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         options += ["-CFLAGS", "-pg", "-LDFLAGS", "-pg"]
     if scheduler:
         options += [os.path.relpath(scheduler_configuration(ev), objects)]
+    extra_flags = list(extra_flags)
+    top = "hammer_v5_top"
+    if "--boot-specialize" in extra_flags:
+        extra_flags.remove("--boot-specialize")
+        options += ["--prefix", "Vhammer_v5_top",
+                    os.path.relpath(boot_specialization(ev), objects)]
+        top = "hammer_v5_boot_model"
     options += extra_flags
     try:
         ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
-                *options, "--top-module", "hammer_v5_top",
+                *options, "--top-module", top,
                 f"-GPREFETCH_ENABLE={prefetch}", "--Mdir", ".", "-o", "boot-sim",
                 "../boot.cpp", *[os.path.relpath(path, objects) for path in
                                  sorted((ROOT / "rtl").glob("*.sv"))]],
