@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from boot import (BUILD_FLAGS, HARNESS, MODEL_FLAGS, checked_images, compile_model,
-                  custom_fault_expectations)
+                  custom_fault_expectations, scheduler_configuration)
 from boot_support import CPP as SUPPORT
 from evidence import Evidence, ROOT, digest
 from integration import ports
@@ -116,7 +116,8 @@ def instrument(text):
     return text
 
 
-def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False):
+def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
+                scheduler=False):
     directory, _ = checked_images(ev, images)
     custom_fault_expectations(ev, directory)
     initialize = "\n".join(f" d.{name}=0;" for direction, _, name in
@@ -137,6 +138,8 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False):
     if profile:
         ev.version("gprof")
         options += ["-CFLAGS", "-pg", "-LDFLAGS", "-pg"]
+    if scheduler:
+        options += [os.path.relpath(scheduler_configuration(ev), objects)]
     try:
         ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
                 *options, "--top-module", "hammer_v5_top",
@@ -159,6 +162,7 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False):
         if profile:
             ev.run(["gprof", "-b", "-p", "./compile-obj/boot-sim", "gmon.out"],
                    "model-profile", cwd=ev.directory)
+        if profile or scheduler:
             generated = ev.directory / ("generated-model-" + digest(source)[:16])
             generated.mkdir()
             for path in objects.iterdir():
@@ -192,6 +196,8 @@ def main():
     parser.add_argument("--options-only", action="store_true", help="retain installed compiler options")
     parser.add_argument("--faults-only", action="store_true",
                         help="genuine boot through faults only; never full Linux acceptance")
+    parser.add_argument("--scheduler-compare", action="store_true",
+                        help="compare unchanged RTL with array-split scheduling configuration")
     args = parser.parse_args()
     if not 1 <= args.cycles <= 20000000:
         raise ValueError("efficiency diagnostic requires 1..20000000 edges")
@@ -224,12 +230,15 @@ def main():
             "path": baseline_receipt, "sha256": digest(ROOT / baseline_receipt)}
         results = []
         variants = (
-                ("baseline", baseline_harness(saved), False),
-                ("host-repair", HARNESS, False),
-                ("optimized", HARNESS, True))
+                ("baseline", baseline_harness(saved), False, False),
+                ("host-repair", HARNESS, False, False),
+                ("optimized", HARNESS, True, False))
         if args.profile_only:
             variants = variants[-1:]
-        for name, text, optimized in variants:
+        if args.scheduler_compare:
+            variants = (("current", HARNESS, True, False),
+                        ("scheduler", HARNESS, True, True))
+        for name, text, optimized, scheduler in variants:
             child = Evidence("v5-boot-efficiency-" + name, SOURCE_SELECTORS, args.repair_of)
             child.record["invoked_by"] = ev.relative(ev.directory / "receipt.json")
             entry = {"name": name, "receipt": ev.relative(child.directory / "receipt.json")}
@@ -237,7 +246,7 @@ def main():
             ev.save()
             try:
                 result = run_variant(child, args.images, text, optimized, args.cycles,
-                                     args.prefetch, args.profile_only)
+                                     args.prefetch, args.profile_only, scheduler)
                 bind_outputs(child)
             except (OSError, RuntimeError, AssertionError, ValueError) as error:
                 child.finish(1, error)

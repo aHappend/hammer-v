@@ -10,6 +10,16 @@ from integration import ports
 
 MODEL_FLAGS = ("-O3",)
 BUILD_FLAGS = ("-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3")
+SCHEDULER_CONFIG = """`verilator_config
+split_var -module "hammer_v3_plic" -var "rank"
+"""
+
+
+def scheduler_configuration(ev):
+    configuration = ev.directory / "scheduler.vlt"
+    configuration.write_text(SCHEDULER_CONFIG)
+    ev.record.setdefault("generated_sha256", {})[ev.relative(configuration)] = digest(configuration)
+    return configuration
 
 
 def firmware_layout(ev, directory):
