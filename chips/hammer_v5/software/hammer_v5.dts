@@ -7,8 +7,8 @@
     #size-cells = <2>;
 
     chosen {
-        stdout-path = "serial0:115200n8";
-        bootargs = "console=ttyS0,115200 earlycon=uart8250,mmio,0x10010000 mem=128M rdinit=/init";
+        stdout-path = "serial0:6250000n8";
+        bootargs = "console=ttyS0,6250000 earlycon=uart8250,mmio,0x10010000 mem=128M rdinit=/init";
     };
 
     aliases {
@@ -76,7 +76,7 @@
             compatible = "ns16550a";
             reg = <0x0 0x10010000 0x0 0x8>;
             clock-frequency = <100000000>;
-            current-speed = <115200>;
+            current-speed = <6250000>;
             reg-shift = <0>;
             reg-io-width = <1>;
             interrupt-parent = <&plic>;
