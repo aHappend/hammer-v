@@ -8,9 +8,8 @@ import tarfile
 from evidence import ROOT, digest, remaining_seconds, stamp
 from integration import ports
 
-MODEL_FLAGS = ("-O3", "--flatten", "--output-split-cfuncs", "500")
-BUILD_FLAGS = ("-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3",
-               "-CFLAGS", "-flto", "-LDFLAGS", "-flto")
+MODEL_FLAGS = ("-O3",)
+BUILD_FLAGS = ("-MAKEFLAGS", "OPT_FAST=-Os OPT_SLOW=-Os OPT_GLOBAL=-Os")
 
 
 def firmware_layout(ev, directory):
