@@ -343,12 +343,18 @@ def throughput_probe(ev, images):
                         or not observed["integer_checks"]
                         or "bounded RTL boot goal not reached" not in error):
                     raise AssertionError("throughput probe failed before its exact diagnostic bound")
-                results.append({"name": name, "parameters": parameters,
-                                "observed": observed, "metrics": metrics})
-                child.record["observed"] = results[-1]
-                child.record["scope"] = "bounded throughput diagnostic; not boot acceptance"
+                outcome = "diagnostic bound reached"
             else:
-                raise AssertionError("unexpected full userland goal within startup diagnostic")
+                observed = json.loads((child.directory / "boot-observed.json").read_text())
+                metrics = json.loads((child.directory / "boot-profile.json").read_text())
+                if (not observed["goal_reached"] or not observed["integer_checks"]
+                        or not 0 < observed["cycles"] <= 10000000):
+                    raise AssertionError("invalid early userland completion in throughput probe")
+                outcome = "validated early userland completion"
+            results.append({"name": name, "parameters": parameters,
+                            "observed": observed, "metrics": metrics, "outcome": outcome})
+            child.record["observed"] = results[-1]
+            child.record["scope"] = "bounded throughput diagnostic; not boot acceptance"
         except (OSError, RuntimeError, ValueError, AssertionError) as failure:
             path = child.finish(1, failure)
             ev.record.setdefault("components", []).append({"receipt": path, "exit": 1})

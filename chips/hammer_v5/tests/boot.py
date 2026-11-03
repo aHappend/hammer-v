@@ -468,5 +468,12 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1, parameter
             from userland import compare_userland
             ev.record["userland_comparisons"] = compare_userland(ev.directory)
     finally:
+        observed = ev.directory / "boot-observed.json"
+        if observed.is_file():
+            try:
+                ev.record["observed"] = json.loads(observed.read_text())
+            except json.JSONDecodeError as error:
+                ev.record["observed_parse_error"] = str(error)
+            ev.save()
         if objects.is_dir():
             shutil.rmtree(objects)
