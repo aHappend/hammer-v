@@ -129,6 +129,8 @@ def behavior(ev):
         selectors = ("rtl/*.sv", "tests/*.py")
         if name in ("top-smoke", "architectural-mutants"):
             selectors += ("hammer_v4_reference/rtl/hammer_v4_top.sv",)
+        if name == "uart-parser-sensitivity":
+            selectors += ("software/*",)
         component(ev, name, execute, selectors)
 
 

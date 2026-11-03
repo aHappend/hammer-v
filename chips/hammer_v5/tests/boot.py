@@ -9,7 +9,7 @@ from evidence import ROOT, digest, remaining_seconds, stamp
 from integration import ports
 
 MODEL_FLAGS = ("-O3",)
-BUILD_FLAGS = ("-MAKEFLAGS", "OPT_FAST=-Os OPT_SLOW=-Os OPT_GLOBAL=-Os")
+BUILD_FLAGS = ("-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3")
 
 
 def firmware_layout(ev, directory):

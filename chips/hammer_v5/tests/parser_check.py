@@ -7,10 +7,12 @@ from evidence import digest
 from reference import bf16_dot
 from userland import CASE_OPERANDS, compare_userland, expected, median
 from boot_checks import boot_support_probe
+from kernel_parameters import kernel_parameters_probe
 
 
 def parser_probe(ev):
     boot_support_probe(ev)
+    kernel_parameters_probe(ev)
     directory = ev.directory / "parser-fixture-8a6c1407"
     directory.mkdir()
     lines, counters = [], []
