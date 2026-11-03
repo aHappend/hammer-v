@@ -171,6 +171,54 @@ def diagnostic_boot_images(ev, images, baud, legacy_ptys):
     return ev.relative(destination)
 
 
+def diagnostic_console_images(ev):
+    project = ev.directory / ("official-image-console-project-" + stamp())
+    (project / "software").mkdir(parents=True)
+    for path in (ROOT / "software").iterdir():
+        if path.is_file():
+            shutil.copyfile(path, project / "software" / path.name)
+    config = project / "software/linux.config"
+    config.write_text(config.read_text() + "\nCONFIG_VT=n\nCONFIG_LEGACY_PTYS=n\n")
+    ev.record["diagnostic_software_inputs"] = {
+        ev.relative(path): digest(path) for path in (project / "software").iterdir()
+        if path.is_file()}
+    build = Path("evidence") / ("software-build-" + stamp())
+    ev.run(["python3", "software/build.py", "--output", build.as_posix(), "--jobs", "2"],
+           "diagnostic-console-build", cwd=project, timeout_s=None)
+    directory = project / build
+    parent_path = directory / "receipt.json"
+    parent = json.loads(parent_path.read_text())
+    if parent["exit"] != 0:
+        raise AssertionError("diagnostic console software build unsuccessful")
+    configuration = (directory / "linux.config").read_text()
+    if any(f"# CONFIG_{name} is not set\n" not in configuration
+           for name in ("VT", "LEGACY_PTYS")):
+        raise AssertionError("diagnostic kernel retained unwanted eager console devices")
+    destination = ev.directory / ("official-image-console-result-" + stamp())
+    destination.mkdir()
+    outputs = {}
+    for name, expected in parent["outputs"].items():
+        source = project / name
+        if digest(source) != expected:
+            raise AssertionError("diagnostic build artifact checksum mismatch")
+        target = destination / source.name
+        shutil.copyfile(source, target)
+        outputs[ev.relative(target)] = digest(target)
+    derivation = {
+        "kind": "diagnostic-image-derivation", "start": ev.record["start"], "end": stamp(),
+        "parent_receipt": {"path": ev.relative(parent_path), "sha256": digest(parent_path),
+                           "cwd": ev.relative(project)},
+        "inputs": {ev.relative(project / name): value for name, value in parent["inputs"].items()},
+        "outputs": outputs, "exit": 0, "diagnostic_only": True,
+        "change": "CONFIG_VT=n and CONFIG_LEGACY_PTYS=n only; genuine Linux, preemption, "
+                  "serial console, userland, memory and timebase requirements unchanged",
+    }
+    (destination / "receipt.json").write_text(json.dumps(derivation, indent=2) + "\n")
+    ev.record["diagnostic_image_derivation"] = derivation
+    ev.save()
+    return ev.relative(destination)
+
+
 def boot_profile(ev, images, cycles, prefetch, baud=None, legacy_ptys=None):
     from boot import boot_probe, checked_images
     if baud is not None or legacy_ptys is not None:
@@ -328,6 +376,8 @@ def main():
                         help="derived diagnostic DTB only; never edits shipped software")
     parser.add_argument("--legacy-ptys", type=int, choices=(0, 256),
                         help="derived diagnostic DTB legacy PTY count, not a Linux replacement")
+    parser.add_argument("--minimal-console", action="store_true",
+                        help="fresh diagnostic kernel without unused eager VT/legacy PTYs")
     args = parser.parse_args()
     ev = Evidence("v5-" + args.probe,
                   ("rtl/*.sv", "tests/*.py", "software/*", "design/*.md",
@@ -351,9 +401,10 @@ def main():
                 raise ValueError("throughput diagnostic requires source-matched images")
             throughput_probe(ev, args.images)
         else:
-            if not args.images or args.cycles <= 0:
+            images = diagnostic_console_images(ev) if args.minimal_console else args.images
+            if not images or args.cycles <= 0:
                 raise ValueError("boot profile requires local images and positive cycles")
-            boot_profile(ev, args.images, args.cycles, args.prefetch,
+            boot_profile(ev, images, args.cycles, args.prefetch,
                          args.baud, args.legacy_ptys)
     except (OSError, ValueError, RuntimeError, AssertionError) as failure:
         error = str(failure)
