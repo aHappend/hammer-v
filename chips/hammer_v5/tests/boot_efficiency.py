@@ -211,6 +211,14 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         from model_efficiency import lower_top
         sources = [lower_top(ev, prefetch)]
         parameters = []
+    if "--split-core" in extra_flags:
+        extra_flags.remove("--split-core")
+        configuration = ev.directory / "core-scheduler.vlt"
+        configuration.write_text("`verilator_config\n" + "".join(
+            f'split_var -module "hammer_v5_core" -var "{name}"\n'
+            for name in ("x", "m", "w", "fetch_queue", "queue_head")))
+        ev.record.setdefault("generated_sha256", {})[ev.relative(configuration)] = digest(configuration)
+        options += [os.path.relpath(configuration, objects)]
     options += extra_flags
     try:
         ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
