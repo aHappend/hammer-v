@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import struct
+import tarfile
 
 from evidence import ROOT, digest, remaining_seconds, stamp
 from integration import ports
@@ -170,6 +171,63 @@ def firmware_diagnosis(ev, images):
                 ev.relative(directory / "opensbi.elf")], "boot-tail-" + label)
 
 
+def custom_fault_expectations(ev, directory):
+    ev.version("riscv64-unknown-elf-nm")
+    text = ev.run(["riscv64-unknown-elf-nm", "--defined-only", "-n",
+                   ev.relative(directory / "init.elf")], "init-symbols")
+    names = ("hammer_try_misaligned_vload", "fault_handler")
+    symbols = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[2] in names:
+            if parts[2] in symbols or parts[1] not in ("t", "T"):
+                raise AssertionError("ambiguous/non-executable custom-fault symbol")
+            symbols[parts[2]] = int(parts[0], 16)
+    if set(symbols) != set(names):
+        raise AssertionError("missing independent custom-fault ELF symbols")
+    data = (directory / "init.elf").read_bytes()
+    if data[:7] != b"\x7fELF\x02\x01\x01":
+        raise AssertionError("userland must be little-endian ELF64")
+    header = struct.unpack_from("<HHIQQQIHHHHHH", data, 16)
+    if header[0] != 2 or header[1] != 243:
+        raise AssertionError("fault PC requires the pinned static RISC-V executable")
+    pc = symbols[names[0]]
+    instructions = []
+    for index in range(header[9]):
+        kind, flags, offset, va, _, filesz, _, _ = struct.unpack_from(
+            "<IIQQQQQQ", data, header[4] + index * header[8])
+        if kind == 1 and flags & 1 and va <= pc <= va + filesz - 4:
+            instructions.append(struct.unpack_from("<I", data, offset + pc - va)[0])
+    if instructions != [0x0005000B]:
+        raise AssertionError("misalignment symbol is not vload vr0,(a0)")
+    manifest = json.loads((ROOT / "software/boot_manifest.json").read_text())
+    linux, = (source for source in manifest["sources"] if source["version"] == "6.6.1")
+    archive = ROOT / "software" / linux["file"]
+    if digest(archive) != linux["sha256"]:
+        raise AssertionError("pinned Linux fault ABI source checksum mismatch")
+    with tarfile.open(archive, "r:xz") as source:
+        member = source.extractfile(linux["root"] + "/arch/riscv/kernel/traps.c")
+        if member is None:
+            raise AssertionError("pinned Linux traps.c missing")
+        traps = member.read().decode()
+    start = traps.index("asmlinkage __visible __trap_section void do_trap_load_misaligned")
+    body = traps[start:traps.index("NOKPROBE_SYMBOL(do_trap_load_misaligned)", start)]
+    if "do_trap_error(regs, SIGBUS, BUS_ADRALN, regs->epc);" not in body:
+        raise AssertionError("pinned Linux load-misalignment SIGBUS ABI changed")
+    result = {"symbols": symbols, "init_sha256": digest(directory / "init.elf"),
+              "linux_version": linux["version"], "linux_sha256": linux["sha256"],
+              "cause": 4, "signal": 7, "si_code": 1, "si_addr_is_epc": True,
+              "ucontext_gpr_offset": 176}
+    path = ev.directory / "custom-fault-expectations.json"
+    path.write_text(json.dumps(result, indent=2) + "\n")
+    pcs = ev.directory / "custom-fault-pcs.txt"
+    pcs.write_text(f"{pc:x} {symbols[names[1]]:x}\n")
+    for generated in (path, pcs):
+        ev.record.setdefault("generated_sha256", {})[ev.relative(generated)] = digest(generated)
+    ev.record["custom_fault_contract"] = result
+    ev.save()
+
+
 HARNESS = r"""
 #include "Vhammer_v5_top.h"
 #include "verilated.h"
@@ -183,38 +241,13 @@ HARNESS = r"""
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
+#include <vector>
 #include <climits>
 #include <set>
 #include <map>
 
-using Page = std::array<uint8_t,4096>;
 static volatile std::sig_atomic_t stop_requested=0;
-struct Memory {
- std::unordered_map<uint64_t,std::unique_ptr<Page>> pages;
- void valid(uint64_t a) {
-  if(a < 0x80000000ULL || a >= 0x100000000ULL)
-   throw std::runtime_error("DRAM address out of inherited aperture");
- }
- uint8_t read(uint64_t a) {
-  valid(a); auto p=pages.find(a>>12);
-  return p==pages.end() ? 0 : (*p->second)[a&4095];
- }
- void write(uint64_t a,uint8_t v) {
-  valid(a); auto &p=pages[a>>12];
-  if(!p) p=std::make_unique<Page>();
-  (*p)[a&4095]=v;
- }
- uint64_t word(uint64_t a) {
-  uint64_t v=0; for(unsigned i=0;i<8;i++) v|=uint64_t(read(a+i))<<(8*i);
-  return v;
- }
- void load(const std::string &path,uint64_t address) {
-  std::ifstream f(path,std::ios::binary);
-  if(!f) throw std::runtime_error("missing actual boot image");
-  char c; while(f.get(c)) write(address++,uint8_t(c));
- }
-};
+__BOOT_SUPPORT__
 __ISA_ORACLE__
 struct Record {uint64_t cycle,pc,next,data; uint32_t insn; unsigned rd,priv;};
 int main(int argc,char **argv) {
@@ -223,6 +256,7 @@ int main(int argc,char **argv) {
  Vhammer_v5_top d(&context);
  Memory memory;
  ISA isa;
+ CustomFaultObserver custom_fault;
  std::deque<Record> tail;
  uint64_t cycles=0,retired=0,reads=0,writes=0,sretired=0,uretired=0;
  uint64_t translated=0,custom=0,traps=0;
@@ -264,6 +298,7 @@ int main(int argc,char **argv) {
   isa.bytes.load(argv[3],0x87e00000);
   uint64_t limit=std::stoull(argv[4]);
   std::string goal=argv[5],line;
+  if(goal=="userland") custom_fault.load();
   bool aw=false,wd=false,read_pending=false,write_pending=false;
   uint64_t awaddr=0,wdata=0,rdata=0; unsigned wmask=0,rdelay=0,bdelay=0;
   uint32_t rng=17;
@@ -318,6 +353,7 @@ __INITIALIZE_INPUTS__
      observed_pids.insert(isa.x[10]);
      pids<<cycles<<" "<<isa.x[10]<<"\n"; getpid_pending=false;
     }
+    custom_fault.retirement(d,isa.x,cycles);
     isa.compare(d,cycles);
     if(d.retire_priv==0 && (d.retire_insn&127)==0x73 &&
        ((d.retire_insn>>12)&7) && d.retire_rd_we) {
@@ -349,6 +385,7 @@ __INITIALIZE_INPUTS__
    }
    if(!reset && d.trap_valid) {
     traps++;
+    custom_fault.trap(d,isa.x,cycles,uretired!=0);
     uint64_t cause=d.trap_cause&0x7fffffffffffffffULL;
     if(d.trap_interrupt && cause==7) mtimer++;
     if(d.trap_interrupt && cause==5) stimer++;
@@ -375,7 +412,7 @@ __INITIALIZE_INPUTS__
     if(accept_aw) {aw=true; awaddr=captured_aw;}
     if(accept_w) {wd=true; wdata=captured_w; wmask=captured_mask;}
     if(aw && wd) {
-     for(unsigned i=0;i<8;i++) if((wmask>>i)&1) memory.write(awaddr+i,wdata>>(8*i));
+     memory.masked_word(awaddr,wdata,wmask);
      writes++; aw=wd=false; write_pending=true; bdelay=1+((rng>>6)&3);
     }
     if(accept_ar) {
@@ -416,14 +453,14 @@ __INITIALIZE_INPUTS__
    if((cycles&1023)==0) {
     pc_samples[last_pc]++;
     phase_samples[{cycles/50000000,last_pc}]++;
-   }
-   auto now=std::chrono::steady_clock::now();
-   if(now>=next_heartbeat) {
-    std::cout<<"PROGRESS boot cycles="<<cycles<<" retired="<<retired
-     <<" reads="<<reads<<" S="<<sretired<<" U="<<uretired<<std::endl;
-    uart.flush(); milestones.flush();
-    profile();
-    next_heartbeat=now+std::chrono::seconds(30);
+    auto now=std::chrono::steady_clock::now();
+    if(now>=next_heartbeat) {
+     std::cout<<"PROGRESS boot cycles="<<cycles<<" retired="<<retired
+      <<" reads="<<reads<<" S="<<sretired<<" U="<<uretired<<std::endl;
+     uart.flush(); milestones.flush(); custom_fault.output.flush();
+     profile();
+     next_heartbeat=now+std::chrono::seconds(30);
+    }
    }
    if(context.gotFinish()) throw std::runtime_error("RTL terminated before boot goal");
   }
@@ -443,6 +480,7 @@ __INITIALIZE_INPUTS__
   if(!sretired) throw std::runtime_error("banner without actual S-mode retirement");
   if(goal=="userland" && (!uretired || !custom || !translated))
    throw std::runtime_error("userland marker without public architectural milestones");
+  if(goal=="userland") custom_fault.complete();
   for(const auto &r:tail) diagnostic<<"cycle="<<r.cycle<<" pc="<<std::hex<<r.pc
    <<" next="<<r.next<<" insn="<<r.insn<<" rd="<<r.rd<<" data="<<r.data
    <<" priv="<<r.priv<<std::dec<<"\n";
@@ -450,7 +488,7 @@ __INITIALIZE_INPUTS__
    <<" retired="<<retired<<std::endl;
   d.final(); return 0;
  } catch(const std::exception &e) {
-  uart.flush(); milestones.flush();
+  uart.flush(); milestones.flush(); custom_fault.output.flush();
   profile();
   for(const auto &r:tail) diagnostic<<"cycle="<<r.cycle<<" pc="<<std::hex<<r.pc
    <<" next="<<r.next<<" insn="<<r.insn<<" rd="<<r.rd<<" data="<<r.data
@@ -468,10 +506,12 @@ def compile_model(ev, text=HARNESS, parameters=None):
         f"  d.{name}=0;" for direction, _, name in interface if direction == "input")
     harness = ev.directory / "boot.cpp"
     from rv64 import CPP, decode_image
+    from boot_support import CPP as SUPPORT
     table = ev.directory / "decode.bin"
     decode_image(table)
     harness.write_text(text.replace("__INITIALIZE_INPUTS__", initialization)
-                      .replace("__ISA_ORACLE__", CPP))
+                      .replace("__ISA_ORACLE__", CPP)
+                      .replace("__BOOT_SUPPORT__", SUPPORT))
     ev.record.setdefault("generated_sha256", {})[ev.relative(table)] = digest(table)
     ev.record.setdefault("generated_sha256", {})[ev.relative(harness)] = digest(harness)
     ev.version("verilator")
@@ -481,7 +521,7 @@ def compile_model(ev, text=HARNESS, parameters=None):
     objects.mkdir()
     sources = sorted((ROOT / "rtl").glob("*.sv"))
     ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
-            "-CFLAGS", "-O3",
+            "-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3",
             "--top-module", "hammer_v5_top",
             *[f"-G{name}={value}" for name, value in (parameters or {}).items()],
             "--Mdir", ".", "-o", "boot-sim",
@@ -498,6 +538,8 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1, parameter
         "parameters": parameters or {},
         "not_full_linux_acceptance": goal != "userland",
     }
+    if goal == "userland":
+        custom_fault_expectations(ev, directory)
     objects = compile_model(ev, parameters={**(parameters or {}), "PREFETCH_ENABLE": prefetch})
     try:
         ev.run(["./compile-obj/boot-sim",

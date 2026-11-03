@@ -6,9 +6,11 @@ import shutil
 from evidence import digest
 from reference import bf16_dot
 from userland import CASE_OPERANDS, compare_userland, expected, median
+from boot_checks import boot_support_probe
 
 
 def parser_probe(ev):
+    boot_support_probe(ev)
     directory = ev.directory / "parser-fixture-8a6c1407"
     directory.mkdir()
     lines, counters = [], []
@@ -37,7 +39,9 @@ def parser_probe(ev):
         counter(0xC06, delta)
 
     emit("USER", pid=1)
-    emit("FAULTS", successful_vload=1, rejected=5, state_preserved=1)
+    fault_pc, handler_pc, fault_va, info, context = 0x10100, 0x10500, 0x3FFFFFE001, 0x20000, 0x21000
+    emit("FAULTS", successful_vload=1, rejected=5, state_preserved=1,
+         misaligned_pc=hex(fault_pc), misaligned_va=hex(fault_va))
     for task in (1, 2):
         emit("CONTEXT", task=task, yield_requests=64, signals=64, nested=64)
     for seed in (17, 43, 89):
@@ -97,6 +101,18 @@ def parser_probe(ev):
         "".join(f"{i} {number} 0\n" for i, number in
                 enumerate([124] * 128 + [101] * 128 + [139] * 256)))
     (directory / "boot-observed.json").write_text(json.dumps({"u_custom": 1, "high_va_retired": 1}))
+    (directory / "custom-fault-expectations.json").write_text(json.dumps({
+        "symbols": {"hammer_try_misaligned_vload": fault_pc, "fault_handler": handler_pc},
+        "linux_version": "6.6.1", "cause": 4, "signal": 7, "si_code": 1,
+        "si_addr_is_epc": True, "ucontext_gpr_offset": 176}))
+    (directory / "custom-faults.txt").write_text(
+        f"MISALIGNED 10 {fault_pc:x} 4 {fault_va:x} {fault_va:x}\n"
+        f"SIGBUS 20 {handler_pc:x} {info:x} {context:x}\n"
+        f"SIGCODE 21 {info + 8:x} 1\n"
+        f"SIGADDR 22 {info + 16:x} {fault_pc:x}\n"
+        f"SIGPC 23 {context + 176:x} {fault_pc:x}\n"
+        f"SIGA0 24 {context + 256:x} {fault_va:x}\n"
+        "SIGRETURN 25\n")
     ev.record["scope"] = {"synthetic_parser_fixtures_only": True,
                          "no_RTL_or_Linux_execution": True}
     result = compare_userland(directory)
@@ -110,6 +126,23 @@ def parser_probe(ev):
         ("bf16", "bf16-observed.txt", "40800000", "40800001", "exact rational"),
         ("context", "uart-events.txt", "HV5 CONTEXT task=2", "HV5 CONTEXT task=1",
          "context/signal"),
+        ("trap-pc", "custom-faults.txt", f"{fault_pc:x} 4", f"{fault_pc+4:x} 4",
+         "trap PC/cause/effective-address"),
+        ("trap-cause", "custom-faults.txt", f"{fault_pc:x} 4", f"{fault_pc:x} 6",
+         "trap PC/cause/effective-address"),
+        ("trap-tval", "custom-faults.txt", f"4 {fault_va:x}", f"4 {fault_pc:x}",
+         "trap PC/cause/effective-address"),
+        ("sigbus-address", "custom-faults.txt", f"SIGADDR 22 {info+16:x} {fault_pc:x}",
+         f"SIGADDR 22 {info+16:x} {fault_va:x}", "SIGADDR mismatch"),
+        ("sigbus-code", "custom-faults.txt", f"SIGCODE 21 {info+8:x} 1",
+         f"SIGCODE 21 {info+8:x} 2", "SIGCODE mismatch"),
+        ("sigbus-saved-pc", "custom-faults.txt", f"SIGPC 23 {context+176:x} {fault_pc:x}",
+         f"SIGPC 23 {context+176:x} {fault_pc+4:x}", "SIGPC mismatch"),
+        ("sigbus-saved-address", "custom-faults.txt", f"SIGA0 24 {context+256:x} {fault_va:x}",
+         f"SIGA0 24 {context+256:x} {fault_pc:x}", "SIGA0 mismatch"),
+        ("missing-trap", "custom-faults.txt",
+         f"MISALIGNED 10 {fault_pc:x} 4 {fault_va:x} {fault_va:x}\n", "",
+         "missing independent"),
     )
     for name, filename, old, new, required in mutations:
         text = (directory / filename).read_text()

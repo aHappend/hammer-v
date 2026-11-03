@@ -90,6 +90,48 @@ def median(values):
     return values[15] + ((values[16] - values[15]) >> 1)
 
 
+def compare_custom_faults(directory, record):
+    contract = json.loads((directory / "custom-fault-expectations.json").read_text())
+    pc = contract["symbols"]["hammer_try_misaligned_vload"]
+    handler = contract["symbols"]["fault_handler"]
+    address = number(record, "misaligned_va")
+    if (number(record, "misaligned_pc") != pc or address & 7 != 1 or
+            contract["linux_version"] != "6.6.1" or contract["cause"] != 4 or
+            contract["signal"] != 7 or contract["si_code"] != 1 or
+            contract["si_addr_is_epc"] is not True or
+            contract["ucontext_gpr_offset"] != 176):
+        raise AssertionError("custom misalignment independent ELF/Linux contract mismatch")
+    events = {}
+    for line in (directory / "custom-faults.txt").read_text().splitlines():
+        kind, cycle, *payload = line.split()
+        if kind == "USER_TRAP":
+            continue
+        if kind not in ("MISALIGNED", "SIGBUS", "SIGCODE", "SIGADDR",
+                        "SIGPC", "SIGA0", "SIGRETURN") or kind in events:
+            raise AssertionError("duplicate/unknown independent custom fault observation")
+        events[kind] = int(cycle), [int(value, 16) for value in payload]
+    required = ("MISALIGNED", "SIGBUS", "SIGCODE", "SIGADDR", "SIGPC", "SIGA0", "SIGRETURN")
+    if set(events) != set(required):
+        raise AssertionError("missing independent custom misalignment/SIGBUS observations")
+    _, trap = events["MISALIGNED"]
+    _, signal = events["SIGBUS"]
+    if len(signal) != 3 or signal[0] != handler or trap != [pc, 4, address, address]:
+        raise AssertionError("custom misalignment trap PC/cause/effective-address mismatch")
+    _, info, context = signal
+    for kind, field, value in (("SIGCODE", info + 8, 1), ("SIGADDR", info + 16, pc),
+                               ("SIGPC", context + 176, pc),
+                               ("SIGA0", context + 176 + 80, address)):
+        if events[kind][1] != [field, value]:
+            raise AssertionError("pinned Linux SIGBUS independent " + kind + " mismatch")
+    first, delivery, last = (events[kind][0] for kind in ("MISALIGNED", "SIGBUS", "SIGRETURN"))
+    if (not first < delivery < last or events["SIGRETURN"][1] or
+            any(not delivery <= events[kind][0] < last for kind in required[2:-1])):
+        raise AssertionError("custom misalignment/SIGBUS observation ordering mismatch")
+    return {"pc": pc, "cause": 4, "tval": address, "signal": 7, "si_code": 1,
+            "si_addr": pc, "saved_pc": pc, "saved_a0": address,
+            "independent_field_comparisons": 4}
+
+
 def compare_userland(directory):
     records = []
     for line in (directory / "uart-events.txt").read_text().splitlines():
@@ -110,6 +152,7 @@ def compare_userland(directory):
     cursors = {address: 0 for address in counter_values}
     numerical = 0
     measured = 0
+    custom_fault = None
 
     def take(address, count):
         offset = cursors[address]
@@ -136,6 +179,7 @@ def compare_userland(directory):
             if (number(record, "successful_vload") != 1 or number(record, "rejected") != 5 or
                     number(record, "state_preserved") != 1):
                 raise AssertionError("genuine translated custom fault cases incomplete")
+            custom_fault = compare_custom_faults(directory, record)
         elif kind == "CONTEXT":
             task = number(record, "task")
             if (task not in (1, 2) or task in contexts or
@@ -283,4 +327,5 @@ def compare_userland(directory):
             "matched_samples": measured, "benchmarks": [
                 {"seed": seed, "kind": precision, **record}
                 for (seed, precision), record in benchmarks.items()],
-            "user_pid_count": len(set(pids)), "pid_transitions": transitions}
+            "user_pid_count": len(set(pids)), "pid_transitions": transitions,
+            "custom_misalignment_sigbus": custom_fault}
