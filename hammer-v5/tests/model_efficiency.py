@@ -18,6 +18,24 @@ from rv64 import CPP, decode_image
 from verify import SOURCE_SELECTORS, bind_outputs
 
 
+def lower_top(ev, prefetch):
+    """Alternative compilation of the full actual hierarchy, retaining memories."""
+    ev.version("yosys", ("-V",))
+    script = ev.directory / "lower-top.ys"
+    output = ev.directory / "lowered-top.v"
+    script.write_text(
+        "read_verilog -sv " +
+        " ".join(ev.relative(path) for path in sorted((ROOT / "rtl").glob("*.sv"))) +
+        "\nhierarchy -check -top hammer_v5_top -chparam PREFETCH_ENABLE " + str(prefetch) +
+        "\nproc\nopt\nmemory -nomap\nopt\ncheck -assert\n"
+        "write_verilog -noattr " + ev.relative(output) + "\n")
+    ev.record.setdefault("generated_sha256", {})[ev.relative(script)] = digest(script)
+    ev.run(["yosys", "-Q", "-T", "-s", ev.relative(script)], "lower-top")
+    ev.record["generated_sha256"][ev.relative(output)] = digest(output)
+    ev.save()
+    return output
+
+
 def lower_rtl(ev, parameters):
     """Lower the default core's processes without changing other modules or RAM."""
     ev.version("yosys", ("-V",))
@@ -129,6 +147,8 @@ def main():
     parser.add_argument("--repair-of", required=True)
     parser.add_argument("--cycles", type=int, default=2000000)
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--queue-boundaries", action="store_true",
+                        help="also compare the actual queue storage cone with a transaction FIFO")
     args = parser.parse_args()
     if not 1 <= args.cycles <= 20000000:
         raise ValueError("compact compiler comparison requires 1..20000000 edges")
@@ -152,6 +172,9 @@ def main():
                           "cycles": args.cycles, "prefetch": args.prefetch}
     try:
         ev.version("python3")
+        if args.queue_boundaries:
+            from fetch_queue import fetch_queue_probe
+            fetch_queue_probe(ev)
         if args.netlist:
             from structure import assert_structure
             ev.record["scope"] = {"retained_synthesis_structural_regression": True,

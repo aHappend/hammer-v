@@ -199,13 +199,25 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         options += ["--prefix", "Vhammer_v5_top",
                     os.path.relpath(boot_specialization(ev), objects)]
         top = "hammer_v5_boot_model"
+    sources = sorted((ROOT / "rtl").glob("*.sv"))
+    parameters = [f"-GPREFETCH_ENABLE={prefetch}"]
+    if "--lower-core" in extra_flags:
+        extra_flags.remove("--lower-core")
+        from model_efficiency import lower_rtl
+        sources = [lower_rtl(ev, {"PREFETCH_ENABLE": prefetch}),
+                   *[path for path in sources if path.name != "hammer_v5_core.sv"]]
+    if "--lower-soc" in extra_flags:
+        extra_flags.remove("--lower-soc")
+        from model_efficiency import lower_top
+        sources = [lower_top(ev, prefetch)]
+        parameters = []
     options += extra_flags
     try:
         ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
                 *options, "--top-module", top,
-                f"-GPREFETCH_ENABLE={prefetch}", "--Mdir", ".", "-o", "boot-sim",
+                *parameters, "--Mdir", ".", "-o", "boot-sim",
                 "../boot.cpp", *[os.path.relpath(path, objects) for path in
-                                 sorted((ROOT / "rtl").glob("*.sv"))]],
+                                 sources]],
                "compile", cwd=objects)
         if host_pgo:
             profile_compile(ev, objects, directory, min(cycles, 2000000))

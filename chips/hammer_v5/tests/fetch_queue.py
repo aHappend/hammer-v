@@ -166,7 +166,8 @@ def fetch_queue_probe(ev):
                 "-o", ev.relative(binary), ev.relative(tb), ev.relative(rtl)],
                f"queue-{name}-compile")
         observed = ev.run(["vvp", ev.relative(binary)], f"queue-{name}-run")
-        observations.append(observed.strip())
+        observations.append(next(line for line in observed.splitlines()
+                                 if line.startswith("SUMMARY ")))
         objects = ev.directory / f"queue-{name}-obj"
         try:
             ev.run(["verilator", "--binary", "--timing", "-j", "2", "-Wno-fatal",
@@ -174,7 +175,8 @@ def fetch_queue_probe(ev):
                     ev.relative(tb), ev.relative(rtl)], f"queue-{name}-verilate")
             observed = ev.run([ev.relative(objects / "Vfetch_storage_tb")],
                               f"queue-{name}-compiled-run")
-            observations.append(observed.split("\n- ", 1)[0].strip())
+            observations.append(next(line for line in observed.splitlines()
+                                     if line.startswith("SUMMARY ")))
         finally:
             if objects.is_dir():
                 shutil.rmtree(objects)
