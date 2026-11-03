@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from boot import HARNESS, MODEL_FLAGS, checked_images, custom_fault_expectations
+from boot import BUILD_FLAGS, HARNESS, MODEL_FLAGS, checked_images, custom_fault_expectations
 from boot_support import CPP as SUPPORT
 from evidence import Evidence, ROOT, digest
 from integration import ports
@@ -96,8 +96,7 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False):
         ev.version(tool)
     objects = ev.directory / "compile-obj"
     objects.mkdir()
-    options = (["-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3"]
-               if optimized else ["-CFLAGS", "-O3"])
+    options = list(BUILD_FLAGS) if optimized else ["-CFLAGS", "-O3"]
     if optimized:
         options += MODEL_FLAGS
     if profile:

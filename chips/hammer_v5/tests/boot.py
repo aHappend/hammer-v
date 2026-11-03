@@ -8,7 +8,9 @@ import tarfile
 from evidence import ROOT, digest, remaining_seconds, stamp
 from integration import ports
 
-MODEL_FLAGS = ("-O3", "--flatten")
+MODEL_FLAGS = ("-O3", "--flatten", "--output-split-cfuncs", "500")
+BUILD_FLAGS = ("-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3",
+               "-CFLAGS", "-flto", "-LDFLAGS", "-flto")
 
 
 def firmware_layout(ev, directory):
@@ -524,7 +526,7 @@ def compile_model(ev, text=HARNESS, parameters=None):
     sources = sorted((ROOT / "rtl").glob("*.sv"))
     ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
             *MODEL_FLAGS,
-            "-MAKEFLAGS", "OPT_FAST=-O3 OPT_SLOW=-O3 OPT_GLOBAL=-O3",
+            *BUILD_FLAGS,
             "--top-module", "hammer_v5_top",
             *[f"-G{name}={value}" for name, value in (parameters or {}).items()],
             "--Mdir", ".", "-o", "boot-sim",
