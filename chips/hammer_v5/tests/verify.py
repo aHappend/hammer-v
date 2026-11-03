@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import sys
+import tarfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -45,14 +46,19 @@ ERRORS = (OSError, RuntimeError, AssertionError, ValueError)
 
 def bind_outputs(ev):
     for name, expected in ev.record["sources_sha256"].items():
+        remaining_seconds()
         if digest(ROOT / name) != expected:
             raise AssertionError(f"source changed during verification: {name}")
-    ev.record["outputs_sha256"] = {
-        ev.relative(path): digest(path)
-        for path in sorted(ev.directory.rglob("*"))
-        if path.is_file() and path != ev.directory / "receipt.json"
-        and "sources" not in path.relative_to(ev.directory).parts
-    }
+    outputs = {}
+    archived = [ROOT / tree for tree in ev.record.get("archived_trees", {})]
+    for path in sorted(ev.directory.rglob("*")):
+        remaining_seconds()
+        if any(path.is_relative_to(tree) for tree in archived):
+            continue
+        if (path.is_file() and path != ev.directory / "receipt.json"
+                and "sources" not in path.relative_to(ev.directory).parts):
+            outputs[ev.relative(path)] = digest(path)
+    ev.record["outputs_sha256"] = outputs
     ev.save()
 
 
@@ -134,6 +140,16 @@ def build_software(ev):
     directory = ev.directory / ("boot-build-" + stamp())
     ev.run(["python3", "software/build.py", "--output", ev.relative(directory),
             "--jobs", "2"], "offline-software", timeout_s=None)
+    removed = 0
+    for build in (directory / "linux-build", directory / "opensbi-build"):
+        for path in build.rglob("*"):
+            remaining_seconds()
+            if (path.is_file() and not path.is_symlink()
+                    and path.suffix in (".o", ".a", ".gch", ".d")):
+                path.unlink()
+                removed += 1
+    ev.record["pruned_build_intermediates"] = removed
+    ev.save()
     return ev.relative(directory)
 
 
@@ -184,6 +200,38 @@ def reproduce(ev):
         raise AssertionError("fresh-directory execution consumed different source inputs")
     ev.record["reproduction"] = {"receipt": ev.relative(path), "sha256": digest(path),
                                  "component_count": len(record["components"])}
+    archive = ev.directory / (directory.name + ".tar.gz")
+    members = {}
+    for item in sorted(directory.rglob("*")):
+        remaining_seconds()
+        if item.is_file():
+            members[item.relative_to(directory).as_posix()] = digest(item)
+    with tarfile.open(archive, "x:gz") as stream:
+        for name in members:
+            remaining_seconds()
+            stream.add(directory / name, arcname=name, recursive=False)
+    import hashlib
+    with tarfile.open(archive, "r:gz") as stream:
+        actual = set()
+        for member in stream:
+            remaining_seconds()
+            if not member.isfile() or member.name not in members or member.name in actual:
+                raise AssertionError("invalid or duplicate reproduction archive member")
+            source = stream.extractfile(member)
+            if hashlib.file_digest(source, "sha256").hexdigest() != members[member.name]:
+                raise AssertionError("reproduction archive round-trip hash mismatch")
+            actual.add(member.name)
+    if actual != set(members):
+        raise AssertionError("incomplete reproduction archive")
+    ev.record["archived_trees"] = {
+        ev.relative(directory): {
+            "archive": ev.relative(archive), "sha256": digest(archive),
+            "members_sha256": members,
+            "receipt_member": path.relative_to(directory).as_posix(),
+            "round_trip_verified": True,
+        },
+    }
+    ev.save()
 
 
 def main():

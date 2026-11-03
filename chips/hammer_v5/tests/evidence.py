@@ -46,19 +46,22 @@ def cancel_owned_process(process, identity):
     root = process.pid
     if identity is None or process_identity(root) != identity:
         return []
-    identities = {}
-    for path in Path("/proc").iterdir():
-        if path.name.isdecimal():
-            observed = process_identity(int(path.name))
-            if observed is not None:
-                identities[int(path.name)] = observed
     owned = {root: identity}
-    while True:
-        added = {pid: token for pid, token in identities.items()
-                 if token[0] in owned and pid not in owned}
-        if not added:
-            break
-        owned.update(added)
+    pending = [root]
+    while pending:
+        parent = pending.pop()
+        try:
+            tasks = list(Path(f"/proc/{parent}/task").iterdir())
+            for task in tasks:
+                children = (task / "children").read_text().split()
+                for child in children:
+                    pid = int(child)
+                    token = process_identity(pid)
+                    if token is not None and token[0] == parent and pid not in owned:
+                        owned[pid] = token
+                        pending.append(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            continue
     signaled = []
     for sig in (signal.SIGTERM, signal.SIGKILL):
         for pid, token in reversed(list(owned.items())):

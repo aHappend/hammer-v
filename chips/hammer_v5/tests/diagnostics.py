@@ -2,17 +2,22 @@
 """Bounded verifier-owned deadline tests and public architectural boot profiling."""
 import argparse
 import bisect
+import difflib
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import time
 
-from evidence import Evidence, ROOT, digest
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from evidence import Evidence, ROOT, digest, stamp
 
 
 WORKER = r"""
-import os, subprocess, sys
+import os, subprocess, sys, time
+sys.path.insert(0,"tests")
 from evidence import Evidence
 ev=Evidence("deadline-child", ("tests/evidence.py",))
 try:
@@ -26,6 +31,17 @@ try:
                 "print(p.pid,flush=True); time.sleep(60)"], "sleeper",
                timeout_s=86400)
 except RuntimeError as error:
+    if time.time()<ev.record["absolute_deadline_unix"]:
+        raise
+    before=len(ev.record["commands"])
+    try:
+        ev.run([sys.executable,"-c","print('unexpected scheduling')"],"after-expiry")
+    except RuntimeError:
+        if len(ev.record["commands"])!=before:
+            raise AssertionError("scheduled work after expiry")
+        ev.record["stopped_scheduling"]=True
+    else:
+        raise AssertionError("deadline reset allowed new work")
     print(ev.finish(1,error),flush=True)
     sys.exit(1)
 sys.exit("deadline unexpectedly permitted completion")
@@ -40,20 +56,22 @@ def deadline_probe(ev):
     deadline = time.time() + 4
     try:
         os.environ["HAMMER_V5_CHECK_DEADLINE"] = str(deadline)
-        ev.run([sys.executable, ev.relative(worker), "nested", WORKER],
-               "nested-deadline", expected_exit=(1, -15, -9), timeout_s=None)
-    except RuntimeError as error:
-        if not ev.record["commands"][-1]["timed_out"]:
-            raise
-        ev.record["expected_timeout"] = str(error)
+        output = ev.run([sys.executable, ev.relative(worker), "nested", WORKER],
+                        "nested-deadline", expected_exit=1, timeout_s=None)
     finally:
         if old is None:
             os.environ.pop("HAMMER_V5_CHECK_DEADLINE", None)
         else:
             os.environ["HAMMER_V5_CHECK_DEADLINE"] = old
-    command = ev.record["commands"][-1]
+    child_path = ROOT / output.strip().splitlines()[-1]
+    child = json.loads(child_path.read_text())
+    command = child["commands"][-1]
+    ev.record["child_receipt"] = {"path": ev.relative(child_path),
+                                "sha256": digest(child_path)}
     if not command["timed_out"] or command["exit"] == 0:
         raise AssertionError("nested deadline did not reject unfinished execution")
+    if child["absolute_deadline_unix"] != deadline or not child.get("stopped_scheduling"):
+        raise AssertionError("nested execution reset deadline or scheduled after expiry")
     if not command.get("cancellation"):
         raise AssertionError("deadline did not record owned process cancellation")
     # Killed descendants may be zombies until the host reaps them, but cannot run.
@@ -66,8 +84,59 @@ def deadline_probe(ev):
     ev.record["observed"] = {"nested_timeout": True, "descendants_stopped": True}
 
 
-def boot_profile(ev, images, cycles, prefetch):
+def diagnostic_baud_images(ev, images, baud):
+    from boot import checked_images
+    directory, _ = checked_images(ev, images)
+    if baud not in (115200, 6250000):
+        raise ValueError("diagnostic baud must use the original or divisor-one rate")
+    destination = ev.directory / ("official-image-baud-" + stamp())
+    destination.mkdir()
+    parent = json.loads((directory / "receipt.json").read_text())
+    copied = {}
+    for name in parent["outputs"]:
+        source = ROOT / name
+        target = destination / source.name
+        shutil.copyfile(source, target)
+        copied[ev.relative(target)] = digest(target)
+    source = destination / "diagnostic.dts"
+    text = (ROOT / "software/hammer_v5.dts").read_text()
+    if text.count("115200") != 3:
+        raise AssertionError("diagnostic UART baud substitution anchors changed")
+    source.write_text(text.replace("115200", str(baud)))
+    ev.record.setdefault("generated_sha256", {})[ev.relative(source)] = digest(source)
+    dtc = directory / "linux-build/scripts/dtc/dtc"
+    ev.record["diagnostic_dtc"] = {"path": ev.relative(dtc), "sha256": digest(dtc)}
+    version = ev.run([ev.relative(dtc), "-v"], "diagnostic-dtc-version")
+    ev.record["diagnostic_dtc"]["version"] = version
+    ev.run([ev.relative(dtc), "-I", "dts", "-O", "dtb", "-p", "4096",
+            "-o", ev.relative(destination / "hammer_v5.dtb"), ev.relative(source)],
+           "diagnostic-dtb")
+    manifest_path = destination / "images.json"
+    manifest = json.loads(manifest_path.read_text())
+    for image in manifest["images"]:
+        image["sha256"] = digest(destination / image["file"])
+        image["bytes"] = (destination / image["file"]).stat().st_size
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    copied = {name: digest(ROOT / name) for name in copied}
+    derivation = {
+        "kind": "diagnostic-image-derivation", "start": ev.record["start"], "end": stamp(),
+        "parent_receipt": {"path": ev.relative(directory / "receipt.json"),
+                           "sha256": digest(directory / "receipt.json")},
+        "inputs": parent["inputs"], "outputs": copied, "exit": 0,
+        "commands": ev.record["commands"][-2:],
+        "diagnostic_only": True, "baud": baud,
+        "change": "UART baud only; unchanged firmware, kernel, memory map and timebase",
+    }
+    (destination / "receipt.json").write_text(json.dumps(derivation, indent=2) + "\n")
+    ev.record["diagnostic_image_derivation"] = derivation
+    ev.save()
+    return ev.relative(destination)
+
+
+def boot_profile(ev, images, cycles, prefetch, baud=None):
     from boot import boot_probe, checked_images
+    if baud is not None:
+        images = diagnostic_baud_images(ev, images, baud)
     directory, _ = checked_images(ev, images)
     kernel = directory / "vmlinux"
     ev.record["kernel_sha256"] = digest(kernel)
@@ -107,25 +176,87 @@ def boot_profile(ev, images, cycles, prefetch):
         raise RuntimeError(error)
 
 
+def audit_evidence(ev, receipt):
+    prior = ROOT / receipt
+    prior.resolve().relative_to(ROOT)
+    record = json.loads(prior.read_text())
+    ev.record["prior_receipt"] = {"path": receipt, "sha256": digest(prior)}
+    differences = {}
+    for name, expected in record["sources_sha256"].items():
+        snapshot = prior.parent / "sources" / name
+        if digest(snapshot) != expected:
+            raise AssertionError(f"prior source snapshot corrupt: {name}")
+        current = digest(ROOT / name)
+        if current != expected:
+            if not name.startswith("tests/"):
+                raise AssertionError(f"design/software source changed: {name}")
+            differences[name] = {"prior": expected, "current": current}
+            target = ev.directory / (Path(name).name + ".diff")
+            target.write_text("".join(difflib.unified_diff(
+                snapshot.read_text().splitlines(True),
+                (ROOT / name).read_text().splitlines(True),
+                fromfile="prior/" + name, tofile="current/" + name)))
+    ev.record["checker_revision"] = differences
+    pending = [(prior, record)]
+    checked = []
+    while pending:
+        path, item = pending.pop()
+        if item["exit"] != 0:
+            raise AssertionError(f"prior check unsuccessful: {path}")
+        for component in item.get("components", []):
+            child = ROOT / component["receipt"]
+            if digest(child) != component["sha256"]:
+                raise AssertionError(f"component receipt changed: {child}")
+            pending.append((child, json.loads(child.read_text())))
+        for name, expected in item.get("outputs_sha256", {}).items():
+            if digest(ROOT / name) != expected:
+                raise AssertionError(f"retained output changed: {name}")
+        if "retained_state" in item.get("observed", {}):
+            from structure import assert_structure
+            observed = assert_structure(path.parent / "netlist.json")
+            if observed != item["observed"]:
+                raise AssertionError("current structural checker differs on retained netlist")
+        checked.append({"receipt": ev.relative(path), "sha256": digest(path),
+                        "output_count": len(item.get("outputs_sha256", {}))})
+    ev.record["observed"] = {
+        "validated_prior_runs": checked, "design_software_unchanged": True,
+        "checker_differences": differences,
+        "scope": "retention/source rebind only; not fresh simulation or synthesis",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--probe", choices=("deadlines", "boot-profile"), required=True)
+    parser.add_argument("--probe", choices=("deadlines", "boot-profile", "audit", "reproduce"),
+                        required=True)
+    parser.add_argument("--receipt")
     parser.add_argument("--images")
     parser.add_argument("--cycles", type=int, default=500000000)
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--baud", type=int, choices=(115200, 6250000),
+                        help="derived diagnostic DTB only; never edits shipped software")
     args = parser.parse_args()
     ev = Evidence("v5-" + args.probe,
-                  ("rtl/*.sv", "tests/*.py", "software/*", "design/*.md"))
+                  ("rtl/*.sv", "tests/*.py", "software/*", "design/*.md",
+                   "hammer_v4_reference/rtl/hammer_v4_top.sv"))
     ev.record["argv"] = ["python3", "tests/diagnostics.py", *sys.argv[1:]]
     error = None
     try:
         ev.version("python3")
         if args.probe == "deadlines":
             deadline_probe(ev)
+        elif args.probe == "audit":
+            if not args.receipt:
+                raise ValueError("audit requires a retained project-relative receipt")
+            audit_evidence(ev, args.receipt)
+        elif args.probe == "reproduce":
+            from verify import bind_outputs, reproduce
+            reproduce(ev)
+            bind_outputs(ev)
         else:
             if not args.images or args.cycles <= 0:
                 raise ValueError("boot profile requires local images and positive cycles")
-            boot_profile(ev, args.images, args.cycles, args.prefetch)
+            boot_profile(ev, args.images, args.cycles, args.prefetch, args.baud)
     except (OSError, ValueError, RuntimeError, AssertionError) as failure:
         error = str(failure)
     path = ev.finish(0 if error is None else 1, error)
