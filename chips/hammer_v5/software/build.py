@@ -223,6 +223,14 @@ def main():
             "CONFIG_TMPFS": "y", "CONFIG_POSIX_TIMERS": "y",
             "CONFIG_HIGH_RES_TIMERS": "y", "CONFIG_RISCV_TIMER": "y",
             "CONFIG_HZ_100": "y", "CONFIG_FUTEX": "y", "CONFIG_MULTIUSER": "y",
+            "CONFIG_PREEMPTION": "y", "CONFIG_SIGNALFD": "y",
+            "CONFIG_TTY": "y", "CONFIG_SERIAL_8250": "y",
+            "CONFIG_SERIAL_CORE_CONSOLE": "y", "CONFIG_SERIAL_EARLYCON": "y",
+            "CONFIG_OF": "y", "CONFIG_OF_FLATTREE": "y",
+            "CONFIG_OF_EARLY_FLATTREE": "y", "CONFIG_OF_ADDRESS": "y",
+            "CONFIG_OF_IRQ": "y", "CONFIG_OF_KOBJ": "y",
+            "CONFIG_OF_RESERVED_MEM": "y", "CONFIG_TIMER_OF": "y",
+            "CONFIG_RISCV_INTC": "y", "CONFIG_SIFIVE_PLIC": "y",
         }
         for name, value in required.items():
             if f"{name}={value}\n" not in resulting_config:
@@ -236,6 +244,14 @@ def main():
             "CONFIG_DEBUG_KERNEL", "CONFIG_DEBUG_MISC", "CONFIG_SLUB_DEBUG",
             "CONFIG_SLUB_DEBUG_ON", "CONFIG_RCU_TRACE",
             "CONFIG_INIT_STACK_ALL_ZERO", "CONFIG_INIT_STACK_ALL_PATTERN",
+            "CONFIG_INPUT", "CONFIG_INPUT_KEYBOARD", "CONFIG_KEYBOARD_ATKBD",
+            "CONFIG_INPUT_MOUSE", "CONFIG_MOUSE_PS2", "CONFIG_INPUT_VIVALDIFMAP",
+            "CONFIG_SERIO", "CONFIG_SERIO_SERPORT", "CONFIG_SERIO_LIBPS2",
+            "CONFIG_HID_SUPPORT", "CONFIG_HID", "CONFIG_HID_GENERIC",
+            "CONFIG_HWMON", "CONFIG_USB_SUPPORT", "CONFIG_USB",
+            "CONFIG_USB_ARCH_HAS_HCD", "CONFIG_USB_GADGET",
+            "CONFIG_SUSPEND", "CONFIG_SUSPEND_FREEZER", "CONFIG_HIBERNATION",
+            "CONFIG_PM", "CONFIG_PM_SLEEP", "CONFIG_PM_CLK",
         )
         resolved = {}
         for line in resulting_config.splitlines():
