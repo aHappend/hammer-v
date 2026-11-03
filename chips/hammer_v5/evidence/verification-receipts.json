@@ -10447,17 +10447,17 @@
       ]
     },
     "check:synthesis": {
-      "attempt_id": 35,
-      "duration_s": 58.55521829309873,
-      "stdout_preview": "PROGRESS yosys-structure: tool executing, elapsed=30s\n{\"component\": \"default\", \"exit\": 0, \"receipt\": \"evidence/v5-synthesis-default-20261103T084010990818Z/receipt.json\"}\n{\"component\": \"minimum\", \"exit\": 0, \"receipt\": \"evidence/v5-synthesis-minimum-20261103T084055138843Z/receipt.json\"}\n{\"suite\": \"synthesis\", \"exit\": 0, \"receipt\": \"evidence/v5-synthesis-20261103T084010496863Z/receipt.json\", \"error\": null}\n",
+      "attempt_id": 38,
+      "duration_s": 60.899473879951984,
+      "stdout_preview": "PROGRESS yosys-structure: tool executing, elapsed=30s\n{\"component\": \"default\", \"exit\": 0, \"receipt\": \"evidence/v5-synthesis-default-20261103T104827877645Z/receipt.json\"}\n{\"component\": \"minimum\", \"exit\": 0, \"receipt\": \"evidence/v5-synthesis-minimum-20261103T104914128245Z/receipt.json\"}\n{\"suite\": \"synthesis\", \"exit\": 0, \"receipt\": \"evidence/v5-synthesis-20261103T104827392904Z/receipt.json\", \"error\": null}\n",
       "receipt_count": 3,
       "receipts": [
         {
-          "path": "evidence/v5-synthesis-default-20261103T084010990818Z/receipt.json",
+          "path": "evidence/v5-synthesis-default-20261103T104827877645Z/receipt.json",
           "data": {
             "schema": 1,
             "kind": "l1-verification",
-            "start": "20261103T084010990972Z",
+            "start": "20261103T104827877801Z",
             "cwd": ".",
             "sources_sha256": {
               "rtl/hammer_v2_alu.sv": "89b5fe972c11dc15b0b1680b630a1f6b5f19029324e6d20c586e925785c4f939",
@@ -10505,7 +10505,10 @@
               "rtl/hammer_v5_top.sv": "428c20446d7437f3103b95db3d08a1f8aba5db7b7758d66cc18a5a3996d5724b",
               "rtl/hammer_v5_vector.sv": "e5988e933a4fdfa8fc4603ced22e66fd8a8d7a1ec82819a8ea30fb5ea95665af",
               "tests/architectural.py": "22e91b6e4463da288dd1cd08352b4a0ea83666d566c73784c521b46ce22fdfe7",
-              "tests/boot.py": "b5efdd8bf079150903d645649f2f3f6b647d49f8046af55e234b2347ef044ab7",
+              "tests/boot.py": "99e3f36dcc4c80a09be1ac126fba3f04906b1212c87f8d5fab335cac7d3492d0",
+              "tests/boot_checks.py": "0d6e66db5fbda64ae20010ebd455d22eed64d7dd1be698721d612e466c009e3e",
+              "tests/boot_efficiency.py": "10787379cf4fe113afadf649de214e460c840f267c50347096f64ee647847d8c",
+              "tests/boot_support.py": "7691b8de90a50a78018972630086f123592a32e551078193c7549a39552381b3",
               "tests/coherence.py": "580b24ccf579a30449c35f639617428a45f0327c03cb6f8343c0af89e417685d",
               "tests/compressed.py": "057c199414a52e145fe20cfc4dd60fd633ac004901c7f6004e6223730a9ccf68",
               "tests/counters.py": "30a7831ed5f6e9c055b79dfeaeb5eb1b0b7201c6a91308ff61e767a2545ca56b",
@@ -10515,12 +10518,13 @@
               "tests/fabric.py": "695099234ab59e3d4dc4d637d8344e1ad3cced7815468d40ae6f3a7fa178becc",
               "tests/fetch.py": "5d987ef7897e2643e2d92b0a47574b815558beb02f66213fecbd795ab703b7ad",
               "tests/integration.py": "237e92b8de480ca438538ddd15c1db649526b6ca357cdb8cd6c31980c0f4e709",
+              "tests/kernel_parameters.py": "b2c0ae98e34d6ff2dda4b68d31e0b96f557bc4f38ef2a0d33ec8fb931c4b6923",
               "tests/local.py": "d2f407ade843b1e94a49dc0e41100b3e3524fd4b5cef2242b145fbdab36a1820",
               "tests/memory.py": "f6ce09e140fa4a28d46401d33190de1f6d9d97abf26afc8e5ea6b7381ce29a51",
               "tests/mmu.py": "11967019b9a2687cc8eee6835d0d4fccd734f266991d7f52da7dce19c75afd7e",
               "tests/mutations.py": "f8eb51f18cb8c2833f7865e7e1ccc3a6ce9bffd02e36fb47b5c80eab667e457f",
               "tests/parameters.py": "a27ef72bf2de2e7d18695ebd2b0e1a14ef03cd46af2141a026d707a19ae78223",
-              "tests/parser_check.py": "b4bb173f4d898b7d8034c677908cf57c48659965e031a711bd01b8ce8aec7b92",
+              "tests/parser_check.py": "0773907beacd32105bcb3d1c2f7b82b8411d42ecfe25f6de1a61b87da49e8238",
               "tests/plic.py": "7726586dfe985b40b4977b3b181f7d536f4b2330a659a7e20d37906e70c654a6",
               "tests/prefetch.py": "5884b09c0fa13ba65b6ba24014147aa6d174998c204c9ebf5bf9e9ce27d010dd",
               "tests/probe.py": "4cafe572c6f4e9f1665b83a85576b34d47522f83fc1d472345607e63599095c6",
@@ -10528,9 +10532,9 @@
               "tests/rv64.py": "759cae3c2fedfc3d739ab4e40667163467c9b2251883038df377d035fb5d171a",
               "tests/structure.py": "12ae64b2f6261c92fd7b15dcbc2eee76cf706b4bb02bd1224044f3b021eaf0c8",
               "tests/tlb.py": "d86437dd7f86359597b6d85312fefeabe877acda5562fe0bfd574bccf5dcfca3",
-              "tests/userland.py": "895585606b090189dbf332ace6fb044fca4d5a6c05e87c9b624db91e3d454d4b",
+              "tests/userland.py": "b65838f7ad8a8ae84f0aa24e9b4c08e123c8411bb45dfb7a218cf54ff758d051",
               "tests/vector.py": "36330dfedc0339cc0af1ed6f73ae6d2d0049e6053d37d900ac5fcfb5b7e6f09e",
-              "tests/verify.py": "96992bbbb4581b48f9114920fa236cc6d1893db77d3544744526843aff41b14a"
+              "tests/verify.py": "2e6f57a98747e8b1cd27e1fa2844867a0809d48f98b94a595689130df7d1b24b"
             },
             "commands": [
               {
@@ -10539,22 +10543,22 @@
                   "--version"
                 ],
                 "cwd": ".",
-                "start": "20261103T084011020427Z",
-                "timeout_s": 2699.476608276367,
+                "start": "20261103T104827908281Z",
+                "timeout_s": 2699.4847617149353,
                 "timed_out": false,
                 "requested_timeout_s": 3600,
-                "absolute_deadline_unix": 1793697910.4968119,
+                "absolute_deadline_unix": 1793705607.3928225,
                 "exit": 0,
-                "stdout": "evidence/v5-synthesis-default-20261103T084010990818Z/version-python3.stdout.txt",
-                "stderr": "evidence/v5-synthesis-default-20261103T084010990818Z/version-python3.stderr.txt",
+                "stdout": "evidence/v5-synthesis-default-20261103T104827877645Z/version-python3.stdout.txt",
+                "stderr": "evidence/v5-synthesis-default-20261103T104827877645Z/version-python3.stderr.txt",
                 "process": {
-                  "pid": 2710623,
+                  "pid": 3430805,
                   "identity": [
-                    2710170,
-                    "173075367"
+                    3430797,
+                    "173845055"
                   ]
                 },
-                "end": "20261103T084011026191Z"
+                "end": "20261103T104827914464Z"
               },
               {
                 "argv": [
@@ -10562,22 +10566,22 @@
                   "-V"
                 ],
                 "cwd": ".",
-                "start": "20261103T084011027843Z",
-                "timeout_s": 2699.4691967964172,
+                "start": "20261103T104827916159Z",
+                "timeout_s": 2699.4768900871277,
                 "timed_out": false,
                 "requested_timeout_s": 3600,
-                "absolute_deadline_unix": 1793697910.4968119,
+                "absolute_deadline_unix": 1793705607.3928225,
                 "exit": 0,
-                "stdout": "evidence/v5-synthesis-default-20261103T084010990818Z/version-yosys.stdout.txt",
-                "stderr": "evidence/v5-synthesis-default-20261103T084010990818Z/version-yosys.stderr.txt",
+                "stdout": "evidence/v5-synthesis-default-20261103T104827877645Z/version-yosys.stdout.txt",
+                "stderr": "evidence/v5-synthesis-default-20261103T104827877645Z/version-yosys.stderr.txt",
                 "process": {
-                  "pid": 2710624,
+                  "pid": 3430806,
                   "identity": [
-                    2710170,
-                    "173075367"
+                    3430797,
+                    "173845056"
                   ]
                 },
-                "end": "20261103T084011045782Z"
+                "end": "20261103T104827933985Z"
               },
               {
                 "argv": [
@@ -10585,25 +10589,25 @@
                   "-Q",
                   "-T",
                   "-s",
-                  "evidence/v5-synthesis-default-20261103T084010990818Z/synthesis.ys"
+                  "evidence/v5-synthesis-default-20261103T104827877645Z/synthesis.ys"
                 ],
                 "cwd": ".",
-                "start": "20261103T084011055033Z",
-                "timeout_s": 2699.441992521286,
+                "start": "20261103T104827943375Z",
+                "timeout_s": 2699.4496586322784,
                 "timed_out": false,
                 "requested_timeout_s": 86400,
-                "absolute_deadline_unix": 1793697910.4968119,
+                "absolute_deadline_unix": 1793705607.3928225,
                 "exit": 0,
-                "stdout": "evidence/v5-synthesis-default-20261103T084010990818Z/yosys-structure.stdout.txt",
-                "stderr": "evidence/v5-synthesis-default-20261103T084010990818Z/yosys-structure.stderr.txt",
+                "stdout": "evidence/v5-synthesis-default-20261103T104827877645Z/yosys-structure.stdout.txt",
+                "stderr": "evidence/v5-synthesis-default-20261103T104827877645Z/yosys-structure.stderr.txt",
                 "process": {
-                  "pid": 2710627,
+                  "pid": 3430807,
                   "identity": [
-                    2710170,
-                    "173075370"
+                    3430797,
+                    "173845059"
                   ]
                 },
-                "end": "20261103T084054453247Z"
+                "end": "20261103T104913453346Z"
               }
             ],
             "tools": {
@@ -10623,12 +10627,12 @@
               }
             },
             "exit": 0,
-            "absolute_deadline_unix": 1793697910.4968119,
-            "invoked_by": "evidence/v5-synthesis-20261103T084010496863Z/receipt.json",
+            "absolute_deadline_unix": 1793705607.3928225,
+            "invoked_by": "evidence/v5-synthesis-20261103T104827392904Z/receipt.json",
             "component": "default",
             "parameters": {},
             "generated_sha256": {
-              "evidence/v5-synthesis-default-20261103T084010990818Z/synthesis.ys": "80e42d84fdb15ad254b7177f14f69881902e60bd7d0a585ba7668afc62a9940f"
+              "evidence/v5-synthesis-default-20261103T104827877645Z/synthesis.ys": "3f3b1978806a3f9e04efebc86853af96456d7ff5b9c573638f5509c27a80b3bd"
             },
             "observed": {
               "reachable_modules": 46,
@@ -10817,24 +10821,24 @@
               }
             },
             "outputs_sha256": {
-              "evidence/v5-synthesis-default-20261103T084010990818Z/netlist.json": "3fb8c6ee16910427b4fb2df2abb8ea82645333f457882e5ccc784a5be086e9a8",
-              "evidence/v5-synthesis-default-20261103T084010990818Z/synthesis.ys": "80e42d84fdb15ad254b7177f14f69881902e60bd7d0a585ba7668afc62a9940f",
-              "evidence/v5-synthesis-default-20261103T084010990818Z/version-python3.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "evidence/v5-synthesis-default-20261103T084010990818Z/version-python3.stdout.txt": "5b3e43dc38ca01e3f5a7854ba50d4330864b0c1e0f646650b2c78cf072acc366",
-              "evidence/v5-synthesis-default-20261103T084010990818Z/version-yosys.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "evidence/v5-synthesis-default-20261103T084010990818Z/version-yosys.stdout.txt": "14022961a7564dcc908f30f8b52cc1289449e8f25a95ed5c2d2afb88c4bde4fa",
-              "evidence/v5-synthesis-default-20261103T084010990818Z/yosys-structure.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "evidence/v5-synthesis-default-20261103T084010990818Z/yosys-structure.stdout.txt": "41777751ca1748f8caed9928b2ce9099a738ce372104d5c2b59b85286c669986"
+              "evidence/v5-synthesis-default-20261103T104827877645Z/netlist.json": "3fb8c6ee16910427b4fb2df2abb8ea82645333f457882e5ccc784a5be086e9a8",
+              "evidence/v5-synthesis-default-20261103T104827877645Z/synthesis.ys": "3f3b1978806a3f9e04efebc86853af96456d7ff5b9c573638f5509c27a80b3bd",
+              "evidence/v5-synthesis-default-20261103T104827877645Z/version-python3.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "evidence/v5-synthesis-default-20261103T104827877645Z/version-python3.stdout.txt": "5b3e43dc38ca01e3f5a7854ba50d4330864b0c1e0f646650b2c78cf072acc366",
+              "evidence/v5-synthesis-default-20261103T104827877645Z/version-yosys.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "evidence/v5-synthesis-default-20261103T104827877645Z/version-yosys.stdout.txt": "14022961a7564dcc908f30f8b52cc1289449e8f25a95ed5c2d2afb88c4bde4fa",
+              "evidence/v5-synthesis-default-20261103T104827877645Z/yosys-structure.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "evidence/v5-synthesis-default-20261103T104827877645Z/yosys-structure.stdout.txt": "85883e0f96ca6bbea82affe2484dd5de8473f40c49a1e37004674066655fcc56"
             },
-            "end": "20261103T084055135283Z"
+            "end": "20261103T104914124920Z"
           }
         },
         {
-          "path": "evidence/v5-synthesis-minimum-20261103T084055138843Z/receipt.json",
+          "path": "evidence/v5-synthesis-minimum-20261103T104914128245Z/receipt.json",
           "data": {
             "schema": 1,
             "kind": "l1-verification",
-            "start": "20261103T084055139074Z",
+            "start": "20261103T104914128468Z",
             "cwd": ".",
             "sources_sha256": {
               "rtl/hammer_v2_alu.sv": "89b5fe972c11dc15b0b1680b630a1f6b5f19029324e6d20c586e925785c4f939",
@@ -10882,7 +10886,10 @@
               "rtl/hammer_v5_top.sv": "428c20446d7437f3103b95db3d08a1f8aba5db7b7758d66cc18a5a3996d5724b",
               "rtl/hammer_v5_vector.sv": "e5988e933a4fdfa8fc4603ced22e66fd8a8d7a1ec82819a8ea30fb5ea95665af",
               "tests/architectural.py": "22e91b6e4463da288dd1cd08352b4a0ea83666d566c73784c521b46ce22fdfe7",
-              "tests/boot.py": "b5efdd8bf079150903d645649f2f3f6b647d49f8046af55e234b2347ef044ab7",
+              "tests/boot.py": "99e3f36dcc4c80a09be1ac126fba3f04906b1212c87f8d5fab335cac7d3492d0",
+              "tests/boot_checks.py": "0d6e66db5fbda64ae20010ebd455d22eed64d7dd1be698721d612e466c009e3e",
+              "tests/boot_efficiency.py": "10787379cf4fe113afadf649de214e460c840f267c50347096f64ee647847d8c",
+              "tests/boot_support.py": "7691b8de90a50a78018972630086f123592a32e551078193c7549a39552381b3",
               "tests/coherence.py": "580b24ccf579a30449c35f639617428a45f0327c03cb6f8343c0af89e417685d",
               "tests/compressed.py": "057c199414a52e145fe20cfc4dd60fd633ac004901c7f6004e6223730a9ccf68",
               "tests/counters.py": "30a7831ed5f6e9c055b79dfeaeb5eb1b0b7201c6a91308ff61e767a2545ca56b",
@@ -10892,12 +10899,13 @@
               "tests/fabric.py": "695099234ab59e3d4dc4d637d8344e1ad3cced7815468d40ae6f3a7fa178becc",
               "tests/fetch.py": "5d987ef7897e2643e2d92b0a47574b815558beb02f66213fecbd795ab703b7ad",
               "tests/integration.py": "237e92b8de480ca438538ddd15c1db649526b6ca357cdb8cd6c31980c0f4e709",
+              "tests/kernel_parameters.py": "b2c0ae98e34d6ff2dda4b68d31e0b96f557bc4f38ef2a0d33ec8fb931c4b6923",
               "tests/local.py": "d2f407ade843b1e94a49dc0e41100b3e3524fd4b5cef2242b145fbdab36a1820",
               "tests/memory.py": "f6ce09e140fa4a28d46401d33190de1f6d9d97abf26afc8e5ea6b7381ce29a51",
               "tests/mmu.py": "11967019b9a2687cc8eee6835d0d4fccd734f266991d7f52da7dce19c75afd7e",
               "tests/mutations.py": "f8eb51f18cb8c2833f7865e7e1ccc3a6ce9bffd02e36fb47b5c80eab667e457f",
               "tests/parameters.py": "a27ef72bf2de2e7d18695ebd2b0e1a14ef03cd46af2141a026d707a19ae78223",
-              "tests/parser_check.py": "b4bb173f4d898b7d8034c677908cf57c48659965e031a711bd01b8ce8aec7b92",
+              "tests/parser_check.py": "0773907beacd32105bcb3d1c2f7b82b8411d42ecfe25f6de1a61b87da49e8238",
               "tests/plic.py": "7726586dfe985b40b4977b3b181f7d536f4b2330a659a7e20d37906e70c654a6",
               "tests/prefetch.py": "5884b09c0fa13ba65b6ba24014147aa6d174998c204c9ebf5bf9e9ce27d010dd",
               "tests/probe.py": "4cafe572c6f4e9f1665b83a85576b34d47522f83fc1d472345607e63599095c6",
@@ -10905,9 +10913,9 @@
               "tests/rv64.py": "759cae3c2fedfc3d739ab4e40667163467c9b2251883038df377d035fb5d171a",
               "tests/structure.py": "12ae64b2f6261c92fd7b15dcbc2eee76cf706b4bb02bd1224044f3b021eaf0c8",
               "tests/tlb.py": "d86437dd7f86359597b6d85312fefeabe877acda5562fe0bfd574bccf5dcfca3",
-              "tests/userland.py": "895585606b090189dbf332ace6fb044fca4d5a6c05e87c9b624db91e3d454d4b",
+              "tests/userland.py": "b65838f7ad8a8ae84f0aa24e9b4c08e123c8411bb45dfb7a218cf54ff758d051",
               "tests/vector.py": "36330dfedc0339cc0af1ed6f73ae6d2d0049e6053d37d900ac5fcfb5b7e6f09e",
-              "tests/verify.py": "96992bbbb4581b48f9114920fa236cc6d1893db77d3544744526843aff41b14a"
+              "tests/verify.py": "2e6f57a98747e8b1cd27e1fa2844867a0809d48f98b94a595689130df7d1b24b"
             },
             "commands": [
               {
@@ -10916,22 +10924,22 @@
                   "--version"
                 ],
                 "cwd": ".",
-                "start": "20261103T084055168101Z",
-                "timeout_s": 2655.328921318054,
+                "start": "20261103T104914158844Z",
+                "timeout_s": 2653.2341918945312,
                 "timed_out": false,
                 "requested_timeout_s": 3600,
-                "absolute_deadline_unix": 1793697910.4968119,
+                "absolute_deadline_unix": 1793705607.3928225,
                 "exit": 0,
-                "stdout": "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-python3.stdout.txt",
-                "stderr": "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-python3.stderr.txt",
+                "stdout": "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-python3.stdout.txt",
+                "stderr": "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-python3.stderr.txt",
                 "process": {
-                  "pid": 2713231,
+                  "pid": 3432165,
                   "identity": [
-                    2710170,
-                    "173079781"
+                    3430797,
+                    "173849680"
                   ]
                 },
-                "end": "20261103T084055174209Z"
+                "end": "20261103T104914164576Z"
               },
               {
                 "argv": [
@@ -10939,22 +10947,22 @@
                   "-V"
                 ],
                 "cwd": ".",
-                "start": "20261103T084055175884Z",
-                "timeout_s": 2655.3211562633514,
+                "start": "20261103T104914166217Z",
+                "timeout_s": 2653.2268311977386,
                 "timed_out": false,
                 "requested_timeout_s": 3600,
-                "absolute_deadline_unix": 1793697910.4968119,
+                "absolute_deadline_unix": 1793705607.3928225,
                 "exit": 0,
-                "stdout": "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-yosys.stdout.txt",
-                "stderr": "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-yosys.stderr.txt",
+                "stdout": "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-yosys.stdout.txt",
+                "stderr": "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-yosys.stderr.txt",
                 "process": {
-                  "pid": 2713232,
+                  "pid": 3432166,
                   "identity": [
-                    2710170,
-                    "173079782"
+                    3430797,
+                    "173849681"
                   ]
                 },
-                "end": "20261103T084055193722Z"
+                "end": "20261103T104914184033Z"
               },
               {
                 "argv": [
@@ -10962,25 +10970,25 @@
                   "-Q",
                   "-T",
                   "-s",
-                  "evidence/v5-synthesis-minimum-20261103T084055138843Z/synthesis.ys"
+                  "evidence/v5-synthesis-minimum-20261103T104914128245Z/synthesis.ys"
                 ],
                 "cwd": ".",
-                "start": "20261103T084055202861Z",
-                "timeout_s": 2655.294162273407,
+                "start": "20261103T104914193019Z",
+                "timeout_s": 2653.2000093460083,
                 "timed_out": false,
                 "requested_timeout_s": 86400,
-                "absolute_deadline_unix": 1793697910.4968119,
+                "absolute_deadline_unix": 1793705607.3928225,
                 "exit": 0,
-                "stdout": "evidence/v5-synthesis-minimum-20261103T084055138843Z/yosys-structure.stdout.txt",
-                "stderr": "evidence/v5-synthesis-minimum-20261103T084055138843Z/yosys-structure.stderr.txt",
+                "stdout": "evidence/v5-synthesis-minimum-20261103T104914128245Z/yosys-structure.stdout.txt",
+                "stderr": "evidence/v5-synthesis-minimum-20261103T104914128245Z/yosys-structure.stderr.txt",
                 "process": {
-                  "pid": 2713233,
+                  "pid": 3432167,
                   "identity": [
-                    2710170,
-                    "173079785"
+                    3430797,
+                    "173849684"
                   ]
                 },
-                "end": "20261103T084108252720Z"
+                "end": "20261103T104927396903Z"
               }
             ],
             "tools": {
@@ -11000,8 +11008,8 @@
               }
             },
             "exit": 0,
-            "absolute_deadline_unix": 1793697910.4968119,
-            "invoked_by": "evidence/v5-synthesis-20261103T084010496863Z/receipt.json",
+            "absolute_deadline_unix": 1793705607.3928225,
+            "invoked_by": "evidence/v5-synthesis-20261103T104827392904Z/receipt.json",
             "component": "minimum",
             "parameters": {
               "IMEM_WORDS": 1,
@@ -11016,7 +11024,7 @@
               "L2_SETS": 1
             },
             "generated_sha256": {
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/synthesis.ys": "6bee10d547ed1c5379e9100c64a789fcd293f25a73fc98a38423a41798ef0965"
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/synthesis.ys": "7117fab5fd1ddd82e00e03fc01966ed7c0e93e0a15ce91c63002529195deca10"
             },
             "observed": {
               "reachable_modules": 46,
@@ -11204,24 +11212,24 @@
               }
             },
             "outputs_sha256": {
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/netlist.json": "bab572f77b4c16824dfd1fe65b4da2b6a23bdd5748ecf78439a70c5baaeda667",
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/synthesis.ys": "6bee10d547ed1c5379e9100c64a789fcd293f25a73fc98a38423a41798ef0965",
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-python3.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-python3.stdout.txt": "5b3e43dc38ca01e3f5a7854ba50d4330864b0c1e0f646650b2c78cf072acc366",
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-yosys.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/version-yosys.stdout.txt": "14022961a7564dcc908f30f8b52cc1289449e8f25a95ed5c2d2afb88c4bde4fa",
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/yosys-structure.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "evidence/v5-synthesis-minimum-20261103T084055138843Z/yosys-structure.stdout.txt": "c3d18cb397cd718c1e7e0ec072ce39ae5056167691f0cc2d62fc27ee81e62de4"
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/netlist.json": "bab572f77b4c16824dfd1fe65b4da2b6a23bdd5748ecf78439a70c5baaeda667",
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/synthesis.ys": "7117fab5fd1ddd82e00e03fc01966ed7c0e93e0a15ce91c63002529195deca10",
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-python3.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-python3.stdout.txt": "5b3e43dc38ca01e3f5a7854ba50d4330864b0c1e0f646650b2c78cf072acc366",
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-yosys.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/version-yosys.stdout.txt": "14022961a7564dcc908f30f8b52cc1289449e8f25a95ed5c2d2afb88c4bde4fa",
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/yosys-structure.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "evidence/v5-synthesis-minimum-20261103T104914128245Z/yosys-structure.stdout.txt": "66d094561eb32fda42cff9fc63025f59ebd075e8404db8a90a30f52b1698d91f"
             },
-            "end": "20261103T084108611419Z"
+            "end": "20261103T104927789962Z"
           }
         },
         {
-          "path": "evidence/v5-synthesis-20261103T084010496863Z/receipt.json",
+          "path": "evidence/v5-synthesis-20261103T104827392904Z/receipt.json",
           "data": {
             "schema": 1,
             "kind": "l1-verification",
-            "start": "20261103T084010497136Z",
+            "start": "20261103T104827393146Z",
             "cwd": ".",
             "sources_sha256": {
               "rtl/hammer_v2_alu.sv": "89b5fe972c11dc15b0b1680b630a1f6b5f19029324e6d20c586e925785c4f939",
@@ -11269,7 +11277,10 @@
               "rtl/hammer_v5_top.sv": "428c20446d7437f3103b95db3d08a1f8aba5db7b7758d66cc18a5a3996d5724b",
               "rtl/hammer_v5_vector.sv": "e5988e933a4fdfa8fc4603ced22e66fd8a8d7a1ec82819a8ea30fb5ea95665af",
               "tests/architectural.py": "22e91b6e4463da288dd1cd08352b4a0ea83666d566c73784c521b46ce22fdfe7",
-              "tests/boot.py": "b5efdd8bf079150903d645649f2f3f6b647d49f8046af55e234b2347ef044ab7",
+              "tests/boot.py": "99e3f36dcc4c80a09be1ac126fba3f04906b1212c87f8d5fab335cac7d3492d0",
+              "tests/boot_checks.py": "0d6e66db5fbda64ae20010ebd455d22eed64d7dd1be698721d612e466c009e3e",
+              "tests/boot_efficiency.py": "10787379cf4fe113afadf649de214e460c840f267c50347096f64ee647847d8c",
+              "tests/boot_support.py": "7691b8de90a50a78018972630086f123592a32e551078193c7549a39552381b3",
               "tests/coherence.py": "580b24ccf579a30449c35f639617428a45f0327c03cb6f8343c0af89e417685d",
               "tests/compressed.py": "057c199414a52e145fe20cfc4dd60fd633ac004901c7f6004e6223730a9ccf68",
               "tests/counters.py": "30a7831ed5f6e9c055b79dfeaeb5eb1b0b7201c6a91308ff61e767a2545ca56b",
@@ -11279,12 +11290,13 @@
               "tests/fabric.py": "695099234ab59e3d4dc4d637d8344e1ad3cced7815468d40ae6f3a7fa178becc",
               "tests/fetch.py": "5d987ef7897e2643e2d92b0a47574b815558beb02f66213fecbd795ab703b7ad",
               "tests/integration.py": "237e92b8de480ca438538ddd15c1db649526b6ca357cdb8cd6c31980c0f4e709",
+              "tests/kernel_parameters.py": "b2c0ae98e34d6ff2dda4b68d31e0b96f557bc4f38ef2a0d33ec8fb931c4b6923",
               "tests/local.py": "d2f407ade843b1e94a49dc0e41100b3e3524fd4b5cef2242b145fbdab36a1820",
               "tests/memory.py": "f6ce09e140fa4a28d46401d33190de1f6d9d97abf26afc8e5ea6b7381ce29a51",
               "tests/mmu.py": "11967019b9a2687cc8eee6835d0d4fccd734f266991d7f52da7dce19c75afd7e",
               "tests/mutations.py": "f8eb51f18cb8c2833f7865e7e1ccc3a6ce9bffd02e36fb47b5c80eab667e457f",
               "tests/parameters.py": "a27ef72bf2de2e7d18695ebd2b0e1a14ef03cd46af2141a026d707a19ae78223",
-              "tests/parser_check.py": "b4bb173f4d898b7d8034c677908cf57c48659965e031a711bd01b8ce8aec7b92",
+              "tests/parser_check.py": "0773907beacd32105bcb3d1c2f7b82b8411d42ecfe25f6de1a61b87da49e8238",
               "tests/plic.py": "7726586dfe985b40b4977b3b181f7d536f4b2330a659a7e20d37906e70c654a6",
               "tests/prefetch.py": "5884b09c0fa13ba65b6ba24014147aa6d174998c204c9ebf5bf9e9ce27d010dd",
               "tests/probe.py": "4cafe572c6f4e9f1665b83a85576b34d47522f83fc1d472345607e63599095c6",
@@ -11292,9 +11304,9 @@
               "tests/rv64.py": "759cae3c2fedfc3d739ab4e40667163467c9b2251883038df377d035fb5d171a",
               "tests/structure.py": "12ae64b2f6261c92fd7b15dcbc2eee76cf706b4bb02bd1224044f3b021eaf0c8",
               "tests/tlb.py": "d86437dd7f86359597b6d85312fefeabe877acda5562fe0bfd574bccf5dcfca3",
-              "tests/userland.py": "895585606b090189dbf332ace6fb044fca4d5a6c05e87c9b624db91e3d454d4b",
+              "tests/userland.py": "b65838f7ad8a8ae84f0aa24e9b4c08e123c8411bb45dfb7a218cf54ff758d051",
               "tests/vector.py": "36330dfedc0339cc0af1ed6f73ae6d2d0049e6053d37d900ac5fcfb5b7e6f09e",
-              "tests/verify.py": "96992bbbb4581b48f9114920fa236cc6d1893db77d3544744526843aff41b14a",
+              "tests/verify.py": "2e6f57a98747e8b1cd27e1fa2844867a0809d48f98b94a595689130df7d1b24b",
               "software/LICENSE": "541dbd30b6273bb109c655b4974ba29e826c6687a38b13ee51b6d3fbac6bba63",
               "software/boot_manifest.json": "ddfbe28eabd6e9ffd483362b65ad8e7d27cc363f889630f02c772ccabea7a030",
               "software/build.py": "cbd207ef9e1aa88b216b5dc8b39bad03cc9b1dd642a4a58ede734cd711d79c24",
@@ -11326,22 +11338,22 @@
                   "--version"
                 ],
                 "cwd": ".",
-                "start": "20261103T084010983501Z",
-                "timeout_s": 2699.5135633945465,
+                "start": "20261103T104827870412Z",
+                "timeout_s": 2699.522664785385,
                 "timed_out": false,
                 "requested_timeout_s": 3600,
-                "absolute_deadline_unix": 1793697910.4968119,
+                "absolute_deadline_unix": 1793705607.3928225,
                 "exit": 0,
-                "stdout": "evidence/v5-synthesis-20261103T084010496863Z/version-python3.stdout.txt",
-                "stderr": "evidence/v5-synthesis-20261103T084010496863Z/version-python3.stderr.txt",
+                "stdout": "evidence/v5-synthesis-20261103T104827392904Z/version-python3.stdout.txt",
+                "stderr": "evidence/v5-synthesis-20261103T104827392904Z/version-python3.stderr.txt",
                 "process": {
-                  "pid": 2710622,
+                  "pid": 3430804,
                   "identity": [
-                    2710170,
-                    "173075363"
+                    3430797,
+                    "173845052"
                   ]
                 },
-                "end": "20261103T084010989862Z"
+                "end": "20261103T104827876666Z"
               }
             ],
             "tools": {
@@ -11354,7 +11366,7 @@
               }
             },
             "exit": 0,
-            "absolute_deadline_unix": 1793697910.4968119,
+            "absolute_deadline_unix": 1793705607.3928225,
             "suite": "synthesis",
             "reproduce_worker": false,
             "argv": [
@@ -11368,24 +11380,24 @@
             "components": [
               {
                 "name": "default",
-                "receipt": "evidence/v5-synthesis-default-20261103T084010990818Z/receipt.json",
-                "sha256": "d82f4a6e76a19cb71fb9601bbd3713e71bbc5f360f48d67c774ee006d37c8538",
+                "receipt": "evidence/v5-synthesis-default-20261103T104827877645Z/receipt.json",
+                "sha256": "b8948c447358afe9df063cac9e1cf60bdf721116379ff1f2b23489ac2372dcb9",
                 "exit": 0,
                 "error": null
               },
               {
                 "name": "minimum",
-                "receipt": "evidence/v5-synthesis-minimum-20261103T084055138843Z/receipt.json",
-                "sha256": "cb38a99ea850186d634fabf9b44adc4ec7912fb645f82a95b947856b6c3b3074",
+                "receipt": "evidence/v5-synthesis-minimum-20261103T104914128245Z/receipt.json",
+                "sha256": "9caa9ac7350db6d1cc7980fa39b95b19888a11edd17e586aeba6b7659a687d67",
                 "exit": 0,
                 "error": null
               }
             ],
             "outputs_sha256": {
-              "evidence/v5-synthesis-20261103T084010496863Z/version-python3.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "evidence/v5-synthesis-20261103T084010496863Z/version-python3.stdout.txt": "5b3e43dc38ca01e3f5a7854ba50d4330864b0c1e0f646650b2c78cf072acc366"
+              "evidence/v5-synthesis-20261103T104827392904Z/version-python3.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "evidence/v5-synthesis-20261103T104827392904Z/version-python3.stdout.txt": "5b3e43dc38ca01e3f5a7854ba50d4330864b0c1e0f646650b2c78cf072acc366"
             },
-            "end": "20261103T084108830712Z"
+            "end": "20261103T104928025384Z"
           }
         }
       ]
