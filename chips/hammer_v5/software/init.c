@@ -6,6 +6,7 @@
 extern void hammer_vx_save(uint64_t *);
 extern void hammer_vx_restore(const uint64_t *);
 extern void hammer_try_vxctl_write(void);
+extern void hammer_try_misaligned_vload(const void *);
 
 static char line[768];
 static unsigned line_used;
@@ -15,6 +16,7 @@ static uint64_t task_state[8];
 static volatile unsigned signal_count, nested_count, fault_count;
 static volatile int expected_signal;
 static volatile uintptr_t expected_address;
+static volatile uintptr_t expected_misaligned_va;
 static uint8_t signal_stack[16384] __attribute__((aligned(16)));
 static uint64_t int_a[32], int_b[32], bf_a[64], bf_b[64];
 static uint64_t int_matrix_a[8][8], int_matrix_b[8][8];
@@ -206,6 +208,13 @@ static void fault_handler(int signal, void *info, void *context)
     uintptr_t address = *(uintptr_t *)((uint8_t *)info + 16);
     require(signal == expected_signal, "unexpected fault signal");
     require(address == expected_address, "fault si_addr");
+    if (signal == HV_SIGBUS) {
+        require(*(int *)((uint8_t *)info + 8) == 1, "fault BUS_ADRALN");
+        require(uc->gpr[0] == (uintptr_t)hammer_try_misaligned_vload,
+                "misaligned vload trap PC");
+        require(uc->gpr[10] == expected_misaligned_va,
+                "misaligned vload effective address");
+    }
     check_state(task_state, "faulting custom changed vector state");
     ++fault_count;
     expected_signal = 0;
@@ -259,8 +268,10 @@ static void faults(void)
     require(memory[0] == ~task_state[0], "faulting store memory changed");
     require(hammer_call(HV_MPROTECT, mapped, 4096, 3) == 0, "PROT_READ_WRITE");
     expected_signal = HV_SIGBUS;
-    expected_address = (uintptr_t)memory + 1;
-    HAMMER_VLOAD(0, (uint8_t *)memory + 1);
+    /* Linux 6.6.1 reports EPC, not badaddr, for BUS_ADRALN. */
+    expected_address = (uintptr_t)hammer_try_misaligned_vload;
+    expected_misaligned_va = (uintptr_t)memory + 1;
+    hammer_try_misaligned_vload((uint8_t *)memory + 1);
     require(!expected_signal, "missing misaligned vload fault");
     require(hammer_call(HV_MUNMAP, mapped + 4096, 4096, 0) == 0, "unmap second page");
     expected_signal = HV_SIGSEGV;
@@ -277,6 +288,10 @@ static void faults(void)
     append(" successful_vload=1 rejected=");
     decimal(fault_count);
     append(" Sv39_mmap_mprotect=1 state_preserved=1");
+    append(" misaligned_pc=");
+    hex((uintptr_t)hammer_try_misaligned_vload);
+    append(" misaligned_va=");
+    hex(expected_misaligned_va);
     emit();
 }
 

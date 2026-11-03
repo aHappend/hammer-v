@@ -23,5 +23,12 @@ hammer_try_vxctl_write:
     csrrw zero, 0x800, zero
     ret
     .size hammer_try_vxctl_write, .-hammer_try_vxctl_write
+    .balign 4
+    .globl hammer_try_misaligned_vload
+    .type hammer_try_misaligned_vload, @function
+hammer_try_misaligned_vload:
+    .insn r 0x0b, 0, 0, x0, a0, x0
+    ret
+    .size hammer_try_misaligned_vload, .-hammer_try_misaligned_vload
     .option pop
     .section .note.GNU-stack, "", @progbits
