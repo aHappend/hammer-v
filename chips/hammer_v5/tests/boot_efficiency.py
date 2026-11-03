@@ -64,13 +64,40 @@ def fault_probe(ev, images, prefetch):
         shutil.rmtree(objects)
 
 
-def instrument(text):
+def instrument(text, prefix_cycles=None):
     declaration = r"""
  uint64_t pin_hash=14695981039346656037ULL;
  auto mix=[&](uint64_t value) {pin_hash=(pin_hash^value)*1099511628211ULL;};
  uint64_t sampled_eval_ns=0,sampled_host_ns=0,samples=0;
  std::chrono::steady_clock::time_point sample_start,sample_low,sample_high;
+ std::chrono::steady_clock::time_point prefix_end;
 """
+    if prefix_cycles is not None:
+        anchor = '   if(context.gotFinish()) throw std::runtime_error("RTL terminated before boot goal");'
+        if text.count(anchor) != 1:
+            raise AssertionError("late-prefix observation anchor changed")
+        text = text.replace(anchor, r"""
+   if(cycles+1==__PREFIX_CYCLES__) {
+    prefix_end=std::chrono::steady_clock::now();
+    std::ofstream prefix("prefix-observed.json");
+    prefix<<"{\"cycles\":"<<cycles+1<<",\"retired\":"<<retired<<",\"dram_reads\":"<<reads
+     <<",\"dram_writes\":"<<writes<<",\"s_retired\":"<<sretired<<",\"u_retired\":"<<uretired
+     <<",\"high_va_retired\":"<<translated<<",\"u_custom\":"<<custom
+     <<",\"traps\":"<<traps<<",\"integer_checks\":"<<isa.checked
+     <<",\"m_mode_load_checks\":"<<isa.loads<<",\"m_mode_store_checks\":"<<isa.stores
+     <<",\"user_pid_count\":"<<observed_pids.size()
+     <<",\"retirement_hash\":"<<retirement_hash<<",\"goal_reached\":false}\n";
+    uart.flush();uart_events.flush();ecalls.flush();pids.flush();
+    std::ofstream prefix_time("prefix-timing.json");
+    prefix_time<<"{\"seconds\":"<<std::chrono::duration<double>(prefix_end-wall_start).count()
+     <<",\"cycles\":"<<cycles+1<<"}\n";
+    for(const char *name: {"uart.txt","uart-events.txt","user-ecalls.txt","user-pids.txt"}) {
+     std::ifstream input(name,std::ios::binary);
+     std::ofstream output(std::string("prefix-")+name,std::ios::binary);
+     output<<input.rdbuf();
+    }
+   }
+""" .replace("__PREFIX_CYCLES__", str(prefix_cycles)) + anchor)
     output_hash = "\n".join(f"   mix(uint64_t(d.{name}));"
                             for direction, _, name in ports(ROOT / "rtl/hammer_v5_top.sv")
                             if direction == "output")
@@ -108,7 +135,13 @@ def instrument(text):
         ("  if(!done) throw", r"""
   std::ofstream signature("efficiency-observed.json");
   signature<<"{\"pin_hash\":"<<pin_hash<<",\"sampled_eval_ns\":"<<sampled_eval_ns
-   <<",\"sampled_host_ns\":"<<sampled_host_ns<<",\"samples\":"<<samples<<"}\n";
+   <<",\"sampled_host_ns\":"<<sampled_host_ns<<",\"samples\":"<<samples;
+  if(prefix_end.time_since_epoch().count()) {
+   double seconds=std::chrono::duration<double>(
+       std::chrono::steady_clock::now()-prefix_end).count();
+   signature<<",\"late_seconds\":"<<seconds;
+  }
+  signature<<"}\n";
   signature.close();
   if(!done) throw"""),
     )
@@ -120,7 +153,7 @@ def instrument(text):
 
 
 def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
-                scheduler=False, extra_flags=()):
+                scheduler=False, extra_flags=(), prefix_cycles=None):
     directory, _ = checked_images(ev, images)
     custom_fault_expectations(ev, directory)
     initialize = "\n".join(f" d.{name}=0;" for direction, _, name in
@@ -130,8 +163,13 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         if not 1 <= threads <= 4 or text.count("context.threads(1)") != 1:
             raise ValueError("bounded model-thread experiment requires 1..4 context threads")
         text = text.replace("context.threads(1)", f"context.threads({threads})")
+    if prefix_cycles is not None:
+        anchor = 'if(goal=="userland") custom_fault.load();'
+        if text.count(anchor) != 1:
+            raise AssertionError("late custom-fault observation anchor changed")
+        text = text.replace(anchor, 'custom_fault.load();')
     source = ev.directory / "boot.cpp"
-    source.write_text(instrument(text).replace("__INITIALIZE_INPUTS__", initialize)
+    source.write_text(instrument(text, prefix_cycles).replace("__INITIALIZE_INPUTS__", initialize)
                       .replace("__ISA_ORACLE__", CPP).replace("__BOOT_SUPPORT__", SUPPORT))
     decode_image(ev.directory / "decode.bin")
     ev.record["generated_sha256"].update({
@@ -171,14 +209,27 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
             training = ev.directory / ("compiler-training-" + stamp())
             training.mkdir()
             shutil.copyfile(ev.directory / "decode.bin", training / "decode.bin")
+            if (ev.directory / "custom-fault-pcs.txt").is_file():
+                shutil.copyfile(ev.directory / "custom-fault-pcs.txt",
+                                training / "custom-fault-pcs.txt")
             ev.run(["../compile-obj/boot-sim",
                     *[os.path.relpath(directory / name, training) for name in
                       ("opensbi.bin", "Image", "hammer_v5.dtb")],
-                    str(cycles), "efficiency"], "compiler-training", cwd=training,
+                    str(min(cycles, 2000000)), "efficiency"], "compiler-training", cwd=training,
                    expected_exit=1)
             if "bounded RTL boot goal not reached" not in (
                     ROOT / ev.record["commands"][-1]["stderr"]).read_text():
                 raise AssertionError("compiler training failed for an unexpected reason")
+            profiles = ev.directory / ("compiler-profile-" + stamp())
+            profiles.mkdir()
+            for path in objects.glob("*.gcda"):
+                destination = profiles / path.name
+                shutil.copyfile(path, destination)
+                ev.record.setdefault("compiler_profile_sha256", {})[
+                    ev.relative(destination)] = digest(destination)
+            if not ev.record.get("compiler_profile_sha256"):
+                raise AssertionError("compiler training produced no retained profile data")
+            ev.save()
             ev.run(["make", "-f", "Vhammer_v5_top.mk", "-B", "-j", "2",
                     "VM_USER_CFLAGS=", "VM_USER_LDLIBS=",
                     "OPT_FAST=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
@@ -240,9 +291,13 @@ def main():
                         help="compare bounded code-generation/installed-compiler optimizations")
     parser.add_argument("--candidate", nargs=2, action="append", metavar=("NAME", "FLAGS_JSON"),
                         help="additional installed-tool compiler flags, compared with scheduler baseline")
+    parser.add_argument("--late-candidate", action="store_true",
+                        help="one bounded fresh-reset candidate with failed-run prefix equivalence")
     args = parser.parse_args()
-    if not 1 <= args.cycles <= 20000000:
-        raise ValueError("efficiency diagnostic requires 1..20000000 edges")
+    if not 1 <= args.cycles <= (700000000 if args.late_candidate else 20000000):
+        raise ValueError("efficiency diagnostic exceeds its declared edge bound")
+    if args.late_candidate and (not args.candidate or len(args.candidate) != 1):
+        raise ValueError("late diagnostic requires exactly one explicit candidate")
     ev = Evidence("v5-boot-efficiency", SOURCE_SELECTORS, args.repair_of)
     ev.record["argv"] = ["python3", "tests/boot_efficiency.py", *sys.argv[1:]]
     ev.record["scope"] = {"fixed_edge_diagnostic_only": True, "cycles": args.cycles,
@@ -270,6 +325,21 @@ def main():
         ev.record["baseline_sha256"] = digest(saved)
         ev.record["baseline_receipt"] = {
             "path": baseline_receipt, "sha256": digest(ROOT / baseline_receipt)}
+        prefix_cycles = None
+        if args.late_candidate:
+            prefix_cycles = prior["observed"]["cycles"]
+            if not prefix_cycles < args.cycles:
+                raise ValueError("late diagnostic must extend the retained failed prefix")
+            for name, expected in prior["sources_sha256"].items():
+                if name.startswith(("rtl/", "software/")) or name in (
+                        "tests/rv64.py", "tests/compressed.py", "tests/boot_support.py"):
+                    if ev.record["sources_sha256"][name] != expected:
+                        raise AssertionError("late comparison source changed: " + name)
+            if baseline_harness(saved) != HARNESS:
+                raise AssertionError("late comparison must preserve the baseline boot harness")
+            ev.record["scope"].update(
+                retained_prefix_cycles=prefix_cycles, fresh_software_build=False,
+                full_remaining_workload_not_yet_measured=True)
         results = []
         variants = (
                 ("baseline", baseline_harness(saved), False, False, ()),
@@ -297,6 +367,8 @@ def main():
                         or not all(isinstance(flag, str) for flag in flags)):
                     raise ValueError("candidate needs a simple name and JSON string-list flags")
                 variants.append((name, HARNESS, True, True, tuple(flags)))
+            if args.late_candidate:
+                variants = variants[1:]
         for name, text, optimized, scheduler, extra_flags in variants:
             child = Evidence("v5-boot-efficiency-" + name, SOURCE_SELECTORS, args.repair_of)
             child.record["invoked_by"] = ev.relative(ev.directory / "receipt.json")
@@ -305,7 +377,24 @@ def main():
             ev.save()
             try:
                 result = run_variant(child, args.images, text, optimized, args.cycles,
-                                     args.prefetch, args.profile_only, scheduler, extra_flags)
+                                     args.prefetch, args.profile_only, scheduler, extra_flags,
+                                     prefix_cycles)
+                if args.late_candidate:
+                    prefix = json.loads((child.directory / "prefix-observed.json").read_text())
+                    if prefix != prior["observed"]:
+                        raise AssertionError("late candidate changed retained architectural prefix")
+                    for name in ("uart.txt", "uart-events.txt", "user-ecalls.txt", "user-pids.txt"):
+                        if digest(child.directory / ("prefix-" + name)) != digest(
+                                (ROOT / baseline_receipt).parent / name):
+                            raise AssertionError("late candidate changed retained raw prefix: " + name)
+                    from userland import compare_custom_faults, fields
+                    faults = [record[1] for line in (child.directory / "uart-events.txt").read_text().splitlines()
+                              if (record := fields(line.split(" ", 1)[1])) and record[0] == "FAULTS"]
+                    if len(faults) != 1:
+                        raise AssertionError("late diagnostic did not complete genuine fault cases")
+                    child.record["custom_fault_comparisons"] = compare_custom_faults(
+                        child.directory, faults[0])
+                    child.record["retained_prefix_equivalent"] = prefix
                 bind_outputs(child)
             except (OSError, RuntimeError, AssertionError, ValueError) as error:
                 child.finish(1, error)
@@ -322,9 +411,9 @@ def main():
                     result["raw_sha256"] != results[0]["raw_sha256"] or
                     result["pins"]["pin_hash"] != results[0]["pins"]["pin_hash"]):
                 raise AssertionError("harness optimization changed fixed-edge public observations")
-        if not args.profile_only:
+        if not args.profile_only and not args.late_candidate:
             ev.record["matched_fixed_edge_variants"] = len(results)
-        else:
+        elif args.profile_only:
             ev.record["compiled_model_profile_only"] = True
         bind_outputs(ev)
         print(json.dumps({"exit": 0, "receipt": ev.finish(0)}))
