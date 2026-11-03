@@ -183,6 +183,7 @@ int main(int argc,char **argv) {
  uint64_t translated=0,custom=0,traps=0;
  uint64_t last_pc=0,mtimer=0,stimer=0,timer_calls=0,time_reads=0;
  std::map<uint64_t,uint64_t> pc_samples;
+ std::map<std::pair<uint64_t,uint64_t>,uint64_t> phase_samples;
  auto wall_start=std::chrono::steady_clock::now();
  std::ofstream uart("uart.txt",std::ios::binary), milestones("milestones.txt"),
                diagnostic("retirement-tail.txt"), counters("counter-reads.txt"),
@@ -193,6 +194,10 @@ int main(int argc,char **argv) {
   std::ofstream samples("pc-samples.txt");
   for(const auto &entry:pc_samples)
    samples<<std::hex<<entry.first<<std::dec<<" "<<entry.second<<"\n";
+  std::ofstream phases("boot-phase-samples.txt");
+  for(const auto &entry:phase_samples)
+   phases<<entry.first.first<<" "<<std::hex<<entry.first.second<<std::dec
+    <<" "<<entry.second<<"\n";
   double seconds=std::chrono::duration<double>(
       std::chrono::steady_clock::now()-wall_start).count();
   std::ofstream report("boot-profile.json");
@@ -293,8 +298,9 @@ __INITIALIZE_INPUTS__
    }
    if(!reset && d.trap_valid) {
     traps++;
-    if(d.trap_interrupt && d.trap_cause==7) mtimer++;
-    if(d.trap_interrupt && d.trap_cause==5) stimer++;
+    uint64_t cause=d.trap_cause&0x7fffffffffffffffULL;
+    if(d.trap_interrupt && cause==7) mtimer++;
+    if(d.trap_interrupt && cause==5) stimer++;
     if(!d.trap_interrupt && d.trap_cause==9 &&
        (isa.x[17]==0 || (isa.x[17]==0x54494d45 && isa.x[16]==0))) {
      if(++timer_calls<=16)
@@ -356,7 +362,10 @@ __INITIALIZE_INPUTS__
     }
    }
    last_tx=tx;
-   if((cycles&1023)==0) pc_samples[last_pc]++;
+   if((cycles&1023)==0) {
+    pc_samples[last_pc]++;
+    phase_samples[{cycles/50000000,last_pc}]++;
+   }
    auto now=std::chrono::steady_clock::now();
    if(now>=next_heartbeat) {
     std::cout<<"PROGRESS boot cycles="<<cycles<<" retired="<<retired

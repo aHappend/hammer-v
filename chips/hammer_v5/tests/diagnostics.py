@@ -84,7 +84,7 @@ def deadline_probe(ev):
     ev.record["observed"] = {"nested_timeout": True, "descendants_stopped": True}
 
 
-def diagnostic_baud_images(ev, images, baud):
+def diagnostic_boot_images(ev, images, baud, legacy_ptys):
     from boot import checked_images
     directory, _ = checked_images(ev, images)
     if baud not in (115200, 6250000):
@@ -103,6 +103,12 @@ def diagnostic_baud_images(ev, images, baud):
     if text.count("115200") != 3:
         raise AssertionError("diagnostic UART baud substitution anchors changed")
     source.write_text(text.replace("115200", str(baud)))
+    if legacy_ptys is not None:
+        text = source.read_text()
+        if text.count('rdinit=/init";') != 1:
+            raise AssertionError("diagnostic PTY boot-argument anchor changed")
+        source.write_text(text.replace('rdinit=/init";',
+                                       f'rdinit=/init pty.legacy_count={legacy_ptys}";'))
     ev.record.setdefault("generated_sha256", {})[ev.relative(source)] = digest(source)
     dtc = directory / "linux-build/scripts/dtc/dtc"
     ev.record["diagnostic_dtc"] = {"path": ev.relative(dtc), "sha256": digest(dtc)}
@@ -122,10 +128,13 @@ def diagnostic_baud_images(ev, images, baud):
         "kind": "diagnostic-image-derivation", "start": ev.record["start"], "end": stamp(),
         "parent_receipt": {"path": ev.relative(directory / "receipt.json"),
                            "sha256": digest(directory / "receipt.json")},
-        "inputs": parent["inputs"], "outputs": copied, "exit": 0,
+        "inputs": {**parent["inputs"], ev.relative(source): digest(source),
+                   ev.relative(dtc): digest(dtc)},
+        "outputs": copied, "exit": 0,
         "commands": ev.record["commands"][-2:],
         "diagnostic_only": True, "baud": baud,
-        "change": "UART baud only; unchanged firmware, kernel, memory map and timebase",
+        "legacy_ptys": legacy_ptys,
+        "change": "DTB UART/optional PTY count only; unchanged firmware, kernel and timebase",
     }
     (destination / "receipt.json").write_text(json.dumps(derivation, indent=2) + "\n")
     ev.record["diagnostic_image_derivation"] = derivation
@@ -133,10 +142,10 @@ def diagnostic_baud_images(ev, images, baud):
     return ev.relative(destination)
 
 
-def boot_profile(ev, images, cycles, prefetch, baud=None):
+def boot_profile(ev, images, cycles, prefetch, baud=None, legacy_ptys=None):
     from boot import boot_probe, checked_images
-    if baud is not None:
-        images = diagnostic_baud_images(ev, images, baud)
+    if baud is not None or legacy_ptys is not None:
+        images = diagnostic_boot_images(ev, images, baud or 115200, legacy_ptys)
     directory, _ = checked_images(ev, images)
     kernel = directory / "vmlinux"
     ev.record["kernel_sha256"] = digest(kernel)
@@ -170,6 +179,17 @@ def boot_profile(ev, images, cycles, prefetch, baud=None):
         "cycle_weighted_functions": sorted(histogram.items(),
                                           key=lambda item: -item[1])[:40],
         "boot_error": error,
+    }
+    phases = {}
+    for line in (ev.directory / "boot-phase-samples.txt").read_text().splitlines():
+        phase, pc, count = line.split()
+        index = bisect.bisect_right(addresses, int(pc, 16)) - 1
+        name = functions[index][1] if index >= 0 else "firmware-or-unmapped"
+        histogram = phases.setdefault(phase, {})
+        histogram[name] = histogram.get(name, 0) + int(count)
+    ev.record["profile"]["phases_50m_cycles"] = {
+        phase: sorted(histogram.items(), key=lambda item: -item[1])[:12]
+        for phase, histogram in phases.items()
     }
     ev.save()
     if error is not None:
@@ -230,15 +250,18 @@ def main():
     parser.add_argument("--probe", choices=("deadlines", "boot-profile", "audit", "reproduce"),
                         required=True)
     parser.add_argument("--receipt")
+    parser.add_argument("--repair-of")
     parser.add_argument("--images")
     parser.add_argument("--cycles", type=int, default=500000000)
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=1)
     parser.add_argument("--baud", type=int, choices=(115200, 6250000),
                         help="derived diagnostic DTB only; never edits shipped software")
+    parser.add_argument("--legacy-ptys", type=int, choices=(0, 256),
+                        help="derived diagnostic DTB legacy PTY count, not a Linux replacement")
     args = parser.parse_args()
     ev = Evidence("v5-" + args.probe,
                   ("rtl/*.sv", "tests/*.py", "software/*", "design/*.md",
-                   "hammer_v4_reference/rtl/hammer_v4_top.sv"))
+                   "hammer_v4_reference/rtl/hammer_v4_top.sv"), args.repair_of)
     ev.record["argv"] = ["python3", "tests/diagnostics.py", *sys.argv[1:]]
     error = None
     try:
@@ -256,7 +279,8 @@ def main():
         else:
             if not args.images or args.cycles <= 0:
                 raise ValueError("boot profile requires local images and positive cycles")
-            boot_profile(ev, args.images, args.cycles, args.prefetch, args.baud)
+            boot_profile(ev, args.images, args.cycles, args.prefetch,
+                         args.baud, args.legacy_ptys)
     except (OSError, ValueError, RuntimeError, AssertionError) as failure:
         error = str(failure)
     path = ev.finish(0 if error is None else 1, error)
