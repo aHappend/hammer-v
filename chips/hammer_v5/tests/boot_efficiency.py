@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from boot import (BUILD_FLAGS, HARNESS, MODEL_FLAGS, checked_images, compile_model,
                   custom_fault_expectations, scheduler_configuration, boot_specialization)
 from boot_support import CPP as SUPPORT
-from evidence import Evidence, ROOT, digest
+from evidence import Evidence, ROOT, digest, stamp
 from integration import ports
 from rv64 import CPP, decode_image
 from verify import SOURCE_SELECTORS, bind_outputs
@@ -150,6 +150,10 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         options += [os.path.relpath(scheduler_configuration(ev), objects)]
     extra_flags = list(extra_flags)
     top = "hammer_v5_top"
+    host_pgo = "--host-pgo" in extra_flags
+    if host_pgo:
+        extra_flags.remove("--host-pgo")
+        options += ["-CFLAGS", "-fprofile-generate", "-LDFLAGS", "-fprofile-generate"]
     if "--boot-specialize" in extra_flags:
         extra_flags.remove("--boot-specialize")
         options += ["--prefix", "Vhammer_v5_top",
@@ -163,6 +167,24 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
                 "../boot.cpp", *[os.path.relpath(path, objects) for path in
                                  sorted((ROOT / "rtl").glob("*.sv"))]],
                "compile", cwd=objects)
+        if host_pgo:
+            training = ev.directory / ("compiler-training-" + stamp())
+            training.mkdir()
+            shutil.copyfile(ev.directory / "decode.bin", training / "decode.bin")
+            ev.run(["../compile-obj/boot-sim",
+                    *[os.path.relpath(directory / name, training) for name in
+                      ("opensbi.bin", "Image", "hammer_v5.dtb")],
+                    str(cycles), "efficiency"], "compiler-training", cwd=training,
+                   expected_exit=1)
+            if "bounded RTL boot goal not reached" not in (
+                    ROOT / ev.record["commands"][-1]["stderr"]).read_text():
+                raise AssertionError("compiler training failed for an unexpected reason")
+            ev.run(["make", "-f", "Vhammer_v5_top.mk", "-B", "-j", "2",
+                    "VM_USER_CFLAGS=", "VM_USER_LDLIBS=",
+                    "OPT_FAST=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
+                    "OPT_SLOW=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
+                    "OPT_GLOBAL=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
+                    "LDFLAGS=-fprofile-use"], "profile-guided-compile", cwd=objects)
         ev.run(["./compile-obj/boot-sim",
                 os.path.relpath(directory / "opensbi.bin", ev.directory),
                 os.path.relpath(directory / "Image", ev.directory),
