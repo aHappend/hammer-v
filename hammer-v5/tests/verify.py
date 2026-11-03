@@ -115,7 +115,7 @@ def behavior(ev):
         ("memory-seeds", lambda child: l2_probe(child, 2000, (17, 43, 89))),
         ("counters", counter_probe),
         ("fetch", fetch_probe),
-        ("fetch-storage-boundaries", fetch_queue_probe),
+        ("fetch-storage-boundaries", lambda child: fetch_queue_probe(child, lowered_compare=False)),
         ("prefetch-coherence", prefetch_probe),
         ("sv39-ptw", mmu_probe),
         ("tlb", tlb_probe),

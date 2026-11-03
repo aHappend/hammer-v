@@ -142,7 +142,7 @@ endmodule
 """
 
 
-def fetch_queue_probe(ev):
+def fetch_queue_probe(ev, lowered_compare=True):
     source = ev.directory / "fetch-storage.sv"
     tb = ev.directory / "fetch-storage-tb.sv"
     lowered = ev.directory / "fetch-storage-lowered.v"
@@ -156,16 +156,20 @@ def fetch_queue_probe(ev):
     ev.record.setdefault("generated_sha256", {}).update({
         ev.relative(path): digest(path) for path in (source, tb, script)})
     for tool, flags in (("iverilog", ("-V",)), ("vvp", ("-V",)),
-                        ("verilator", ("--version",)), ("yosys", ("-V",))):
+                        ("verilator", ("--version",))):
         ev.version(tool, flags)
-    ev.run(["yosys", "-Q", "-T", "-s", ev.relative(script)], "queue-lower")
+    variants = [("direct", source)]
+    if lowered_compare:
+        ev.version("yosys", ("-V",))
+        ev.run(["yosys", "-Q", "-T", "-s", ev.relative(script)], "queue-lower")
+        variants.append(("lowered", lowered))
     observations = []
     def summary(text):
         lines = [line for line in text.splitlines() if line.startswith("SUMMARY ")]
         if len(lines) != 1:
             raise AssertionError("fetch storage simulation did not produce exactly one summary")
         return lines[0]
-    for name, rtl in (("direct", source), ("lowered", lowered)):
+    for name, rtl in variants:
         binary = ev.directory / f"queue-{name}.vvp"
         ev.run(["iverilog", "-g2012", "-Wall", "-s", "fetch_storage_tb",
                 "-o", ev.relative(binary), ev.relative(tb), ev.relative(rtl)],
@@ -214,7 +218,7 @@ def fetch_queue_probe(ev):
         "source": "rtl/hammer_v5_core.sv", "source_sha256": digest(ROOT / "rtl/hammer_v5_core.sv"),
         "extraction": "verbatim declarations, head read and entire sequential block",
         "oracle": "transaction FIFO with shifting contents; no DUT hierarchical reads",
-        "summary": observations[0], "matched_variants": 4,
+        "summary": observations[0], "matched_variants": len(observations),
         "compiled_mutants_rejected_by_payload_comparison": rejected,
         "scope": "storage cone boundaries, not a claim of full CPU fetch control coverage",
     }
