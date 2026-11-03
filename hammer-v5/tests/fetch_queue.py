@@ -160,14 +160,18 @@ def fetch_queue_probe(ev):
         ev.version(tool, flags)
     ev.run(["yosys", "-Q", "-T", "-s", ev.relative(script)], "queue-lower")
     observations = []
+    def summary(text):
+        lines = [line for line in text.splitlines() if line.startswith("SUMMARY ")]
+        if len(lines) != 1:
+            raise AssertionError("fetch storage simulation did not produce exactly one summary")
+        return lines[0]
     for name, rtl in (("direct", source), ("lowered", lowered)):
         binary = ev.directory / f"queue-{name}.vvp"
         ev.run(["iverilog", "-g2012", "-Wall", "-s", "fetch_storage_tb",
                 "-o", ev.relative(binary), ev.relative(tb), ev.relative(rtl)],
                f"queue-{name}-compile")
         observed = ev.run(["vvp", ev.relative(binary)], f"queue-{name}-run")
-        observations.append(next(line for line in observed.splitlines()
-                                 if line.startswith("SUMMARY ")))
+        observations.append(summary(observed))
         objects = ev.directory / f"queue-{name}-obj"
         try:
             ev.run(["verilator", "--binary", "--timing", "-j", "2", "-Wno-fatal",
@@ -175,18 +179,43 @@ def fetch_queue_probe(ev):
                     ev.relative(tb), ev.relative(rtl)], f"queue-{name}-verilate")
             observed = ev.run([ev.relative(objects / "Vfetch_storage_tb")],
                               f"queue-{name}-compiled-run")
-            observations.append(next(line for line in observed.splitlines()
-                                     if line.startswith("SUMMARY ")))
+            observations.append(summary(observed))
         finally:
             if objects.is_dir():
                 shutil.rmtree(objects)
     if len(set(observations)) != 1 or not observations[0].startswith("SUMMARY compared="):
         raise AssertionError("fetch storage direct/lowered simulator disagreement")
+    mutants = (
+        ("length", "i_rsp_insn_raw,i_rsp_insn_bytes,", "i_rsp_insn_raw,3'd4,"),
+        ("wrap", "queue_write <= queue_write + 2'd1;", "queue_write <= 2'b0;"),
+    )
+    rejected = []
+    for name, old, new in mutants:
+        original = source.read_text()
+        if original.count(old) != 1:
+            raise AssertionError("queue mutation target changed: " + name)
+        mutant = ev.directory / f"fetch-storage-{name}-mutant.sv"
+        mutant.write_text(original.replace(old, new))
+        ev.record["generated_sha256"][ev.relative(mutant)] = digest(mutant)
+        objects = ev.directory / f"queue-{name}-mutant-obj"
+        try:
+            ev.run(["verilator", "--binary", "--timing", "-j", "2", "-Wno-fatal",
+                    "--top-module", "fetch_storage_tb", "--Mdir", ev.relative(objects),
+                    ev.relative(tb), ev.relative(mutant)], f"queue-{name}-mutant-compile")
+            output = ev.run([ev.relative(objects / "Vfetch_storage_tb")],
+                            f"queue-{name}-mutant-run", expected_exit=(-6, 1, 134))
+            if "QUEUE payload mismatch comparison=" not in output:
+                raise AssertionError("queue mutant did not reach the intended payload checker")
+            rejected.append(name)
+        finally:
+            if objects.is_dir():
+                shutil.rmtree(objects)
     ev.record["fetch_storage_cone"] = {
         "source": "rtl/hammer_v5_core.sv", "source_sha256": digest(ROOT / "rtl/hammer_v5_core.sv"),
         "extraction": "verbatim declarations, head read and entire sequential block",
         "oracle": "transaction FIFO with shifting contents; no DUT hierarchical reads",
         "summary": observations[0], "matched_variants": 4,
+        "compiled_mutants_rejected_by_payload_comparison": rejected,
         "scope": "storage cone boundaries, not a claim of full CPU fetch control coverage",
     }
     ev.save()

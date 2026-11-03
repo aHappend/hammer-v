@@ -102,6 +102,10 @@ def instrument(text, prefix_cycles=None):
     output_hash = "\n".join(f"   mix(uint64_t(d.{name}));"
                             for direction, _, name in ports(ROOT / "rtl/hammer_v5_top.sv")
                             if direction == "output")
+    if prefix_cycles is not None:
+        # Late diagnostics still execute every edge; hash all pins in the compact
+        # equivalence prefix and every AXI handshake/stall throughout the run.
+        output_hash = "   if(cycles<20000000) {\n" + output_hash + "\n   }\n"
     pairs = (
         (" Memory memory;", " Memory memory;\n" + declaration),
         ("   d.clk=0; d.eval();", r"""
@@ -216,7 +220,7 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         configuration = ev.directory / "core-scheduler.vlt"
         configuration.write_text("`verilator_config\n" + "".join(
             f'split_var -module "hammer_v5_core" -var "{name}"\n'
-            for name in ("x", "m", "w", "fetch_queue", "queue_head")))
+            for name in ("x", "m", "w", "queue_head")))
         ev.record.setdefault("generated_sha256", {})[ev.relative(configuration)] = digest(configuration)
         options += [os.path.relpath(configuration, objects)]
     options += extra_flags
