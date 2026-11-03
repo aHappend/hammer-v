@@ -255,8 +255,8 @@
     }
   ],
   "detail": "All 3 physical FPGA HIL run(s) passed deterministically on chip 23645547322997765.",
-  "hil_verification_tier": "L3_MULTI_PROFILE_SOFTREG_VECTOR_AND_TELEMETRY_EXECUTION",
-  "verification_scope_note": "Catapult Arria 10 GX PCIe Gen3x8 BAR0 + SoftReg multi-profile M20K weight/stimulus streaming (SoftReg 4096..4436 -> SoftReg 3<=256 across 8 model/stimulus profiles + 3x repeatability gate), hardware cycle counter (SoftReg 11), memory transaction beat telemetry (SoftReg 12), and 6-word output vector readback (SoftReg 16..21).",
+  "hil_verification_tier": "L3_BRIDGE_CONNECTIVITY_PROBE_ONLY",
+  "verification_scope_note": "Catapult PCIe BAR0 hardware bridge connectivity probe (reg 57) only; per-chip bitstream flash and on-board workload vector execution require fpga/board_hil.json role wrapper.",
   "queue_telemetry": {
     "bedrock_build_wait_s": 0.0,
     "bedrock_build_duration_s": 0.0,

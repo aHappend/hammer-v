@@ -1,14 +1,17 @@
 {
-  "chip": "HAMMER-V5",
-  "top_module": "hammer_v5_top",
-  "device": "10AX115N2F45E1SG",
-  "clock_target_mhz": 100.0,
-  "fmax_mhz": 112.66,
-  "setup_slack_ns": 1.124,
-  "hold_slack_ns": 0.039,
-  "alms_used": 18420,
-  "registers_used": 24680,
-  "m20k_blocks": 96,
-  "dsp_blocks": 32,
-  "board_hil_status": "PASSED (8-Profile & 4-Pipeline SoC Co-Execution)"
+  "chip": "Hammer-V5",
+  "fitter_resources": {},
+  "timing": {
+    "device": "10AX115N2F45E1SG",
+    "netlist_mode": null,
+    "target_frequency_mhz": 100.0,
+    "fmax_mhz": 112.66,
+    "critical_path_delay_ns": null,
+    "wns_setup_ns": null,
+    "wns_hold_ns": null
+  },
+  "verification_tiers": {
+    "L3_board_hil": "L3_BRIDGE_CONNECTIVITY_PROBE_ONLY",
+    "L3_note": "Catapult PCIe BAR0 hardware bridge connectivity probe (reg 57) only; per-chip bitstream flash and on-board workload vector execution require fpga/board_hil.json role wrapper."
+  }
 }
