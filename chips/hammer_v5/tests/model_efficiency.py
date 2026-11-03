@@ -129,6 +129,8 @@ def main():
     parser.add_argument("--repair-of", required=True)
     parser.add_argument("--cycles", type=int, default=2000000)
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--queue-boundaries", action="store_true",
+                        help="also compare the actual queue storage cone with a transaction FIFO")
     args = parser.parse_args()
     if not 1 <= args.cycles <= 20000000:
         raise ValueError("compact compiler comparison requires 1..20000000 edges")
@@ -152,6 +154,9 @@ def main():
                           "cycles": args.cycles, "prefetch": args.prefetch}
     try:
         ev.version("python3")
+        if args.queue_boundaries:
+            from fetch_queue import fetch_queue_probe
+            fetch_queue_probe(ev)
         if args.netlist:
             from structure import assert_structure
             ev.record["scope"] = {"retained_synthesis_structural_regression": True,

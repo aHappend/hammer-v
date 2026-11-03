@@ -16,12 +16,45 @@ def module_name(module, encoded):
     return original.split()[0].lstrip("\\")
 
 
+def assert_fetch_storage(module):
+    """Verify the repaired queue's actual netlist storage, not its source spelling."""
+    entries = [module["netnames"].get(f"fetch_queue[{index}]") for index in range(4)]
+    if any(entry is None or len(entry["bits"]) != 262 for entry in entries):
+        raise AssertionError("fetch queue lost a 262-bit entry")
+    bits = [bit for entry in entries for bit in entry["bits"]]
+    if any(not isinstance(bit, int) for bit in bits) or len(set(bits)) != 1048:
+        raise AssertionError("fetch queue storage collapsed or aliased")
+    owners = {}
+    resets = set()
+    for cell in module["cells"].values():
+        outputs = cell["connections"].get("Q", [])
+        overlap = set(outputs) & set(bits)
+        if not overlap:
+            continue
+        if cell["type"] not in ("$adff", "$adffe"):
+            raise AssertionError("fetch queue requires constant asynchronous-reset flip-flops")
+        parameters = cell["parameters"]
+        if (int(parameters["ARST_VALUE"], 2) != 0 or
+                int(parameters["ARST_POLARITY"], 2) != 0):
+            raise AssertionError("fetch queue reset must be active-low constant zero")
+        resets.add(tuple(cell["connections"]["ARST"]))
+        for bit in overlap:
+            owners[bit] = owners.get(bit, 0) + 1
+    if len(owners) != 1048 or set(owners.values()) != {1} or len(resets) != 1:
+        raise AssertionError("fetch queue lacks 1048 independent singly-driven resettable bits")
+    if tuple(module["ports"]["rst_n"]["bits"]) not in resets:
+        raise AssertionError("fetch queue asynchronous reset is not the core reset port")
+    return {"entries": 4, "bits_per_entry": 262, "retained_bits": len(owners),
+            "constant_zero_async_reset": True}
+
+
 def assert_structure(path):
     netlist = json.loads(path.read_text())
     modules = netlist["modules"]
     visited = set()
     states = {}
     initializations = {}
+    fetch_storage = []
     pending = ["hammer_v5_top"]
     while pending:
         name = pending.pop()
@@ -30,6 +63,8 @@ def assert_structure(path):
         visited.add(name)
         module = modules[name]
         human = module_name(module, name)
+        if human == "hammer_v5_core":
+            fetch_storage.append(assert_fetch_storage(module))
         attributes = module.get("attributes", {})
         for flag in ("blackbox", "whitebox"):
             if int(attributes.get(flag, "0"), 2):
@@ -84,7 +119,7 @@ def assert_structure(path):
     if sum(row["memory_bits"] for row in states.values()) == 0:
         raise AssertionError("integrated hierarchy lost all RAM storage")
     return {"reachable_modules": len(visited), "retained_state": states,
-            "constant_power_up_state": initializations}
+            "constant_power_up_state": initializations, "fetch_queue_storage": fetch_storage}
 
 
 def synthesis_probe(ev, sources, parameters):

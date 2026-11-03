@@ -18,6 +18,7 @@ from counters import counter_probe
 from coherence import coherence_probe
 from defects import remaining_mutations
 from fetch import fetch_probe
+from fetch_queue import fetch_queue_probe
 from fabric import fabric_probe
 from integration import top_smoke
 from local import local_probe
@@ -114,6 +115,7 @@ def behavior(ev):
         ("memory-seeds", lambda child: l2_probe(child, 2000, (17, 43, 89))),
         ("counters", counter_probe),
         ("fetch", fetch_probe),
+        ("fetch-storage-boundaries", fetch_queue_probe),
         ("prefetch-coherence", prefetch_probe),
         ("sv39-ptw", mmu_probe),
         ("tlb", tlb_probe),
