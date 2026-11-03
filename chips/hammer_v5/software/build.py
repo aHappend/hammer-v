@@ -216,10 +216,14 @@ def main():
             "CONFIG_RISCV_ISA_C": "y", "CONFIG_SERIAL_8250_CONSOLE": "y",
             "CONFIG_SERIAL_OF_PLATFORM": "y", "CONFIG_BINFMT_ELF": "y",
             "CONFIG_BLK_DEV_INITRD": "y", "CONFIG_RISCV_SBI": "y",
+            "CONFIG_CRYPTO": "y", "CONFIG_CRYPTO_MANAGER_DISABLE_TESTS": "y",
         }
         for name, value in required.items():
             if f"{name}={value}\n" not in resulting_config:
                 raise ValueError(f"boot configuration did not enable {name}={value}")
+        for name in ("CONFIG_VT", "CONFIG_LEGACY_PTYS"):
+            if f"# {name} is not set\n" not in resulting_config:
+                raise ValueError(f"boot configuration did not disable {name}")
         for name in ("CONFIG_SMP", "CONFIG_FPU", "CONFIG_RISCV_ISA_V", "CONFIG_COMPAT",
                      "CONFIG_PERF_EVENTS", "CONFIG_RISCV_PMU_SBI"):
             if f"{name}=y\n" in resulting_config:
