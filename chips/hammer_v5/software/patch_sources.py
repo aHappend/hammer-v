@@ -12,6 +12,99 @@ def replace(path, old, new):
     path.write_text(text.replace(old, new))
 
 
+def batch_builtin_parameters(linux):
+    params = linux / "kernel/params.c"
+    replace(params, "#include <linux/kstrtox.h>",
+            "#include <linux/kstrtox.h>\n#include <linux/list.h>")
+    replace(params, """static void __init kernel_add_sysfs_param(const char *name,
+					  const struct kernel_param *kparam,
+					  unsigned int name_skip)
+{
+	struct module_kobject *mk;
+	int err;
+
+	mk = locate_module_kobject(name);
+	if (!mk)
+		return;
+
+	/* We need to remove old parameters before adding more. */
+	if (mk->mp)
+		sysfs_remove_group(&mk->kobj, &mk->mp->grp);
+
+	/* These should not fail at boot. */
+	err = add_sysfs_param(mk, kparam, kparam->name + name_skip);
+	BUG_ON(err);
+	err = sysfs_create_group(&mk->kobj, &mk->mp->grp);
+	BUG_ON(err);
+	kobject_uevent(&mk->kobj, KOBJ_ADD);
+	kobject_put(&mk->kobj);
+}
+""", """struct builtin_param_group {
+	struct list_head list;
+	struct module_kobject *mk;
+};
+
+static void __init kernel_add_sysfs_param(struct list_head *groups,
+					  const char *name,
+					  const struct kernel_param *kparam,
+					  unsigned int name_skip)
+{
+	struct builtin_param_group *group;
+	struct module_kobject *mk = NULL;
+	int err;
+
+	/* Linker parameter declarations need not be contiguous by module. */
+	list_for_each_entry(group, groups, list) {
+		if (!strcmp(kobject_name(&group->mk->kobj), name)) {
+			mk = group->mk;
+			break;
+		}
+	}
+	if (!mk) {
+		mk = locate_module_kobject(name);
+		if (!mk)
+			return;
+		group = kzalloc(sizeof(*group), GFP_KERNEL);
+		BUG_ON(!group);
+		group->mk = mk;
+		list_add_tail(&group->list, groups);
+	}
+
+	/* No attribute is visible while add_sysfs_param can relocate it. */
+	err = add_sysfs_param(mk, kparam, kparam->name + name_skip);
+	BUG_ON(err);
+}
+""")
+    replace(params, """static void __init param_sysfs_builtin(void)
+{
+	const struct kernel_param *kp;
+""", """static void __init param_sysfs_builtin(void)
+{
+	LIST_HEAD(groups);
+	struct builtin_param_group *group, *next;
+	const struct kernel_param *kp;
+	int err;
+""")
+    replace(params, """		kernel_add_sysfs_param(modname, kp, name_len);
+	}
+}
+""", """		kernel_add_sysfs_param(&groups, modname, kp, name_len);
+	}
+
+	list_for_each_entry_safe(group, next, &groups, list) {
+		struct module_kobject *mk = group->mk;
+
+		err = sysfs_create_group(&mk->kobj, &mk->mp->grp);
+		BUG_ON(err);
+		kobject_uevent(&mk->kobj, KOBJ_ADD);
+		kobject_put(&mk->kobj);
+		list_del(&group->list);
+		kfree(group);
+	}
+}
+""")
+
+
 def apply(linux, opensbi, inputs):
     # Archive symbol hiding is unnecessary for this standalone firmware image.
     replace(opensbi / "Makefile",
@@ -29,6 +122,7 @@ def apply(linux, opensbi, inputs):
                 + "\nsys.path.insert(0, str(Path(__file__).resolve().parent))\n"
                 "\nimport kconfiglib")
 
+    batch_builtin_parameters(linux)
     k = linux / "arch/riscv"
     replace(k / "Kconfig.socs", 'menu "SoC selection"',
             'menu "SoC selection"\n\nconfig SOC_HAMMER_V5\n'
