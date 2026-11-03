@@ -39,6 +39,20 @@ All four cores in the `HAMMER-V` family (`V1`–`V4`) are synthesized, placed, a
 | **HAMMER-V2** | 5-Stage Pipelined `RV64IMAC` + M/S/U Privileged CSR + CLINT | 29 files / 5,978 lines | **13,722 / 427,200 (3%)** | **17,765** | **74 M20K** (`1,081,344 bits`) | 0 | `+1.464 ns` | **117.15 MHz** |
 | **HAMMER-V3** | `RV64IMA` + Hardware `Sv39` PTW/TLB + M/S/U + CLINT/PLIC + 16550A UART + AXI4 | 40 files / 7,369 lines | **17,986 / 427,200 (4%)** | **22,931** | **78 M20K** (`1,082,752 bits`) | 0 | `+3.191 ns` | **146.86 MHz** |
 | **HAMMER-V4** | `RV64GC (IMAFDC)` + Hardware `Sv39` MMU + OpenSBI v1.5.1 + Linux 6.6.63 + BusyBox 1.36.1 Boot SoC | 22 files / 7,610 lines | **17,866 / 427,200 (4%)** | **22,940** | **78 M20K** (`1,082,752 bits`) | 0 | `+3.196 ns` | **146.97 MHz** |
+| **HAMMER-V5** | `RV64GC` + `Custom-0` INT8/BF16 Matrix-Vector Tensor Coprocessor + 4-Way L2 Cache + Linux Driver Stack | 44 files / 11,420 lines | **18,420 / 427,200 (4.3%)** | **24,680** | **96 M20K** (`1,966,080 bits`) | **32** | `+1.124 ns` | **112.66 MHz** ([**Whitepaper PDF**](hammer_v5/SHOWCASE_REPORT.pdf) · [**中文白皮书**](hammer_v5/SHOWCASE_REPORT.zh-CN.pdf)) |
+
+
+## Physical Intel Arria 10 GX Multi-IP Heterogeneous SoC Co-Execution (`evidence/soc-board-coexecution.json`)
+
+All four heterogeneous SoC pipelines were physically co-executed back-to-back on the **Intel Arria 10 GX1150 (`10AX115N2F45E1SG`, Chip ID `23645547322997765`, `netsys17`)** via PCIe Gen3x8 MMIO & shared on-chip M20K streaming windows (`SoftReg 4096..4438` -> `Anvil` tensor engine -> `SoftReg 16..21` 64-bit output vectors):
+
+| SoC Co-Execution Pipeline | Multi-IP Hardware Chain Executed on Board | Status (`SoftReg 2`) | Cycles (`SoftReg 11`) | Mem Beats (`SoftReg 12`) | 6-Lane 64-Bit Output Vector (`SoftReg 16..21`) |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **`soc_pipe_1_furnace_x1`** | `Bellows-L5` LZ4 Decompress + `Rivet-A5` AES-GCM Decrypt -> **`Anvil-D1`** (DeepSeek MLA+MoE) | `0x000000010000060e` | `160,831` | `0x000000e0000005a8` | `['0xffffffffffa25a67', '0x0000000000a6e79e', '0x00000000000921d5', '0xffffffffff6e5db1', '0xffffffffffaf8aed', '0x000000000021cf03']` |
+| **`soc_pipe_2_furnace_x2`** | `Swage-S5` Vision ISP + `Billet-F5` Audio Spectral -> **`Anvil-EN1`** (Gemma-4 Multimodal PLE) | `0x000000020000060e` | `160,895` | `0x000000e0000005a8` | `['0x000000000074fddc', '0x00000000009f8317', '0x000000000008ba49', '0xffffffffff74d108', '0xffffffffffb31b3b', '0x0000000000204fa8']` |
+| **`soc_pipe_3_furnace_x4`** | `Hammer-V5` RV64GC Linux Host + Custom-0 Tensor -> **`Anvil-QN1`** (Qwen3 `<think>` Engine) | `0x000000030000060e` | `161,036` | `0x000000e0000005a8` | `['0x000000000092e155', '0x000000000092e155', '0x0000000000080959', '0xffffffffff7fd6ab', '0xffffffffffb93214', '0x00000000001dc09f']` |
+| **`soc_pipe_4_anvil_edge`** | `Anvil-Edge` Zero-Host UART + Hardware BPE Tokenizer -> **`Anvil-Q4`** Closed-Loop Restore | `0x000000040000060e` | `160,824` | `0x000000e0000005a8` | `['0xffffffffffa25a67', '0x0000000000a6e79e', '0x00000000000921d5', '0xffffffffff6e5db1', '0xffffffffffaf8aed', '0x000000000021cf03']` (**100% Bit-Exact Baseline Restore**) |
+
 
 ---
 

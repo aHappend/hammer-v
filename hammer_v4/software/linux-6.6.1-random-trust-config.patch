@@ -1,0 +1,48 @@
+From: HAMMER-V4 maintainers
+Subject: [PATCH] random: restore configurable CPU and bootloader trust defaults
+
+Local compatibility patch for the pinned Linux 6.6.1 source archive.
+Restore boolean configuration controls for the initial trust policy without
+changing the existing random.trust_cpu and random.trust_bootloader early
+command-line overrides. Default y preserves the upstream default policy;
+HAMMER's explicit configuration selects CPU=n and BOOTLOADER=y.
+
+License: GPL-2.0
+
+--- a/drivers/char/Kconfig
++++ b/drivers/char/Kconfig
+@@ -199,6 +199,24 @@
+ 
+ source "drivers/char/hw_random/Kconfig"
+ 
++config RANDOM_TRUST_CPU
++	bool "Trust CPU randomness for initial entropy"
++	default y
++	help
++	  Credit randomness supplied by the CPU during random pool
++	  initialization. Disable this if CPU randomness must not be
++	  credited as entropy. The random.trust_cpu command-line option
++	  overrides this default.
++
++config RANDOM_TRUST_BOOTLOADER
++	bool "Trust bootloader randomness for initial entropy"
++	default y
++	help
++	  Credit randomness supplied by the bootloader, including device
++	  tree seeds, during random pool initialization. Disable this if
++	  bootloader randomness must not be credited as entropy. The
++	  random.trust_bootloader command-line option overrides this default.
++
+ config DTLK
+ 	tristate "Double Talk PC internal speech card support"
+ 	depends on ISA
+--- a/drivers/char/random.c
++++ b/drivers/char/random.c
+@@ -797,5 +797,5 @@
+-static bool trust_cpu __initdata = true;
+-static bool trust_bootloader __initdata = true;
++static bool trust_cpu __initdata = IS_ENABLED(CONFIG_RANDOM_TRUST_CPU);
++static bool trust_bootloader __initdata = IS_ENABLED(CONFIG_RANDOM_TRUST_BOOTLOADER);
+ static int __init parse_trust_cpu(char *arg)
+ {
+ 	return kstrtobool(arg, &trust_cpu);

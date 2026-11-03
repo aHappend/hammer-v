@@ -1,0 +1,19 @@
+Fitter Status : Successful - Thu Oct 29 14:01:28 2026
+Quartus Prime Version : 17.1.0 Build 590 10/25/2017 SJ Standard Edition
+Revision Name : top
+Top-level Entity Name : hammer_v2_top
+Family : Arria 10
+Device : 10AX115N2F45E1SG
+Timing Models : Final
+Logic utilization (in ALMs) : 13,722 / 427,200 ( 3 % )
+  * Logic utilization warning : A large number of ALMs contain virtual pins and count towards logic utilization
+  * ALMs containing virtual pins : 621 / 427,200 ( < 1 % )
+Total registers : 17765
+Total pins : 0 / 992 ( 0 % )
+Total virtual pins : 1,240
+Total block memory bits : 1,081,344 / 55,562,240 ( 2 % )
+Total RAM Blocks : 74 / 2,713 ( 3 % )
+Total DSP Blocks : 0 / 1,518 ( 0 % )
+Total HSSI RX channels : 0 / 48 ( 0 % )
+Total HSSI TX channels : 0 / 48 ( 0 % )
+Total PLLs : 0 / 112 ( 0 % )

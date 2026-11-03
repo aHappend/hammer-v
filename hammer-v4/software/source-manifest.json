@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "linux": {
+    "version": "6.6.1",
+    "archive": "linux-6.6.1.tar.xz",
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.1.tar.xz",
+    "sha256": "da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234",
+    "license": "GPL-2.0-only WITH Linux-syscall-note; see archive COPYING and LICENSES/"
+  },
+  "toolchains": {
+    "firmware": {
+      "compiler": "/usr/bin/riscv64-unknown-elf-gcc",
+      "version": "13.2.0"
+    },
+    "linux_and_init": {
+      "compiler": "/usr/bin/riscv64-linux-gnu-gcc",
+      "version": "13.3.0"
+    }
+  },
+  "software_isa": "rv64ima_zicsr_zifencei",
+  "linux_patches": [
+    {
+      "path": "linux-6.6.1-random-trust-config.patch",
+      "sha256": "a028c9bde32d383ecaddbd3965905f325dfae8576e570afbac37057921eda03c",
+      "origin": "Original HAMMER-V4 local compatibility repair; not an upstream Linux patch",
+      "base_version": "6.6.1",
+      "base_archive_sha256": "da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234",
+      "license": "GPL-2.0",
+      "purpose": "Restore boolean CPU/bootloader random-trust defaults while preserving early command-line overrides",
+      "files": [
+        "drivers/char/Kconfig",
+        "drivers/char/random.c"
+      ]
+    },
+    {
+      "path": "linux-6.6.1-smode-misaligned.patch",
+      "sha256": "92b2ee6c295e0d05d20e344ba6cba6b28f862d7de03b8f249eb249b6ed669ca1",
+      "origin": "Original HAMMER-V4 local compatibility repair; not an upstream Linux patch",
+      "base_version": "6.6.1",
+      "base_archive_sha256": "da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234",
+      "license": "GPL-2.0-only",
+      "purpose": "Safely emulate delegated S-mode RV64 integer misaligned loads/stores while retaining the actual unaligned-access probe, unsupported-instruction faults and kernel exception fixups",
+      "files": [
+        "arch/riscv/Kconfig",
+        "arch/riscv/kernel/Makefile",
+        "arch/riscv/include/asm/csr.h",
+        "arch/riscv/include/asm/misaligned_smode.h",
+        "arch/riscv/kernel/traps.c",
+        "arch/riscv/kernel/traps_misaligned_smode.c"
+      ],
+      "repair_of": [
+        "evidence/preparation/kernel-user-20261030T104140Z-acd24544/receipt.json",
+        "evidence/preparation/kernel-probe-identity-20261030T105532Z-dc26c2b9/receipt.json",
+        "evidence/preparation/software-smode-build-20261030T110356Z-1ee2b2fb/receipt.json"
+      ]
+    }
+  ],
+  "binutils_version": "2.42",
+  "abi": "lp64",
+  "source_date_epoch": 1699574400,
+  "build_reproducibility": {
+    "objects": [
+      "objects/fw_entry.o",
+      "objects/fw_jump.o",
+      "objects/init_entry.o",
+      "objects/init.o"
+    ],
+    "init_packaged_mtime": "source_date_epoch",
+    "repair_of": [
+      "evidence/preparation/clean-software-reproduction-20261030T130814Z-715e2c5e/receipt.json",
+      "evidence/preparation/clean-software-reproduction-alternate-20261030T130847Z-dcdda43b/receipt.json"
+    ],
+    "diagnosis": "evidence/preparation/clean-image-metadata-diagnosis-20261030T131429Z-696558f9/receipt.json"
+  },
+  "kbuild_build_timestamp": "Fri Nov 10 00:00:00 UTC 2023",
+  "kbuild_build_user": "hammer",
+  "kbuild_build_host": "reproducible",
+  "kbuild_build_version": "1",
+  "localversion": "-hammer-v4",
+  "ram_base": 2147483648,
+  "ram_size": 134217728,
+  "firmware_entry": 2147483648,
+  "kernel_entry": 2149580800,
+  "dtb_address": 2279604224,
+  "dtb_reserved_size": 2097152,
+  "uart_input_line_hex": "76340a",
+  "init_exit_status": 0,
+  "expected_termination": "Linux PID-1 exit panic; complete UART output required"
+}

@@ -1,0 +1,334 @@
+{
+  "gate": "quartus-sta",
+  "timestamp_utc": "2026-10-29T21:02:13.630330+00:00",
+  "project_dir": "/data/sufeng/hammer-v2-line/workspace/project/.vulcan/engineering/run-0001/quartus_sta_work",
+  "revision": "top",
+  "clock_filter": "clk_main",
+  "min_setup_slack_ns": 0.0,
+  "min_hold_slack_ns": 0.0,
+  "status": "passed",
+  "map_summary": {
+    "exists": true,
+    "path": "/data/sufeng/hammer-v2-line/workspace/project/.vulcan/engineering/run-0001/quartus_sta_work/top.map.rpt",
+    "error_count": 0,
+    "errors": [],
+    "lpm_divide_error_count": 0,
+    "lpm_divide_errors": [],
+    "warning_10268_count": 0,
+    "warning_10268": [],
+    "uninferred_ram_count": 0,
+    "uninferred_rams": []
+  },
+  "sta_summary": {
+    "exit_code": 0,
+    "netlist_mode": "post_fit",
+    "clocks": [
+      {
+        "name": "clk_main",
+        "period_ns": 10.0
+      }
+    ],
+    "wns_setup_ns": 0.114,
+    "wns_hold_ns": 0.038,
+    "unconstrained_setup_paths": 0,
+    "unconstrained_functional_endpoints": 0,
+    "unapproved_timing_exceptions": 0,
+    "failing_setup_count": 0,
+    "failing_hold_count": 0,
+    "setup_paths": [
+      {
+        "slack_ns": 0.114,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.114,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.117,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.122,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.137,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.137,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.14,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.145,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.148,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.148,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[26]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.148,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[26]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.149,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_clint:u_clint",
+        "to_node": "cmp_q[32]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.149,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_clint:u_clint",
+        "to_node": "cmp_q[32]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.151,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.151,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[26]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.151,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.152,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.152,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_clint:u_clint",
+        "to_node": "cmp_q[32]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.154,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[24]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      },
+      {
+        "slack_ns": 0.156,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "w.insn[26]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.tag_q[13]"
+      }
+    ],
+    "hold_paths": [
+      {
+        "slack_ns": 0.038,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_predictor:u_predictor|g_legal.conditional[8]|hammer_v2_core:u_core|hammer_v2_predictor:u_predictor|g_legal.conditional[8]"
+      },
+      {
+        "slack_ns": 0.039,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_predictor:u_predictor|g_legal.conditional[7]|hammer_v2_core:u_core|hammer_v2_predictor:u_predictor|g_legal.conditional[7]"
+      },
+      {
+        "slack_ns": 0.04,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_predictor:u_predictor|g_legal.conditional[3]|hammer_v2_core:u_core|hammer_v2_predictor:u_predictor|g_legal.conditional[3]"
+      },
+      {
+        "slack_ns": 0.04,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_predictor:u_predictor|g_legal.conditional[0]|hammer_v2_core:u_core|hammer_v2_predictor:u_predictor|g_legal.conditional[0]"
+      },
+      {
+        "slack_ns": 0.041,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_predictor:u_predictor|g_legal.conditional[13]|hammer_v2_core:u_core|hammer_v2_predictor:u_predictor|g_legal.conditional[13]"
+      },
+      {
+        "slack_ns": 0.041,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_predictor:u_predictor|g_legal.conditional[5]|hammer_v2_core:u_core|hammer_v2_predictor:u_predictor|g_legal.conditional[5]"
+      },
+      {
+        "slack_ns": 0.044,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_atomic:u_atomic|g_legal.result_q[0]|hammer_v2_core:u_core|hammer_v2_atomic:u_atomic|g_legal.result_q[0]"
+      },
+      {
+        "slack_ns": 0.045,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_dcache:u_dcache",
+        "to_node": "hammer_v2_cache:u_cache|g_legal.state.RESPONSE|hammer_v2_dcache:u_dcache|hammer_v2_cache:u_cache|g_legal.state.RESPONSE"
+      },
+      {
+        "slack_ns": 0.046,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_atomic:u_atomic|g_legal.state.WRITE_REQ|hammer_v2_core:u_core|hammer_v2_atomic:u_atomic|g_legal.state.WRITE_REQ"
+      },
+      {
+        "slack_ns": 0.047,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_csr:u_csr|ssip_q|hammer_v2_core:u_core|hammer_v2_csr:u_csr|ssip_q"
+      },
+      {
+        "slack_ns": 0.047,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_atomic:u_atomic|g_legal.cause_q[1]|hammer_v2_core:u_core|hammer_v2_atomic:u_atomic|g_legal.cause_q[1]"
+      },
+      {
+        "slack_ns": 0.047,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_atomic:u_atomic|g_legal.word_q|hammer_v2_core:u_core|hammer_v2_atomic:u_atomic|g_legal.word_q"
+      },
+      {
+        "slack_ns": 0.051,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_atomic:u_atomic|g_legal.state.READ_REQ|hammer_v2_core:u_core|hammer_v2_atomic:u_atomic|g_legal.state.READ_REQ"
+      },
+      {
+        "slack_ns": 0.051,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_icache:u_icache",
+        "to_node": "hammer_v2_cache:u_cache|g_legal.scan[3]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.scan[3]"
+      },
+      {
+        "slack_ns": 0.052,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_dcache:u_dcache",
+        "to_node": "hammer_v2_cache:u_cache|g_legal.beat[1]|hammer_v2_dcache:u_dcache|hammer_v2_cache:u_cache|g_legal.beat[1]"
+      },
+      {
+        "slack_ns": 0.052,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "hammer_v2_atomic:u_atomic|g_legal.write_q|hammer_v2_core:u_core|hammer_v2_atomic:u_atomic|g_legal.write_q"
+      },
+      {
+        "slack_ns": 0.054,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_core:u_core",
+        "to_node": "queue_count[1]|hammer_v2_core:u_core|queue_count[1]"
+      },
+      {
+        "slack_ns": 0.055,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_icache:u_icache",
+        "to_node": "hammer_v2_cache:u_cache|g_legal.scan[1]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.scan[1]"
+      },
+      {
+        "slack_ns": 0.055,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_icache:u_icache",
+        "to_node": "hammer_v2_cache:u_cache|g_legal.valid[0]|hammer_v2_icache:u_icache|hammer_v2_cache:u_cache|g_legal.valid[0]"
+      },
+      {
+        "slack_ns": 0.057,
+        "from_clock": "clk_main",
+        "to_clock": "clk_main",
+        "from_node": "hammer_v2_axi_lite:u_axi",
+        "to_node": "response|hammer_v2_axi_lite:u_axi|response"
+      }
+    ],
+    "stderr_tail": []
+  },
+  "detail": "Timing closed: Setup WNS = 0.114 ns",
+  "top_module": "hammer_v2_top",
+  "clock_port": "clk",
+  "clock_period_ns": 10.0,
+  "target_frequency_mhz": 100.0,
+  "fmax_mhz": 101.15,
+  "critical_path_delay_ns": 9.886,
+  "parameters": {},
+  "source_sha256": "b36650198cbd03daf9165ae2c9ded6cc0c4f6e39236382babc1ca5f32b3b4f1e",
+  "applicable": true
+}

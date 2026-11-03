@@ -1,0 +1,282 @@
+From: HAMMER-V4 maintainers
+Subject: [PATCH] riscv: safely emulate delegated RV64 integer misalignment
+
+Local Linux 6.6.1 compatibility patch, GPL-2.0-only. Keep the actual
+unaligned-access performance probe. Do not reuse the M-mode handler, which
+accesses mtval and dereferences memory without exception-table protection.
+Define architectural status.MXR (bit 19) in the shared CSR header, which
+Linux 6.6.1 does not otherwise name, for consistent fetch save/restore.
+
+diff --git a/arch/riscv/Kconfig b/arch/riscv/Kconfig
+--- a/arch/riscv/Kconfig
++++ b/arch/riscv/Kconfig
+@@ -7,6 +7,18 @@
+ config 64BIT
+ 	bool
+ 
++config RISCV_SMODE_MISALIGNED_EMULATION
++	bool "Emulate delegated RV64 integer misaligned accesses"
++	depends on 64BIT && MMU && !RISCV_M_MODE && !RISCV_ISA_C
++	help
++	  Emulate LH/LHU/LW/LWU/LD and SH/SW/SD in S-mode using
++	  exception-table-protected byte accesses. User accesses may fault
++	  in pages; kernel accesses cannot sleep and retain exception fixups.
++	  Only standard 32-bit integer instructions are supported. AMOs,
++	  floating-point, compressed and other unsupported instructions keep
++	  their normal misalignment fault behavior. This does not disable
++	  or fabricate the unaligned-access performance probe.
++
+ config 32BIT
+ 	bool
+ 
+diff --git a/arch/riscv/kernel/Makefile b/arch/riscv/kernel/Makefile
+--- a/arch/riscv/kernel/Makefile
++++ b/arch/riscv/kernel/Makefile
+@@ -62,2 +62,3 @@
+ obj-$(CONFIG_RISCV_M_MODE)	+= traps_misaligned.o
++obj-$(CONFIG_RISCV_SMODE_MISALIGNED_EMULATION) += traps_misaligned_smode.o
+ obj-$(CONFIG_FPU)		+= fpu.o
+diff --git a/arch/riscv/include/asm/csr.h b/arch/riscv/include/asm/csr.h
+--- a/arch/riscv/include/asm/csr.h
++++ b/arch/riscv/include/asm/csr.h
+@@ -19,2 +19,3 @@
+ #define SR_SUM		_AC(0x00040000, UL) /* Supervisor User Memory Access */
++#define SR_MXR		_AC(0x00080000, UL) /* Make eXecutable Readable */
+ 
+diff --git a/arch/riscv/include/asm/misaligned_smode.h b/arch/riscv/include/asm/misaligned_smode.h
+new file mode 100644
+--- /dev/null
++++ b/arch/riscv/include/asm/misaligned_smode.h
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef _ASM_RISCV_MISALIGNED_SMODE_H
++#define _ASM_RISCV_MISALIGNED_SMODE_H
++
++#include <linux/types.h>
++
++struct pt_regs;
++
++int riscv_smode_emulate_misaligned(struct pt_regs *regs, bool store,
++				 unsigned long *fault_addr);
++
++#endif
+diff --git a/arch/riscv/kernel/traps.c b/arch/riscv/kernel/traps.c
+--- a/arch/riscv/kernel/traps.c
++++ b/arch/riscv/kernel/traps.c
+@@ -6,2 +6,3 @@
+ #include <linux/cpu.h>
++#include <linux/errno.h>
+ #include <linux/kernel.h>
+@@ -29,2 +30,3 @@
+ #include <asm/ptrace.h>
++#include <asm/misaligned_smode.h>
+ #include <asm/syscall.h>
+@@ -184,2 +186,56 @@
+-#ifndef CONFIG_RISCV_M_MODE
++#if defined(CONFIG_RISCV_SMODE_MISALIGNED_EMULATION)
++static void smode_misaligned_error(struct pt_regs *regs, bool store)
++{
++	unsigned long addr = regs->badaddr;
++	int ret;
++
++	ret = riscv_smode_emulate_misaligned(regs, store, &addr);
++	if (ret == -EFAULT) {
++		int code = SEGV_ACCERR;
++
++		if (user_mode(regs)) {
++			struct vm_area_struct *vma;
++
++			mmap_read_lock(current->mm);
++			vma = find_vma(current->mm, addr);
++			if (!vma || addr < vma->vm_start)
++				code = SEGV_MAPERR;
++			mmap_read_unlock(current->mm);
++		}
++		do_trap_error(regs, SIGSEGV, code, addr,
++			      "Oops - misaligned emulation access fault");
++	} else if (ret) {
++		do_trap_error(regs, SIGBUS, BUS_ADRALN, addr,
++			      "Oops - unsupported misaligned instruction");
++	}
++}
++
++static void do_smode_misaligned(struct pt_regs *regs, bool store)
++{
++	if (user_mode(regs)) {
++		irqentry_enter_from_user_mode(regs);
++		local_irq_enable();
++		smode_misaligned_error(regs, store);
++		local_irq_disable();
++		irqentry_exit_to_user_mode(regs);
++	} else {
++		irqentry_state_t state = irqentry_nmi_enter(regs);
++
++		pagefault_disable();
++		smode_misaligned_error(regs, store);
++		pagefault_enable();
++		irqentry_nmi_exit(regs, state);
++	}
++}
++
++asmlinkage __visible __trap_section void do_trap_load_misaligned(struct pt_regs *regs)
++{
++	do_smode_misaligned(regs, false);
++}
++
++asmlinkage __visible __trap_section void do_trap_store_misaligned(struct pt_regs *regs)
++{
++	do_smode_misaligned(regs, true);
++}
++#elif !defined(CONFIG_RISCV_M_MODE)
+ DO_ERROR_INFO(do_trap_load_misaligned,
+diff --git a/arch/riscv/kernel/traps_misaligned_smode.c b/arch/riscv/kernel/traps_misaligned_smode.c
+new file mode 100644
+--- /dev/null
++++ b/arch/riscv/kernel/traps_misaligned_smode.c
+@@ -0,0 +1,146 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/* Original HAMMER-V4 delegated S-mode RV64 integer-access compatibility. */
++#include <linux/errno.h>
++#include <linux/preempt.h>
++#include <linux/uaccess.h>
++#include <asm/csr.h>
++#include <asm/misaligned_smode.h>
++#include <asm/ptrace.h>
++
++static unsigned long smode_reg(struct pt_regs *regs, unsigned int reg)
++{
++	/* pt_regs slot zero is EPC, not the architectural x0. */
++	return reg ? regs_get_register(regs, reg * sizeof(unsigned long)) : 0;
++}
++
++static int smode_read_byte(unsigned long addr, bool user, u8 *value)
++{
++	if (user)
++		return get_user(*value, (const u8 __user *)addr);
++	/* Never let a nofault kernel access bypass the saved SUM permission. */
++	if ((long)addr >= 0)
++		return -EFAULT;
++	return get_kernel_nofault(*value, (const u8 *)addr);
++}
++
++static int smode_write_byte(unsigned long addr, bool user, u8 value)
++{
++	if (user)
++		return put_user(value, (u8 __user *)addr);
++	if ((long)addr >= 0)
++		return -EFAULT;
++	return copy_to_kernel_nofault((u8 *)addr, &value, sizeof(value));
++}
++
++static int smode_fetch_insn(struct pt_regs *regs, u32 *insn,
++			    unsigned long *fault_addr)
++{
++	unsigned long pc = regs->epc;
++	unsigned long status;
++	unsigned int i;
++	int ret = 0;
++	u8 byte;
++
++	*insn = 0;
++	if (pc & 3)
++		return -EOPNOTSUPP;
++	/* Instruction pages may be execute-only. Restore MXR after the fetch. */
++	preempt_disable();
++	pagefault_disable();
++	status = csr_read_set(CSR_STATUS, SR_MXR);
++	for (i = 0; i < 4; i++) {
++		*fault_addr = pc + i;
++		if (pc + i < pc ||
++		    smode_read_byte(pc + i, user_mode(regs), &byte)) {
++			ret = -EFAULT;
++			break;
++		}
++		*insn |= (u32)byte << (8 * i);
++		if (i == 1 && ((*insn & 3) != 3 ||
++			       (*insn & 0x1f) == 0x1f)) {
++			ret = -EOPNOTSUPP;
++			break;
++		}
++	}
++	if (!(status & SR_MXR))
++		csr_clear(CSR_STATUS, SR_MXR);
++	pagefault_enable();
++	preempt_enable();
++	return ret;
++}
++
++int riscv_smode_emulate_misaligned(struct pt_regs *regs, bool store,
++				 unsigned long *fault_addr)
++{
++	unsigned long addr, value = 0;
++	unsigned int funct3, size, reg, i, shift;
++	bool data_user, sign = false;
++	long imm;
++	u32 insn;
++	u8 byte;
++	int ret;
++
++	ret = smode_fetch_insn(regs, &insn, fault_addr);
++	if (ret) {
++		if (ret != -EFAULT)
++			*fault_addr = regs->badaddr;
++		return ret;
++	}
++	*fault_addr = regs->badaddr;
++	if ((insn & 0x7f) != (store ? 0x23 : 0x03))
++		return -EOPNOTSUPP;
++	funct3 = (insn >> 12) & 7;
++	if (store) {
++		if (funct3 < 1 || funct3 > 3)
++			return -EOPNOTSUPP;
++		reg = (insn >> 20) & 31;
++		imm = (long)(s32)((insn & 0xfe000000) |
++				 (((insn >> 7) & 31) << 20)) >> 20;
++		value = smode_reg(regs, reg);
++	} else {
++		switch (funct3) {
++		case 1: case 2: case 3:
++			sign = true;
++			break;
++		case 5: case 6:
++			break;
++		default:
++			return -EOPNOTSUPP;
++		}
++		reg = (insn >> 7) & 31;
++		imm = (long)(s32)insn >> 20;
++	}
++	size = 1U << (funct3 & 3);
++	addr = smode_reg(regs, (insn >> 15) & 31) + imm;
++	if (!(addr & (size - 1)))
++		return -EOPNOTSUPP;
++
++	data_user = user_mode(regs) ||
++		    ((regs->status & SR_SUM) && addr < TASK_SIZE);
++	for (i = 0; i < size; i++) {
++		*fault_addr = addr + i;
++		if (addr + i < addr)
++			return -EFAULT;
++		if (store) {
++			byte = value >> (8 * i);
++			ret = smode_write_byte(addr + i, data_user, byte);
++		} else {
++			ret = smode_read_byte(addr + i, data_user, &byte);
++			if (!ret)
++				value |= (unsigned long)byte << (8 * i);
++		}
++		if (ret)
++			return -EFAULT;
++	}
++
++	/* Failed loads leave rd untouched; even x0 loads must access memory. */
++	if (!store && reg) {
++		shift = 64 - size * 8;
++		if (sign)
++			value = (long)(value << shift) >> shift;
++		*(unsigned long *)((unsigned long)regs +
++				   reg * sizeof(unsigned long)) = value;
++	}
++	regs->epc += 4;
++	return 0;
++}

@@ -1,0 +1,14 @@
+Analysis & Synthesis Status : Successful - Thu Oct 29 17:16:26 2026
+Quartus Prime Version : 17.1.0 Build 590 10/25/2017 SJ Standard Edition
+Revision Name : top
+Top-level Entity Name : hammer_v3_top
+Family : Arria 10
+Logic utilization (in ALMs) : N/A
+Total registers : 22919
+Total pins : 0
+Total virtual pins : 1,965
+Total block memory bits : 1,082,752
+Total DSP Blocks : 0
+Total HSSI RX channels : 0
+Total HSSI TX channels : 0
+Total PLLs : 0

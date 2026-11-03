@@ -1,0 +1,826 @@
+{
+  "chip": "Hammer-V4",
+  "passed_checks": {
+    "check:l1-system-validation": {
+      "attempt_id": 34,
+      "duration_s": 55726.28949355194,
+      "stdout_preview": "7 stdout_bytes=237068 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54840.7 stdout_bytes=237153 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54860.7 stdout_bytes=237238 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54880.7 stdout_bytes=237325 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54900.7 stdout_bytes=237412 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54920.7 stdout_bytes=237499 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54940.7 stdout_bytes=237586 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54960.7 stdout_bytes=237673 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=54980.7 stdout_bytes=237673 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55000.7 stdout_bytes=237758 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55020.7 stdout_bytes=237843 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55040.7 stdout_bytes=237928 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55060.7 stdout_bytes=238014 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55080.7 stdout_bytes=238101 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55100.7 stdout_bytes=238188 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55120.7 stdout_bytes=238275 stderr_bytes=0\nL1_STAGE_ACTIVE id=timed-system elapsed_s=55140.7 stdout_bytes=238362 stderr_bytes=0\nL1_STAGE_COMPLETE id=timed-system\nevidence/l1-system-validation-20261031T094948Z-0e12d852/receipt.json\n",
+      "receipt_count": 1,
+      "receipts": [
+        {
+          "path": "evidence/l1-system-validation-20261031T094948Z-0e12d852/receipt.json",
+          "data": {
+            "schema": 1,
+            "argv": [
+              "python3",
+              "tests/verify.py"
+            ],
+            "cwd": ".",
+            "started_unix": 1793440188.2940204,
+            "ended_unix": 1793495914.1492517,
+            "status": "passed",
+            "exit_code": 0,
+            "source_sha256": {
+              "rtl/hammer_v2_alu.sv": "89b5fe972c11dc15b0b1680b630a1f6b5f19029324e6d20c586e925785c4f939",
+              "rtl/hammer_v2_atomic.sv": "91ed2b8c233062538de11e51b795e52e4091ce9348c17a22b43d53cdd4a2c591",
+              "rtl/hammer_v2_axi_lite.sv": "5d9a2022d454d56bbb7b01e6f05d49f88f0edb667e5b53792f2dd55d889f8597",
+              "rtl/hammer_v2_cache.sv": "e862ed1f487b9b7abdfa123bfe47d9f0b5c3fe15aa3297df773353055d7aac84",
+              "rtl/hammer_v2_clint.sv": "de7b496c7fbac90143a892071427c78e78e33a2ae71614f04299d6ddd24ee447",
+              "rtl/hammer_v2_core.sv": "c160b5683aecf33ecc7bd240e42591fd8865b6f9c9122fac896876f77ef27613",
+              "rtl/hammer_v2_csr.sv": "1f16aebac08de73f761aaf15f6153acbb256aa472523c9175c58a4971c047993",
+              "rtl/hammer_v2_dcache.sv": "17010c830560f166302aac0ddf6068ad09f402ea138656d2b4edb9f5671bbda7",
+              "rtl/hammer_v2_decode.sv": "2b81d3929eec31a2656bc3bea4a38b1dca86a158762820248d98c3dc5edfd572",
+              "rtl/hammer_v2_dmem.sv": "2e8d9e9d97a59c870969de85597363e330f7963effacee46912833e0fd078249",
+              "rtl/hammer_v2_hazard.sv": "90128fc0baf287f4e22ddb1ff7f8ff0671ddd2fc3d12300150debc6f54179aa1",
+              "rtl/hammer_v2_icache.sv": "43a3b4910101e0b0b4555c7532388841c6d9e149d02272e4c84c8e903d21012d",
+              "rtl/hammer_v2_imem.sv": "b5c8d22e069804f7eb1e55266762f4ca080d493ab3ef207320b8c62c260c67f1",
+              "rtl/hammer_v2_muldiv.sv": "a0abeb501a411ee781b11b5352d70521ec0fd06458055666ae9bdd4da598ce5b",
+              "rtl/hammer_v2_predictor.sv": "72b9adaf5781e44ae2f9e58efdcb6a318ab086a4cea12851adf03c395754591a",
+              "rtl/hammer_v2_ram.sv": "cf21ea4cfc813ef61e392c6bdf324e2c41870798cd536dd8828655f04d2e6885",
+              "rtl/hammer_v2_regfile.sv": "ccf6176ff0e8c81309bf166c7cce12c741eec5cecf8264b565315ac95fa2ef6b",
+              "rtl/hammer_v2_top.sv": "7efe65cceeba03d41fcf4bdb8b801a95a6478742e68c7cb66cc7e98d48384776",
+              "rtl/hammer_v2_trap.sv": "cb96f9092b6025697e431681fc4f7649ae796cd47b50b44fabbd959fcfa29f00",
+              "rtl/hammer_v3_accel_bridge.sv": "9104d184d3d43944f3b9b4fc8e7a7ee7c00866c4d715fb29203a56be20c4ff50",
+              "rtl/hammer_v3_atomic.sv": "288faeb4ec47eb10faded90f73e7079ff2d6c5299d8571735a34706c514bc146",
+              "rtl/hammer_v3_axi_geometry.sv": "02fccb9cf0c9ff160430b6b1a7778ae7695b42f9c3946f43d0ca2023a8af10a2",
+              "rtl/hammer_v3_axi_master.sv": "e8b564b2301cf54a5e46520c79fd0d00d3037beb383fad009a91e1f9de816d29",
+              "rtl/hammer_v3_cache.sv": "4a21ffea96cd0afb95856d16e8a5d5e5ce871cc32adb24d830983c9692bccb18",
+              "rtl/hammer_v3_cache_arbiter.sv": "a7e53e9a4b772ebe676314bd03d2d13b8aeaacdcdc68e7649a38f5a893937f8b",
+              "rtl/hammer_v3_core.sv": "175e9d8b12457131093cd170cf3f514f524593f7c4e51302d45d5c6020ca957c",
+              "rtl/hammer_v3_csr.sv": "8a6e045b92708bf07c1d6b912523f84b0b7795c339c3417e171fd3653976332d",
+              "rtl/hammer_v3_data_path.sv": "8cac0fb7cd15413555e21c72a3d70511af21f7f6c067505fed7bf3b8e631b9fb",
+              "rtl/hammer_v3_data_router.sv": "0dc3a8975c907914c27c5528ffc3868c4b00b422464c936dd3f6c2e1582b1025",
+              "rtl/hammer_v3_dcache.sv": "2852461db065bf3cab9f18eb16162c0f2b71b244a3ebad7b4f3486b213494aee",
+              "rtl/hammer_v3_fabric.sv": "9f75eb0ca76c865d202c7234a541d65931a356d227b80088c7f73f6268435a53",
+              "rtl/hammer_v3_fetch_path.sv": "1c75a42dbcd95280a2d69b8f40ee38dfff115626771889bc5d6f2383d7c7f2bf",
+              "rtl/hammer_v3_icache.sv": "46dc7bd69655fac3f9b56e2d33a87be5a530b5dcb6bf15e9e453f239ec235a87",
+              "rtl/hammer_v3_mmu.sv": "2bdb8a6a98f53f58363f844878ed93c5d1bdc2af1dce0e5d45a40e85ae8676c1",
+              "rtl/hammer_v3_page_leaf.sv": "94a96c5c53dcb58e46dabce66060a94ecc49ace6eb11f7864867c655c984eb96",
+              "rtl/hammer_v3_plic.sv": "556841050cfbc5a394d1df8c355771b240993d95103da1b6a8ace3e5681da1fb",
+              "rtl/hammer_v3_ptw.sv": "2a6af6de1a57b7924dea6ef68052f406341890aa1f0f3d1c3985aa852ff141cc",
+              "rtl/hammer_v3_tlb.sv": "0ea70fd59486651c3030fb12a3c297b7bedc7854e5d9e3a3880842d42c5904a7",
+              "rtl/hammer_v3_top.sv": "6e53179d46f8efd63cdce0d4e4aaf183f2a59e579a3ee732c808aedc11bfdebe",
+              "rtl/hammer_v3_uart.sv": "0717858b7c23ec3cb446fb595a75547897bb4ef8bcd96a6d72ffe5bd9723c3c7",
+              "rtl/hammer_v4_boot_rom.sv": "f50026b20ca3e3212c9b8948f7854466ba8155c7abf8bcdf692b46d9584ba056",
+              "rtl/hammer_v4_top.sv": "4ba6ea372ee0723cd0fd42458a86659c81c847fa559b36e91bf3a8861d79806b",
+              "software/README.md": "55b19e6b20ca944762aa65e552b259ee147129e9be81b252f559cbfeb97ec07b",
+              "software/build.py": "6d7e56b9d82939cca4274516c03eb4925f25ab7a5f7cd59cc15e938620d797eb",
+              "software/fw_entry.S": "98417bb7f6ef0c8f1c169c0047de7a72f8b210e020db7ee6c951a3b280375265",
+              "software/fw_jump.c": "6badfdc2eb24c008d14566aad8c9f61e633f81338aee2ec493aa9b453c32a7df",
+              "software/fw_jump.ld": "178c72a34a5d85399b2239ff26d70f0cda7bac72e3c44f6eb2b334de2fd335af",
+              "software/hammer-v4.dts": "468997a5ff9cba77d17f4e168c68a7ca580700143c4274b0aceed7c44a5cf1a2",
+              "software/init.c": "51df09815dfc24961adc9ad059426b2e913124f66f95c982ccee82d4ba1db8d5",
+              "software/init.ld": "ac02c4ba4b4a9421423592cfc1aeb00cdf92f9a43f3b045ee89f6219c7e347b4",
+              "software/init_entry.S": "5648c12c7246d479736eb4b64daa7619ed209fef26ad9a32df9d6b98ee224509",
+              "software/linux-6.6.1-random-trust-config.patch": "a028c9bde32d383ecaddbd3965905f325dfae8576e570afbac37057921eda03c",
+              "software/linux-6.6.1-smode-misaligned.patch": "92b2ee6c295e0d05d20e344ba6cba6b28f862d7de03b8f249eb249b6ed669ca1",
+              "software/linux-6.6.1.tar.xz": "da1ed7d47c97ed72c9354091628740aa3c40a3c9cd7382871f3cedbd60588234",
+              "software/linux.config": "75223860a71f7b5152f6cdedd4f6f88fbd5beab34305013bf79714484e436ea5",
+              "software/source-manifest.json": "02ac0f80143c484dcf0dca5b902d22b0311417b14e33c9315a298d9eab98bfe4",
+              "design/ARCHITECTURE.md": "30d7827b94e1fe15063ed02b21398a0f58a2306a134a6a62a6ef3353f8e4f1b1",
+              "design/GENERATIONAL_HANDOFF.md": "1bfb60dfac18bfc5fb8e0db40a9d426175a9311e760f6dcfc086c481ecc5bd7c",
+              "design/SPEC.md": "196565452815e487680538d297dbfdca4052b6a5fa8c7b3c04a1daea116deef0",
+              "tests/architecture.py": "95c876883a899f0c8b1e1757ee70718f2818ff47986823097acde1b099c6ce4f",
+              "tests/arithmetic_checks.py": "a9c9aef2442b2532bd186e9ee16ec01fba9852d419f236635a937bc31c909b3b",
+              "tests/asset_checks.py": "c6321a24e711ca0e294a9341123291a60b35969879ca161d9a6d994e455e51b3",
+              "tests/build_path_checks.py": "3dca871f8b6371d45623d80cb6b3b8405cd64eb694f726b78b4ee1767c68e50a",
+              "tests/compatibility_checks.py": "71d288f2fa9837bb81f07573464277b1f4156681f5ec349b3cc90f14afbc4108",
+              "tests/compatibility_probe.cpp": "7d81bbbabb485a4758f6b09b6413e231265c92f5764d7200125ecd49e3fed75b",
+              "tests/directed_probe.cpp": "a07ee7640bbb49428434beef9ebef03a109046551e888c42219e5e4d1745c8f9",
+              "tests/entrypoint_checks.py": "4039032263eddb4227fa6e9c348d6c26b50f92ad06f7e05e753a241cef89bdc8",
+              "tests/eval_schedule_checks.py": "36e4c58624e46d72fb78af3f5e204145c1e947f15e567cdea76adc515e41b206",
+              "tests/eval_schedule_probe.cpp": "82485c655209b334983f8307f73bedd800e860f5416a075f890ca03fb5fdcd5a",
+              "tests/evidence_identity.py": "c9b450cd5b17a2ceb65b832cbc7a47664e272ff87a56affed9d76201a36a56a0",
+              "tests/fdt_boot_checks.py": "c2500363e69fcc7ea30b3950f3ee18f814a475631a41109452a877f19bd5fbc1",
+              "tests/firmware_checks.py": "5dbbc6380158595f4100f69fa8776afd0908979994d0be58becd6edb430ddbca",
+              "tests/functional_boot.py": "cdb7c606b09396e6a155aded90b5147e9404b1aa8bd399f542013f2295081959",
+              "tests/functional_uart_comparison.py": "72de3fb82c0399b3aacfa7a61c344400f1bf659915c23cbab68962fe62649963",
+              "tests/leaf_checks.py": "b5f5797caef4ccb956632b2117aa7e9267586d8691e23c8021ee36dad841c141",
+              "tests/mmu_checks.py": "7aad75a025b12a3bbf34dbc4e137fa5e6523afad136226736ddf4ef9252c664a",
+              "tests/mutation_checks.py": "c8cc9bfe1b427deeeaec7689b3fce5c5209780e2c6fd80f4895ff75c24ea559b",
+              "tests/parameters.py": "a77e9cd952b4bf0622c607b84b839e8650b323b24c943034135ea31b800cfa15",
+              "tests/platform_probe.cpp": "3b748aba874eea62797ffcfaa729805c99af0e46cfe2c49d8fd0ad77f476bb1b",
+              "tests/platform_probe.py": "1d383ecff10d14e3739e3de40aaf0b3a5293b2b5858d7cde255532b4df2bdb1f",
+              "tests/preparation.py": "28ba0e1b06e990235228dfe55a3a4d91ff3898b28538c926dfd3932023b0605a",
+              "tests/reference_checks.py": "c1759deed2a52089910749b327b77e9b7ffd8c1028119caad8f6cce3c34d4ba6",
+              "tests/reproduction_checks.py": "aa1d26d08af6bbb3194d9c4b4baa72bbbb70ccae53f59541a655f9fc63dcaeee",
+              "tests/reproduction_diff.py": "256c3af12de538541ffea5292669d68151c09ff3521874015752f90fb56571e2",
+              "tests/rv64_reference.py": "5d00f63f753f7a63b45724cce474e77d891b354ef7d8c1e01d8bf79c462d1dff",
+              "tests/smode_checks.py": "50a62dfa6e42e408fc0a628c7ff056875c25797982b7f0ed05a6875d5acf5918",
+              "tests/synthesis.py": "91b46d3ba1ccaedd3bf8b40879dc06a6ffde11553d099b80c78793006df6ce3b",
+              "tests/system_axi.hpp": "69d88a85bf615032e23d5a52b1cdef958e5814530d81d5ca656f6fc69962fa5f",
+              "tests/system_axi_checks.py": "fcbfd792625c0ef09c29a205a3c7c38acfde70337998c1eb8559e37e23213e79",
+              "tests/system_axi_probe.cpp": "ea90079a61336ab23265bb47e5d0b7974f2646cb255645c8845a9594d2edf2fe",
+              "tests/system_checkpoint.py": "83963e6b02c3dd8eeba4006b841ec241b5820cd9f4e8a271a868234209023e41",
+              "tests/system_checkpoint_checks.py": "3f780b167f5b916c10e4c659ea15a31b2f40e35fb442242ff347e1bb738ac28e",
+              "tests/system_checks.py": "655542e34ae6f78c70e15e9e5eae485e7fce105ba85fbcae00d39ab7372ff43c",
+              "tests/system_core.py": "93e7f69e6e9ecb07f2528efe28a50d26daf79cb82279d8dc5c052fad0e0d7289",
+              "tests/system_core_checks.py": "9dd17355c1a34cf4fa729621639158405a7920de8cd132bd713ffbe7f57f942f",
+              "tests/system_core_probe.cpp": "2ee02e348bfa4966e8a3589e8bc5815b1bd4dff80c35df6600ce5981d32ab8df",
+              "tests/system_entry_checks.py": "44f555e0c80cf38cf7ca0c2a7d5a9311a7995a4aea9a5d2fe948aad6f23f4464",
+              "tests/system_execution.py": "cb88b48e4debdacb02e2095c4791a5e5b584d5aa6143d7df5c5df033af1565eb",
+              "tests/system_execution_checks.py": "d4c569873feabf8999a5d6bbee489c689f868511cf90c4b8fc49b30fb26d8f9e",
+              "tests/system_harness_checks.py": "68d8346eec8ca47c65f9c1e34a8c5955efa5c8fe365092cef3f55d87019971e5",
+              "tests/system_memory.py": "9b0364cef1bf4ea45b3d7b6c2c6937913b444996377e578952c4e39343be596f",
+              "tests/system_memory_probe.cpp": "605de914b5ac5cff05eaf66265ad6edc08fec6e82b2d82cefd36261aacc2047d",
+              "tests/system_memory_rtl_checks.py": "6d7caf177d36ac1de246dddd179c07ba603d2cf44a0c62ea30d6a4d1524b8f14",
+              "tests/system_oracle.py": "53dc865e9875cf99ca8fe5adde59f5f2f6adeec1b67061fdb9f54432d835fe08",
+              "tests/system_oracle_checks.py": "be34521c2143740342a9685235d60b6e6da6b15b837c6712a57d4558efdd5b3b",
+              "tests/system_pin_smoke.cpp": "767807c1f7d337981fa15b18b3a6c511bff56f0f25426251850f999222d785c7",
+              "tests/system_platform.py": "fe0c7d08ba11b7e9a41c547c1e1806d1a91fff0cf028fa79bf49519a13709722",
+              "tests/system_platform_checks.py": "43cbad36d2191590614235110b1e49867e9d4a394b095484081fda80e5d77143",
+              "tests/system_prediction.py": "30ecf85af76b3d514fee2c1c24b17bf0d07df246834c834895339a9f1ba78f4b",
+              "tests/system_prediction_checks.py": "16fb07b47ab514495aa9b450fe1f4767c40b9b6ae5509a2e19a60f7a02739fbe",
+              "tests/system_predictor_checks.py": "4e06506641e57849376d7b0532f757de121631ada59695eb156786a94268d9c5",
+              "tests/system_probe.cpp": "e32b899ef01d05ce28bcfff2874889231fc103488fee9d64c347e07b526a95a0",
+              "tests/system_protocol.py": "cf84e4895133c30b3c012762bea01869076292ecad4e8064d97ed66e8e22ec11",
+              "tests/system_rtl_checkpoint.py": "74b4bc299280bf518691bfd1323b3968d7b2a50e39798ead0c83f78538a392aa",
+              "tests/system_rtl_checkpoint_checks.py": "8629e6836396a820c4c26801d29659c17ca702b0b87189d66bc2a098d1dc326c",
+              "tests/system_schedule_diagnostic.py": "7187d3dc0b326d910c4e4de36c645527ee71f67fa1b31389a49a407d7e2dac2f",
+              "tests/system_uart_diagnostic.py": "a0fe1737d5a9c3fc3791918e3ad7f11df8fe668c778147fc0e4eae4c485179cc",
+              "tests/temporal_checks.py": "7e93705f33de6a99b1eda687fbabddfbd6e2e28d9777de2a1a14a9a05ee2c8e0",
+              "tests/temporal_probe.cpp": "a81e2ff2f7693ea969d92bac3aaf27bf7f7febbe050055ec6bdb69a1a2876ee2",
+              "tests/temporal_replay.py": "55b57c4042b566db47e0d79f9947ee7cdf6483d0d217545afda429c1253e3deb",
+              "tests/timer_checks.py": "d99a78701824763ff2a088a900b4a5b9e5ba9e2dad96775835440d00d42ebd87",
+              "tests/verify.py": "e0d4ea395d7c5d6f4209b92ab65b86ccd9dc05a850c3c15ed188c5d94086bb28",
+              "hammer_v3_reference/rtl/hammer_v2_alu.sv": "89b5fe972c11dc15b0b1680b630a1f6b5f19029324e6d20c586e925785c4f939",
+              "hammer_v3_reference/rtl/hammer_v2_atomic.sv": "91ed2b8c233062538de11e51b795e52e4091ce9348c17a22b43d53cdd4a2c591",
+              "hammer_v3_reference/rtl/hammer_v2_axi_lite.sv": "5d9a2022d454d56bbb7b01e6f05d49f88f0edb667e5b53792f2dd55d889f8597",
+              "hammer_v3_reference/rtl/hammer_v2_cache.sv": "e862ed1f487b9b7abdfa123bfe47d9f0b5c3fe15aa3297df773353055d7aac84",
+              "hammer_v3_reference/rtl/hammer_v2_clint.sv": "de7b496c7fbac90143a892071427c78e78e33a2ae71614f04299d6ddd24ee447",
+              "hammer_v3_reference/rtl/hammer_v2_core.sv": "c160b5683aecf33ecc7bd240e42591fd8865b6f9c9122fac896876f77ef27613",
+              "hammer_v3_reference/rtl/hammer_v2_csr.sv": "1f16aebac08de73f761aaf15f6153acbb256aa472523c9175c58a4971c047993",
+              "hammer_v3_reference/rtl/hammer_v2_dcache.sv": "17010c830560f166302aac0ddf6068ad09f402ea138656d2b4edb9f5671bbda7",
+              "hammer_v3_reference/rtl/hammer_v2_decode.sv": "2b81d3929eec31a2656bc3bea4a38b1dca86a158762820248d98c3dc5edfd572",
+              "hammer_v3_reference/rtl/hammer_v2_dmem.sv": "2e8d9e9d97a59c870969de85597363e330f7963effacee46912833e0fd078249",
+              "hammer_v3_reference/rtl/hammer_v2_hazard.sv": "90128fc0baf287f4e22ddb1ff7f8ff0671ddd2fc3d12300150debc6f54179aa1",
+              "hammer_v3_reference/rtl/hammer_v2_icache.sv": "43a3b4910101e0b0b4555c7532388841c6d9e149d02272e4c84c8e903d21012d",
+              "hammer_v3_reference/rtl/hammer_v2_imem.sv": "b5c8d22e069804f7eb1e55266762f4ca080d493ab3ef207320b8c62c260c67f1",
+              "hammer_v3_reference/rtl/hammer_v2_muldiv.sv": "a0abeb501a411ee781b11b5352d70521ec0fd06458055666ae9bdd4da598ce5b",
+              "hammer_v3_reference/rtl/hammer_v2_predictor.sv": "72b9adaf5781e44ae2f9e58efdcb6a318ab086a4cea12851adf03c395754591a",
+              "hammer_v3_reference/rtl/hammer_v2_ram.sv": "cf21ea4cfc813ef61e392c6bdf324e2c41870798cd536dd8828655f04d2e6885",
+              "hammer_v3_reference/rtl/hammer_v2_regfile.sv": "ccf6176ff0e8c81309bf166c7cce12c741eec5cecf8264b565315ac95fa2ef6b",
+              "hammer_v3_reference/rtl/hammer_v2_top.sv": "7efe65cceeba03d41fcf4bdb8b801a95a6478742e68c7cb66cc7e98d48384776",
+              "hammer_v3_reference/rtl/hammer_v2_trap.sv": "cb96f9092b6025697e431681fc4f7649ae796cd47b50b44fabbd959fcfa29f00",
+              "hammer_v3_reference/rtl/hammer_v3_accel_bridge.sv": "9104d184d3d43944f3b9b4fc8e7a7ee7c00866c4d715fb29203a56be20c4ff50",
+              "hammer_v3_reference/rtl/hammer_v3_atomic.sv": "288faeb4ec47eb10faded90f73e7079ff2d6c5299d8571735a34706c514bc146",
+              "hammer_v3_reference/rtl/hammer_v3_axi_geometry.sv": "02fccb9cf0c9ff160430b6b1a7778ae7695b42f9c3946f43d0ca2023a8af10a2",
+              "hammer_v3_reference/rtl/hammer_v3_axi_master.sv": "e8b564b2301cf54a5e46520c79fd0d00d3037beb383fad009a91e1f9de816d29",
+              "hammer_v3_reference/rtl/hammer_v3_cache.sv": "4a21ffea96cd0afb95856d16e8a5d5e5ce871cc32adb24d830983c9692bccb18",
+              "hammer_v3_reference/rtl/hammer_v3_cache_arbiter.sv": "a7e53e9a4b772ebe676314bd03d2d13b8aeaacdcdc68e7649a38f5a893937f8b",
+              "hammer_v3_reference/rtl/hammer_v3_core.sv": "175e9d8b12457131093cd170cf3f514f524593f7c4e51302d45d5c6020ca957c",
+              "hammer_v3_reference/rtl/hammer_v3_csr.sv": "8a6e045b92708bf07c1d6b912523f84b0b7795c339c3417e171fd3653976332d",
+              "hammer_v3_reference/rtl/hammer_v3_data_path.sv": "8cac0fb7cd15413555e21c72a3d70511af21f7f6c067505fed7bf3b8e631b9fb",
+              "hammer_v3_reference/rtl/hammer_v3_data_router.sv": "0dc3a8975c907914c27c5528ffc3868c4b00b422464c936dd3f6c2e1582b1025",
+              "hammer_v3_reference/rtl/hammer_v3_dcache.sv": "2852461db065bf3cab9f18eb16162c0f2b71b244a3ebad7b4f3486b213494aee",
+              "hammer_v3_reference/rtl/hammer_v3_fabric.sv": "9f75eb0ca76c865d202c7234a541d65931a356d227b80088c7f73f6268435a53",
+              "hammer_v3_reference/rtl/hammer_v3_fetch_path.sv": "1c75a42dbcd95280a2d69b8f40ee38dfff115626771889bc5d6f2383d7c7f2bf",
+              "hammer_v3_reference/rtl/hammer_v3_icache.sv": "46dc7bd69655fac3f9b56e2d33a87be5a530b5dcb6bf15e9e453f239ec235a87",
+              "hammer_v3_reference/rtl/hammer_v3_mmu.sv": "2bdb8a6a98f53f58363f844878ed93c5d1bdc2af1dce0e5d45a40e85ae8676c1",
+              "hammer_v3_reference/rtl/hammer_v3_page_leaf.sv": "94a96c5c53dcb58e46dabce66060a94ecc49ace6eb11f7864867c655c984eb96",
+              "hammer_v3_reference/rtl/hammer_v3_plic.sv": "556841050cfbc5a394d1df8c355771b240993d95103da1b6a8ace3e5681da1fb",
+              "hammer_v3_reference/rtl/hammer_v3_ptw.sv": "2a6af6de1a57b7924dea6ef68052f406341890aa1f0f3d1c3985aa852ff141cc",
+              "hammer_v3_reference/rtl/hammer_v3_tlb.sv": "0ea70fd59486651c3030fb12a3c297b7bedc7854e5d9e3a3880842d42c5904a7",
+              "hammer_v3_reference/rtl/hammer_v3_top.sv": "6e53179d46f8efd63cdce0d4e4aaf183f2a59e579a3ee732c808aedc11bfdebe",
+              "hammer_v3_reference/rtl/hammer_v3_uart.sv": "0717858b7c23ec3cb446fb595a75547897bb4ef8bcd96a6d72ffe5bd9723c3c7"
+            },
+            "build": "build/l1-system-validation-20261031T094948Z-0e12d852",
+            "requirements": {
+              "software-build": "actual firmware, DTB, upstream Linux 6.6.1 and static /init",
+              "assets": "ELF/ISA, FDT, layout, source/build hashes and compiler invocations",
+              "parameters": "legal boundaries, illegal rejection, reset, host/start/halt and retirement",
+              "arithmetic": "independent M-extension numerical comparisons",
+              "sv39-leaf": "canonicality, leaf sizes, alignment, permissions and software A/D faults",
+              "mmu": "real walks, PTE bus errors, MPRV, scoped/global fences, stalls and cancellation",
+              "timer": "clock-exact CLINT/CSR values, wrap, strobes, errors and backpressure",
+              "firmware": "real SBI, delegation, timer delivery, nested contexts and translated U execution",
+              "fdt-boot": "real firmware/kernel rejection of malformed FDT",
+              "smode": "actual kernel S-mode misalignment emulation, nofault and trap context",
+              "reference": "independent ISA reference on hand-derived cases and actual firmware",
+              "compatibility": "parent-compatible host/AXI/accelerator coherence and LR/SC",
+              "temporal": "pre-frozen timer edges and read/timestamp comparator defect sensitivity",
+              "mutations": "unchanged controls and compiled functional/temporal disposable defects",
+              "synthesis": "real full-default Yosys hierarchy/connectivity, state, RAM and zero latches",
+              "build-paths": "protected, symlink and occupied output-path rejection",
+              "software-reproduction": "clean source build/audit and all nine exact image comparisons",
+              "timed-system": "independent pre-frozen full UART oracle; real seeds 11/29/47; architectural milestones, page-fault retries, syscalls, timers and UART PLIC claim/complete; clean default-seed full RTL reproduction"
+            },
+            "stages": [
+              {
+                "id": "software-build",
+                "argv": [
+                  "python3",
+                  "software/build.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software",
+                  "--jobs",
+                  "4"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440188.7767844,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/00-software-build.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/00-software-build.stderr.log",
+                "ended_unix": 1793440298.3668268,
+                "exit_code": 0
+              },
+              {
+                "id": "assets",
+                "argv": [
+                  "python3",
+                  "tests/asset_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/assets",
+                  "--manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440298.3687499,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/01-assets.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/01-assets.stderr.log",
+                "ended_unix": 1793440305.652142,
+                "exit_code": 0
+              },
+              {
+                "id": "parameters",
+                "argv": [
+                  "python3",
+                  "tests/parameters.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/parameters"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440305.6541162,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/02-parameters.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/02-parameters.stderr.log",
+                "ended_unix": 1793440337.0977867,
+                "exit_code": 0
+              },
+              {
+                "id": "arithmetic",
+                "argv": [
+                  "python3",
+                  "tests/arithmetic_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/arithmetic"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440337.0995793,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/03-arithmetic.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/03-arithmetic.stderr.log",
+                "ended_unix": 1793440338.470496,
+                "exit_code": 0
+              },
+              {
+                "id": "sv39-leaf",
+                "argv": [
+                  "python3",
+                  "tests/leaf_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/sv39-leaf"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440338.4723816,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/04-sv39-leaf.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/04-sv39-leaf.stderr.log",
+                "ended_unix": 1793440339.3414507,
+                "exit_code": 0
+              },
+              {
+                "id": "mmu",
+                "argv": [
+                  "python3",
+                  "tests/mmu_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/mmu"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440339.3433259,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/05-mmu.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/05-mmu.stderr.log",
+                "ended_unix": 1793440348.9315374,
+                "exit_code": 0
+              },
+              {
+                "id": "timer",
+                "argv": [
+                  "python3",
+                  "tests/timer_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/timer"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440348.933564,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/06-timer.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/06-timer.stderr.log",
+                "ended_unix": 1793440353.9676657,
+                "exit_code": 0
+              },
+              {
+                "id": "firmware",
+                "argv": [
+                  "python3",
+                  "tests/firmware_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/firmware",
+                  "--manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440353.969427,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/07-firmware.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/07-firmware.stderr.log",
+                "ended_unix": 1793440367.9271646,
+                "exit_code": 0
+              },
+              {
+                "id": "fdt-boot",
+                "argv": [
+                  "python3",
+                  "tests/fdt_boot_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/fdt-boot",
+                  "--manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440367.9292328,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/08-fdt-boot.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/08-fdt-boot.stderr.log",
+                "ended_unix": 1793440389.1492476,
+                "exit_code": 0
+              },
+              {
+                "id": "smode",
+                "argv": [
+                  "python3",
+                  "tests/smode_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/smode",
+                  "--software",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440389.1515381,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/09-smode.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/09-smode.stderr.log",
+                "ended_unix": 1793440389.6191957,
+                "exit_code": 0
+              },
+              {
+                "id": "reference",
+                "argv": [
+                  "python3",
+                  "tests/reference_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/reference",
+                  "--manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440389.6211553,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/10-reference.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/10-reference.stderr.log",
+                "ended_unix": 1793440390.8910592,
+                "exit_code": 0
+              },
+              {
+                "id": "compatibility",
+                "argv": [
+                  "python3",
+                  "tests/compatibility_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/compatibility"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440390.893075,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/11-compatibility.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/11-compatibility.stderr.log",
+                "ended_unix": 1793440413.3183186,
+                "exit_code": 0
+              },
+              {
+                "id": "temporal",
+                "argv": [
+                  "python3",
+                  "tests/temporal_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/temporal",
+                  "--manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440413.3203876,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/12-temporal.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/12-temporal.stderr.log",
+                "ended_unix": 1793440437.2505324,
+                "exit_code": 0
+              },
+              {
+                "id": "mutations",
+                "argv": [
+                  "python3",
+                  "tests/mutation_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/mutations",
+                  "--manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440437.2526605,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/13-mutations.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/13-mutations.stderr.log",
+                "ended_unix": 1793440616.7142153,
+                "exit_code": 0
+              },
+              {
+                "id": "synthesis",
+                "argv": [
+                  "python3",
+                  "tests/synthesis.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/synthesis"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440616.7160459,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/14-synthesis.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/14-synthesis.stderr.log",
+                "ended_unix": 1793440633.5235357,
+                "exit_code": 0
+              },
+              {
+                "id": "build-paths",
+                "argv": [
+                  "python3",
+                  "tests/build_path_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/build-paths",
+                  "--occupied",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440633.5254583,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/15-build-paths.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/15-build-paths.stderr.log",
+                "ended_unix": 1793440636.2987576,
+                "exit_code": 0
+              },
+              {
+                "id": "software-reproduction",
+                "argv": [
+                  "python3",
+                  "tests/reproduction_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software-reproduction",
+                  "--compare-manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440636.300827,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/16-software-reproduction.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/16-software-reproduction.stderr.log",
+                "ended_unix": 1793440754.2570395,
+                "exit_code": 0
+              },
+              {
+                "id": "timed-system",
+                "argv": [
+                  "python3",
+                  "tests/system_checks.py",
+                  "--out",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/timed-system",
+                  "--manifest",
+                  "build/l1-system-validation-20261031T094948Z-0e12d852/software/image-manifest.json"
+                ],
+                "cwd": ".",
+                "status": "passed",
+                "started_unix": 1793440754.2590818,
+                "stdout": "evidence/l1-system-validation-20261031T094948Z-0e12d852/17-timed-system.stdout.log",
+                "stderr": "evidence/l1-system-validation-20261031T094948Z-0e12d852/17-timed-system.stderr.log",
+                "ended_unix": 1793495913.9219155,
+                "exit_code": 0
+              }
+            ],
+            "tool_versions": {
+              "python3": {
+                "started_unix": 1793440188.5324688,
+                "ended_unix": 1793440188.536987,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-00.log",
+                "argv": [
+                  "python3",
+                  "--version"
+                ],
+                "available": true
+              },
+              "iverilog": {
+                "started_unix": 1793440188.5379057,
+                "ended_unix": 1793440188.5542586,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-01.log",
+                "argv": [
+                  "iverilog",
+                  "-V"
+                ],
+                "available": true
+              },
+              "vvp": {
+                "started_unix": 1793440188.5550358,
+                "ended_unix": 1793440188.5634286,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-02.log",
+                "argv": [
+                  "vvp",
+                  "-V"
+                ],
+                "available": true
+              },
+              "verilator": {
+                "started_unix": 1793440188.5642152,
+                "ended_unix": 1793440188.678803,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-03.log",
+                "argv": [
+                  "verilator",
+                  "--version"
+                ],
+                "available": true
+              },
+              "yosys": {
+                "started_unix": 1793440188.6801407,
+                "ended_unix": 1793440188.688544,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-04.log",
+                "argv": [
+                  "yosys",
+                  "-V"
+                ],
+                "available": true
+              },
+              "make": {
+                "started_unix": 1793440188.6895413,
+                "ended_unix": 1793440188.693982,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-05.log",
+                "argv": [
+                  "make",
+                  "--version"
+                ],
+                "available": true
+              },
+              "gcc": {
+                "started_unix": 1793440188.6950183,
+                "ended_unix": 1793440188.6992495,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-06.log",
+                "argv": [
+                  "gcc",
+                  "--version"
+                ],
+                "available": true
+              },
+              "g++": {
+                "started_unix": 1793440188.7002795,
+                "ended_unix": 1793440188.7046566,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-07.log",
+                "argv": [
+                  "g++",
+                  "--version"
+                ],
+                "available": true
+              },
+              "dtc": {
+                "started_unix": 1793440188.7057524,
+                "ended_unix": 1793440188.7099402,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-08.log",
+                "argv": [
+                  "dtc",
+                  "--version"
+                ],
+                "available": true
+              },
+              "cpio": {
+                "started_unix": 1793440188.7110052,
+                "ended_unix": 1793440188.7153084,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-09.log",
+                "argv": [
+                  "cpio",
+                  "--version"
+                ],
+                "available": true
+              },
+              "tar": {
+                "started_unix": 1793440188.7163897,
+                "ended_unix": 1793440188.7208247,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-10.log",
+                "argv": [
+                  "tar",
+                  "--version"
+                ],
+                "available": true
+              },
+              "xz": {
+                "started_unix": 1793440188.7219768,
+                "ended_unix": 1793440188.7262766,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-11.log",
+                "argv": [
+                  "xz",
+                  "--version"
+                ],
+                "available": true
+              },
+              "bash": {
+                "started_unix": 1793440188.727403,
+                "ended_unix": 1793440188.7316737,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-12.log",
+                "argv": [
+                  "bash",
+                  "--version"
+                ],
+                "available": true
+              },
+              "bc": {
+                "started_unix": 1793440188.732849,
+                "ended_unix": 1793440188.7371228,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-13.log",
+                "argv": [
+                  "bc",
+                  "--version"
+                ],
+                "available": true
+              },
+              "bison": {
+                "started_unix": 1793440188.7385013,
+                "ended_unix": 1793440188.7426755,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-14.log",
+                "argv": [
+                  "bison",
+                  "--version"
+                ],
+                "available": true
+              },
+              "flex": {
+                "started_unix": 1793440188.743951,
+                "ended_unix": 1793440188.7480912,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-15.log",
+                "argv": [
+                  "flex",
+                  "--version"
+                ],
+                "available": true
+              },
+              "perl": {
+                "started_unix": 1793440188.7492976,
+                "ended_unix": 1793440188.753568,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-16.log",
+                "argv": [
+                  "perl",
+                  "-v"
+                ],
+                "available": true
+              },
+              "/usr/bin/riscv64-unknown-elf-gcc": {
+                "started_unix": 1793440188.7548423,
+                "ended_unix": 1793440188.7589495,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-17.log",
+                "argv": [
+                  "/usr/bin/riscv64-unknown-elf-gcc",
+                  "--version"
+                ],
+                "available": true
+              },
+              "/usr/bin/riscv64-unknown-elf-objcopy": {
+                "started_unix": 1793440188.7601912,
+                "ended_unix": 1793440188.7643228,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-18.log",
+                "argv": [
+                  "/usr/bin/riscv64-unknown-elf-objcopy",
+                  "--version"
+                ],
+                "available": true
+              },
+              "/usr/bin/riscv64-linux-gnu-gcc": {
+                "started_unix": 1793440188.765663,
+                "ended_unix": 1793440188.7697625,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-19.log",
+                "argv": [
+                  "/usr/bin/riscv64-linux-gnu-gcc",
+                  "--version"
+                ],
+                "available": true
+              },
+              "/usr/bin/riscv64-linux-gnu-objcopy": {
+                "started_unix": 1793440188.7710483,
+                "ended_unix": 1793440188.7752242,
+                "exit_code": 0,
+                "timeout_s": 3600,
+                "timed_out": false,
+                "cwd": ".",
+                "raw": "evidence/l1-system-validation-20261031T094948Z-0e12d852/tool-20.log",
+                "argv": [
+                  "/usr/bin/riscv64-linux-gnu-objcopy",
+                  "--version"
+                ],
+                "available": true
+              }
+            },
+            "prerequisites": {
+              "missing_sources": [],
+              "missing_tools": []
+            },
+            "sources_unchanged": true
+          }
+        }
+      ]
+    }
+  }
+}

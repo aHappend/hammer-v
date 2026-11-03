@@ -1,0 +1,107 @@
+{
+  "gate": "soc-multi-ip-board-coexecution",
+  "status": "passed",
+  "host": "netsys17",
+  "chip_id": "23645547322997765",
+  "device": "Intel Arria 10 GX (10AX115N3F40E2SG)",
+  "elapsed_s": 12.587,
+  "canonical_restore_bit_exact": true,
+  "pipelines": [
+    {
+      "pipeline_id": "soc_pipe_1_furnace_x1_bellows_rivet_anvil_d1",
+      "description": "Furnace-X1 (Bellows-L5 LZ4 + Rivet-A5 AES-GCM) -> Anvil-D1 (DeepSeek MLA+MoE)",
+      "stimulus_regs": {
+        "4096": 4686022,
+        "4105": 4291382474,
+        "4428": 5340725,
+        "4436": 7,
+        "4437": 11,
+        "4438": 13
+      },
+      "softreg_0_magic_hex": "0x414e56494c5f4533",
+      "softreg_2_status_hex": "0x000000010000060e",
+      "softreg_11_hw_cycles": 160831,
+      "softreg_12_mem_beats_hex": "0x000000e0000005a8",
+      "softreg_16_21_vector_words": [
+        "0xffffffffffa25a67",
+        "0x0000000000a6e79e",
+        "0x00000000000921d5",
+        "0xffffffffff6e5db1",
+        "0xffffffffffaf8aed",
+        "0x000000000021cf03"
+      ]
+    },
+    {
+      "pipeline_id": "soc_pipe_2_furnace_x2_swage_billet_anvil_en1",
+      "description": "Furnace-X2 (Swage-S5 Vision ISP + Billet-F5 Audio) -> Anvil-EN1 (Gemma-4 Multimodal)",
+      "stimulus_regs": {
+        "4096": 6389149,
+        "4105": 4686022,
+        "4428": 3124567,
+        "4436": 7,
+        "4437": 13,
+        "4438": 11
+      },
+      "softreg_0_magic_hex": "0x414e56494c5f4533",
+      "softreg_2_status_hex": "0x000000020000060e",
+      "softreg_11_hw_cycles": 160895,
+      "softreg_12_mem_beats_hex": "0x000000e0000005a8",
+      "softreg_16_21_vector_words": [
+        "0x000000000074fddc",
+        "0x00000000009f8317",
+        "0x000000000008ba49",
+        "0xffffffffff74d108",
+        "0xffffffffffb31b3b",
+        "0x0000000000204fa8"
+      ]
+    },
+    {
+      "pipeline_id": "soc_pipe_3_furnace_x4_hammer_v5_linux_anvil_qn1",
+      "description": "Furnace-X4 (Hammer-V5 RV64GC Linux + Custom-0) -> Anvil-QN1 (Qwen3 <think> Engine)",
+      "stimulus_regs": {
+        "4096": 5403252,
+        "4105": 6389149,
+        "4428": 7110421,
+        "4436": 11,
+        "4437": 7,
+        "4438": 13
+      },
+      "softreg_0_magic_hex": "0x414e56494c5f4533",
+      "softreg_2_status_hex": "0x000000030000060e",
+      "softreg_11_hw_cycles": 161036,
+      "softreg_12_mem_beats_hex": "0x000000e0000005a8",
+      "softreg_16_21_vector_words": [
+        "0x000000000092e155",
+        "0x000000000092e155",
+        "0x0000000000080959",
+        "0xffffffffff7fd6ab",
+        "0xffffffffffb93214",
+        "0x00000000001dc09f"
+      ]
+    },
+    {
+      "pipeline_id": "soc_pipe_4_anvil_edge_uart_bpe_standalone_restore",
+      "description": "Anvil-Edge (UART + HW BPE Tokenizer) -> Anvil-Q4 Standalone Loop (Canonical Restore)",
+      "stimulus_regs": {
+        "4096": 4686022,
+        "4105": 4291382474,
+        "4428": 5340725,
+        "4436": 7,
+        "4437": 11,
+        "4438": 13
+      },
+      "softreg_0_magic_hex": "0x414e56494c5f4533",
+      "softreg_2_status_hex": "0x000000040000060e",
+      "softreg_11_hw_cycles": 160824,
+      "softreg_12_mem_beats_hex": "0x000000e0000005a8",
+      "softreg_16_21_vector_words": [
+        "0xffffffffffa25a67",
+        "0x0000000000a6e79e",
+        "0x00000000000921d5",
+        "0xffffffffff6e5db1",
+        "0xffffffffffaf8aed",
+        "0x000000000021cf03"
+      ]
+    }
+  ]
+}
