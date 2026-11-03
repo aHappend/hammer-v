@@ -51,6 +51,8 @@ def cancel_owned_process(process, identity):
     pending = [root]
     while pending:
         parent = pending.pop()
+        if process_identity(parent) != owned[parent]:
+            continue
         try:
             tasks = list(Path(f"/proc/{parent}/task").iterdir())
             for task in tasks:
@@ -58,7 +60,8 @@ def cancel_owned_process(process, identity):
                 for child in children:
                     pid = int(child)
                     token = process_identity(pid)
-                    if token is not None and token[0] == parent and pid not in owned:
+                    if (token is not None and token[0] == parent and pid not in owned
+                            and process_identity(parent) == owned[parent]):
                         owned[pid] = token
                         pending.append(pid)
         except (FileNotFoundError, ProcessLookupError):
@@ -77,7 +80,11 @@ def cancel_owned_process(process, identity):
                     pass
         if sig == signal.SIGTERM:
             time.sleep(1)
-    process.wait()
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"owned process did not settle: pid={root} start_ticks={identity[1]}") from error
     return signaled
 
 

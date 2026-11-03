@@ -184,6 +184,7 @@ int main(int argc,char **argv) {
  std::deque<Record> tail;
  uint64_t cycles=0,retired=0,reads=0,writes=0,sretired=0,uretired=0;
  uint64_t translated=0,custom=0,traps=0;
+ uint64_t retirement_hash=14695981039346656037ULL;
  uint64_t last_pc=0,mtimer=0,stimer=0,timer_calls=0,time_reads=0;
  std::map<uint64_t,uint64_t> pc_samples;
  std::map<std::pair<uint64_t,uint64_t>,uint64_t> phase_samples;
@@ -258,6 +259,11 @@ __INITIALIZE_INPUTS__
     throw std::runtime_error("AXI read geometry");
    if(!reset && d.retire_valid) {
     retired++;
+    for(uint64_t value: {uint64_t(d.retire_pc),uint64_t(d.retire_next_pc),
+                        uint64_t(d.retire_insn),uint64_t(d.retire_rd),
+                        uint64_t(d.retire_rd_we),uint64_t(d.retire_rd_data),
+                        uint64_t(d.retire_priv)})
+     retirement_hash=(retirement_hash^value)*1099511628211ULL;
     last_pc=d.retire_pc;
     if((d.retire_insn>>20)==0xc01 && (d.retire_insn&127)==0x73 &&
        ((d.retire_insn>>12)&7) && d.retire_rd_we) {
@@ -387,6 +393,7 @@ __INITIALIZE_INPUTS__
    <<",\"traps\":"<<traps<<",\"integer_checks\":"<<isa.checked
    <<",\"m_mode_load_checks\":"<<isa.loads<<",\"m_mode_store_checks\":"<<isa.stores
    <<",\"user_pid_count\":"<<observed_pids.size()
+   <<",\"retirement_hash\":"<<retirement_hash
    <<",\"goal_reached\":"<<(done?"true":"false")<<"}\n";
   if(!done) throw std::runtime_error(stop_requested
       ? "RTL boot cancelled by owning invocation timeout"
@@ -441,14 +448,15 @@ def compile_model(ev, text=HARNESS, parameters=None):
     return objects
 
 
-def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1):
+def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1, parameters=None):
     directory, _ = checked_images(ev, images)
     ev.record["scope"] = {
         "top": "hammer_v5_top", "public_pin_only": True, "goal": goal,
         "cycle_bound": cycles, "prefetch": prefetch,
+        "parameters": parameters or {},
         "not_full_linux_acceptance": goal != "userland",
     }
-    objects = compile_model(ev, parameters={"PREFETCH_ENABLE": prefetch})
+    objects = compile_model(ev, parameters={**(parameters or {}), "PREFETCH_ENABLE": prefetch})
     try:
         ev.run(["./compile-obj/boot-sim",
                 os.path.relpath(directory / "opensbi.bin", ev.directory),

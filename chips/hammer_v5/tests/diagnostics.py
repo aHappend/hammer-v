@@ -278,9 +278,46 @@ def audit_evidence(ev, receipt):
     }
 
 
+def throughput_probe(ev, images):
+    from boot import boot_probe
+    results = []
+    for name, parameters in (("default", {}), ("compact", {"IMEM_WORDS": 32, "DMEM_WORDS": 1})):
+        child = Evidence("v5-throughput-" + name, ("rtl/*.sv", "tests/*.py", "software/*"))
+        child.record["invoked_by"] = ev.relative(ev.directory / "receipt.json")
+        try:
+            try:
+                boot_probe(child, images, 10000000, "userland", 1, parameters)
+            except RuntimeError:
+                observed = json.loads((child.directory / "boot-observed.json").read_text())
+                metrics = json.loads((child.directory / "boot-profile.json").read_text())
+                error = (child.directory / "boot-run.stderr.txt").read_text()
+                if (observed["cycles"] != 10000000 or observed["goal_reached"]
+                        or not observed["integer_checks"]
+                        or "bounded RTL boot goal not reached" not in error):
+                    raise AssertionError("throughput probe failed before its exact diagnostic bound")
+                results.append({"name": name, "parameters": parameters,
+                                "observed": observed, "metrics": metrics})
+                child.record["observed"] = results[-1]
+                child.record["scope"] = "bounded throughput diagnostic; not boot acceptance"
+            else:
+                raise AssertionError("unexpected full userland goal within startup diagnostic")
+        except (OSError, RuntimeError, ValueError, AssertionError) as failure:
+            path = child.finish(1, failure)
+            ev.record.setdefault("components", []).append({"receipt": path, "exit": 1})
+            raise
+        path = child.finish(0)
+        ev.record.setdefault("components", []).append({
+            "receipt": path, "sha256": digest(ROOT / path), "exit": 0})
+        ev.save()
+    if results[0]["observed"] != results[1]["observed"]:
+        raise AssertionError("compact local-memory geometry changed public startup results")
+    ev.record["observed"] = results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--probe", choices=("deadlines", "boot-profile", "audit", "reproduce"),
+    parser.add_argument("--probe", choices=("deadlines", "boot-profile", "audit", "reproduce",
+                                           "throughput"),
                         required=True)
     parser.add_argument("--receipt")
     parser.add_argument("--repair-of")
@@ -309,6 +346,10 @@ def main():
             from verify import bind_outputs, reproduce
             reproduce(ev)
             bind_outputs(ev)
+        elif args.probe == "throughput":
+            if not args.images:
+                raise ValueError("throughput diagnostic requires source-matched images")
+            throughput_probe(ev, args.images)
         else:
             if not args.images or args.cycles <= 0:
                 raise ValueError("boot profile requires local images and positive cycles")
