@@ -10,7 +10,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from boot import BUILD_FLAGS, HARNESS, MODEL_FLAGS, checked_images, custom_fault_expectations
+from boot import (BUILD_FLAGS, HARNESS, MODEL_FLAGS, checked_images, compile_model,
+                  custom_fault_expectations)
 from boot_support import CPP as SUPPORT
 from evidence import Evidence, ROOT, digest
 from integration import ports
@@ -27,6 +28,40 @@ def baseline_harness(path):
     if len(values) != 1 or not isinstance(values[0], str):
         raise AssertionError("baseline must contain exactly one literal boot HARNESS")
     return values[0]
+
+
+def fault_probe(ev, images, prefetch):
+    from userland import compare_custom_faults, fields, number
+    directory, _ = checked_images(ev, images)
+    custom_fault_expectations(ev, directory)
+    ev.record["scope"] = {"genuine_RTL_boot_to_fault_records_only": True,
+                          "no_full_linux_acceptance": True, "prefetch": prefetch,
+                          "cycle_bound": 650000000}
+    old = 'line.find("HV5 DONE")'
+    if HARNESS.count(old) != 1:
+        raise AssertionError("bounded custom-fault probe completion anchor changed")
+    text = HARNESS.replace(old, 'line.find("HV5 FAULTS")')
+    objects = compile_model(ev, text, {"PREFETCH_ENABLE": prefetch})
+    try:
+        ev.run(["./compile-obj/boot-sim",
+                os.path.relpath(directory / "opensbi.bin", ev.directory),
+                os.path.relpath(directory / "Image", ev.directory),
+                os.path.relpath(directory / "hammer_v5.dtb", ev.directory),
+                "650000000", "userland"], "genuine-custom-fault-probe", cwd=ev.directory,
+               timeout_s=None)
+        records = [fields(line.split(" ", 1)[1]) for line in
+                   (ev.directory / "uart-events.txt").read_text().splitlines()]
+        faults = [record for record in records if record and record[0] == "FAULTS"]
+        if len(faults) != 1:
+            raise AssertionError("missing/duplicate genuine user fault record")
+        record = faults[0][1]
+        if any(number(record, key) != value for key, value in
+               (("successful_vload", 1), ("rejected", 5), ("state_preserved", 1))):
+            raise AssertionError("genuine custom fault cases incomplete")
+        ev.record["custom_fault_comparisons"] = compare_custom_faults(ev.directory, record)
+        ev.record["observed"] = json.loads((ev.directory / "boot-observed.json").read_text())
+    finally:
+        shutil.rmtree(objects)
 
 
 def instrument(text):
@@ -155,6 +190,8 @@ def main():
     parser.add_argument("--profile-only", action="store_true",
                         help="sample the current compiled model with existing GNU gprof")
     parser.add_argument("--options-only", action="store_true", help="retain installed compiler options")
+    parser.add_argument("--faults-only", action="store_true",
+                        help="genuine boot through faults only; never full Linux acceptance")
     args = parser.parse_args()
     if not 1 <= args.cycles <= 20000000:
         raise ValueError("efficiency diagnostic requires 1..20000000 edges")
@@ -167,6 +204,11 @@ def main():
         if args.options_only:
             ev.version("verilator")
             ev.run(["verilator", "--help"], "verilator-help")
+            print(json.dumps({"exit": 0, "receipt": ev.finish(0)}))
+            return 0
+        if args.faults_only:
+            fault_probe(ev, args.images, args.prefetch)
+            bind_outputs(ev)
             print(json.dumps({"exit": 0, "receipt": ev.finish(0)}))
             return 0
         baseline = (ROOT / args.baseline).resolve()
