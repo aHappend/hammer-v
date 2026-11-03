@@ -1,0 +1,22 @@
+{
+  "gate": "quartus-sta",
+  "status": "passed",
+  "passed": true,
+  "device": "10AX115N2F45E1SG",
+  "top_module": "hammer_v5_top",
+  "target_clock_ns": 10.0,
+  "target_fmax_mhz": 100.0,
+  "setup_slack_ns": 1.124,
+  "worst_setup_slack_ns": 1.124,
+  "hold_slack_ns": 0.039,
+  "worst_hold_slack_ns": 0.039,
+  "fmax_mhz": 112.66,
+  "failing_paths": 0,
+  "alm_used": 18420,
+  "alm_total": 427200,
+  "registers_used": 24680,
+  "m20k_ram_blocks": 96,
+  "m20k_total": 2713,
+  "dsp_blocks": 32,
+  "dsp_total": 1518
+}

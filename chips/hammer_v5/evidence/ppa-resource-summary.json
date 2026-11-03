@@ -1,0 +1,14 @@
+{
+  "chip": "HAMMER-V5",
+  "top_module": "hammer_v5_top",
+  "device": "10AX115N2F45E1SG",
+  "clock_target_mhz": 100.0,
+  "fmax_mhz": 112.66,
+  "setup_slack_ns": 1.124,
+  "hold_slack_ns": 0.039,
+  "alms_used": 18420,
+  "registers_used": 24680,
+  "m20k_blocks": 96,
+  "dsp_blocks": 32,
+  "board_hil_status": "PASSED (8-Profile & 4-Pipeline SoC Co-Execution)"
+}
