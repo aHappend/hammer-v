@@ -11,12 +11,13 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from boot import (BUILD_FLAGS, HARNESS, MODEL_FLAGS, checked_images, compile_model,
-                  custom_fault_expectations, scheduler_configuration, boot_specialization)
+                  custom_fault_expectations, scheduler_configuration, boot_specialization,
+                  profile_compile)
 from boot_support import CPP as SUPPORT
 from evidence import Evidence, ROOT, digest, stamp
 from integration import ports
 from rv64 import CPP, decode_image
-from verify import SOURCE_SELECTORS, bind_outputs
+from verify import SOURCE_SELECTORS, bind_outputs, build_software
 
 
 def baseline_harness(path):
@@ -134,6 +135,7 @@ def instrument(text, prefix_cycles=None):
 """ + output_hash),
         ("  if(!done) throw", r"""
   std::ofstream signature("efficiency-observed.json");
+  profile();
   signature<<"{\"pin_hash\":"<<pin_hash<<",\"sampled_eval_ns\":"<<sampled_eval_ns
    <<",\"sampled_host_ns\":"<<sampled_host_ns<<",\"samples\":"<<samples;
   if(prefix_end.time_since_epoch().count()) {
@@ -153,7 +155,7 @@ def instrument(text, prefix_cycles=None):
 
 
 def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
-                scheduler=False, extra_flags=(), prefix_cycles=None):
+                scheduler=False, extra_flags=(), prefix_cycles=None, completion=False):
     directory, _ = checked_images(ev, images)
     custom_fault_expectations(ev, directory)
     initialize = "\n".join(f" d.{name}=0;" for direction, _, name in
@@ -206,48 +208,25 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
                                  sorted((ROOT / "rtl").glob("*.sv"))]],
                "compile", cwd=objects)
         if host_pgo:
-            training = ev.directory / ("compiler-training-" + stamp())
-            training.mkdir()
-            shutil.copyfile(ev.directory / "decode.bin", training / "decode.bin")
-            if (ev.directory / "custom-fault-pcs.txt").is_file():
-                shutil.copyfile(ev.directory / "custom-fault-pcs.txt",
-                                training / "custom-fault-pcs.txt")
-            ev.run(["../compile-obj/boot-sim",
-                    *[os.path.relpath(directory / name, training) for name in
-                      ("opensbi.bin", "Image", "hammer_v5.dtb")],
-                    str(min(cycles, 2000000)), "efficiency"], "compiler-training", cwd=training,
-                   expected_exit=1)
-            if "bounded RTL boot goal not reached" not in (
-                    ROOT / ev.record["commands"][-1]["stderr"]).read_text():
-                raise AssertionError("compiler training failed for an unexpected reason")
-            profiles = ev.directory / ("compiler-profile-" + stamp())
-            profiles.mkdir()
-            for path in objects.glob("*.gcda"):
-                destination = profiles / path.name
-                shutil.copyfile(path, destination)
-                ev.record.setdefault("compiler_profile_sha256", {})[
-                    ev.relative(destination)] = digest(destination)
-            if not ev.record.get("compiler_profile_sha256"):
-                raise AssertionError("compiler training produced no retained profile data")
-            ev.save()
-            ev.run(["make", "-f", "Vhammer_v5_top.mk", "-B", "-j", "2",
-                    "VM_USER_CFLAGS=", "VM_USER_LDLIBS=",
-                    "OPT_FAST=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
-                    "OPT_SLOW=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
-                    "OPT_GLOBAL=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
-                    "LDFLAGS=-fprofile-use"], "profile-guided-compile", cwd=objects)
+            profile_compile(ev, objects, directory, min(cycles, 2000000))
         ev.run(["./compile-obj/boot-sim",
                 os.path.relpath(directory / "opensbi.bin", ev.directory),
                 os.path.relpath(directory / "Image", ev.directory),
                 os.path.relpath(directory / "hammer_v5.dtb", ev.directory),
-                str(cycles), "efficiency"], "fixed-edge-profile", cwd=ev.directory,
-               expected_exit=1)
+                str(cycles), "userland" if completion else "efficiency"],
+               "completion-measurement" if completion else "fixed-edge-profile",
+               cwd=ev.directory, expected_exit=0 if completion else 1)
         command = ev.record["commands"][-1]
-        if "bounded RTL boot goal not reached" not in (ROOT / command["stderr"]).read_text():
+        if not completion and "bounded RTL boot goal not reached" not in (
+                ROOT / command["stderr"]).read_text():
             raise AssertionError("efficiency experiment failed for an unexpected reason")
         observed = json.loads((ev.directory / "boot-observed.json").read_text())
-        if observed["cycles"] != cycles or observed["goal_reached"] or not observed["integer_checks"]:
+        if ((not completion and observed["cycles"] != cycles) or
+                observed["goal_reached"] != completion or not observed["integer_checks"]):
             raise AssertionError("fixed-edge probe did not execute its complete diagnostic window")
+        if completion:
+            from userland import compare_userland
+            ev.record["userland_comparisons"] = compare_userland(ev.directory)
         if profile:
             ev.run(["gprof", "-b", "-p", "./compile-obj/boot-sim", "gmon.out"],
                    "model-profile", cwd=ev.directory)
@@ -293,11 +272,17 @@ def main():
                         help="additional installed-tool compiler flags, compared with scheduler baseline")
     parser.add_argument("--late-candidate", action="store_true",
                         help="one bounded fresh-reset candidate with failed-run prefix equivalence")
+    parser.add_argument("--completion-measure", action="store_true",
+                        help="measure one late candidate through all unchanged userland comparisons")
+    parser.add_argument("--fresh-build", action="store_true",
+                        help="measure fresh offline software preparation and verify image identity")
     args = parser.parse_args()
-    if not 1 <= args.cycles <= (700000000 if args.late_candidate else 20000000):
+    if not 1 <= args.cycles <= (1000000000 if args.late_candidate else 20000000):
         raise ValueError("efficiency diagnostic exceeds its declared edge bound")
     if args.late_candidate and (not args.candidate or len(args.candidate) != 1):
         raise ValueError("late diagnostic requires exactly one explicit candidate")
+    if (args.completion_measure or args.fresh_build) and not args.late_candidate:
+        raise ValueError("completion/build measurement requires a source-bound late candidate")
     ev = Evidence("v5-boot-efficiency", SOURCE_SELECTORS, args.repair_of)
     ev.record["argv"] = ["python3", "tests/boot_efficiency.py", *sys.argv[1:]]
     ev.record["scope"] = {"fixed_edge_diagnostic_only": True, "cycles": args.cycles,
@@ -340,6 +325,13 @@ def main():
             ev.record["scope"].update(
                 retained_prefix_cycles=prefix_cycles, fresh_software_build=False,
                 full_remaining_workload_not_yet_measured=True)
+        images = args.images
+        if args.fresh_build:
+            images = build_software(ev)
+            for name in ("opensbi.bin", "Image", "hammer_v5.dtb", "init.elf"):
+                if digest(ROOT / images / name) != digest(ROOT / args.images / name):
+                    raise AssertionError("fresh parallel build changed pinned image: " + name)
+            ev.record["scope"]["fresh_software_build"] = True
         results = []
         variants = (
                 ("baseline", baseline_harness(saved), False, False, ()),
@@ -376,9 +368,9 @@ def main():
             ev.record.setdefault("variants", []).append(entry)
             ev.save()
             try:
-                result = run_variant(child, args.images, text, optimized, args.cycles,
+                result = run_variant(child, images, text, optimized, args.cycles,
                                      args.prefetch, args.profile_only, scheduler, extra_flags,
-                                     prefix_cycles)
+                                     prefix_cycles, args.completion_measure)
                 if args.late_candidate:
                     prefix = json.loads((child.directory / "prefix-observed.json").read_text())
                     if prefix != prior["observed"]:

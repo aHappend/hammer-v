@@ -144,7 +144,7 @@ def synthesis(ev):
 def build_software(ev):
     directory = ev.directory / ("boot-build-" + stamp())
     ev.run(["python3", "software/build.py", "--output", ev.relative(directory),
-            "--jobs", "2"], "offline-software", timeout_s=None)
+            "--jobs", "8"], "offline-software", timeout_s=None)
     removed = 0
     for build in (directory / "linux-build", directory / "opensbi-build"):
         for path in build.rglob("*"):

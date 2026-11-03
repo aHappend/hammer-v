@@ -59,6 +59,44 @@ def boot_specialization(ev):
     return wrapper
 
 
+def profile_compile(ev, objects, directory, cycles=2000000):
+    """Train host compiler branch counts; the measured RTL process still starts at reset."""
+    training = ev.directory / ("compiler-training-" + stamp())
+    training.mkdir()
+    shutil.copyfile(ev.directory / "decode.bin", training / "decode.bin")
+    if (ev.directory / "custom-fault-pcs.txt").is_file():
+        shutil.copyfile(ev.directory / "custom-fault-pcs.txt", training / "custom-fault-pcs.txt")
+    ev.run(["../compile-obj/boot-sim",
+            *[os.path.relpath(directory / name, training) for name in
+              ("opensbi.bin", "Image", "hammer_v5.dtb")],
+            str(cycles), "efficiency"], "compiler-training", cwd=training,
+           expected_exit=1)
+    if "bounded RTL boot goal not reached" not in (
+            ROOT / ev.record["commands"][-1]["stderr"]).read_text():
+        raise AssertionError("compiler training failed for an unexpected reason")
+    observed = json.loads((training / "boot-observed.json").read_text())
+    if observed["cycles"] != cycles or observed["goal_reached"] or not observed["integer_checks"]:
+        raise AssertionError("compiler training did not execute its complete diagnostic window")
+    profiles = ev.directory / ("compiler-profile-" + stamp())
+    profiles.mkdir()
+    for path in objects.glob("*.gcda"):
+        destination = profiles / path.name
+        shutil.copyfile(path, destination)
+        ev.record.setdefault("compiler_profile_sha256", {})[
+            ev.relative(destination)] = digest(destination)
+    if not ev.record.get("compiler_profile_sha256"):
+        raise AssertionError("compiler training produced no retained profile data")
+    ev.record["compiler_training"] = {
+        "cycles": cycles, "observed": observed, "fresh_reset_measurement": True}
+    ev.save()
+    ev.run(["make", "-f", "Vhammer_v5_top.mk", "-B", "-j", "2",
+            "VM_USER_CFLAGS=", "VM_USER_LDLIBS=",
+            "OPT_FAST=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
+            "OPT_SLOW=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
+            "OPT_GLOBAL=-O3 -fprofile-use -Werror=missing-profile -Werror=coverage-mismatch",
+            "LDFLAGS=-fprofile-use"], "profile-guided-compile", cwd=objects)
+
+
 def firmware_layout(ev, directory):
     elf = directory / "opensbi.elf"
     ev.version("riscv64-unknown-elf-readelf")
@@ -550,7 +588,7 @@ __INITIALIZE_INPUTS__
 """
 
 
-def compile_model(ev, text=HARNESS, parameters=None):
+def compile_model(ev, text=HARNESS, parameters=None, profile_images=None):
     interface = ports(ROOT / "rtl/hammer_v5_top.sv")
     initialization = "\n".join(
         f"  d.{name}=0;" for direction, _, name in interface if direction == "input")
@@ -570,14 +608,30 @@ def compile_model(ev, text=HARNESS, parameters=None):
     objects = ev.directory / "compile-obj"
     objects.mkdir()
     sources = sorted((ROOT / "rtl").glob("*.sv"))
+    options = []
+    if profile_images is not None:
+        options = [os.path.relpath(scheduler_configuration(ev), objects),
+                   "-CFLAGS", "-fprofile-generate", "-LDFLAGS", "-fprofile-generate"]
     ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
             *MODEL_FLAGS,
             *BUILD_FLAGS,
+            *options,
             "--top-module", "hammer_v5_top",
             *[f"-G{name}={value}" for name, value in (parameters or {}).items()],
             "--Mdir", ".", "-o", "boot-sim",
             "../boot.cpp", *[os.path.relpath(p, objects) for p in sources]],
            "boot-compile", cwd=objects)
+    if profile_images is not None:
+        generated = ev.directory / ("generated-model-" + digest(harness)[:16])
+        generated.mkdir()
+        for path in objects.iterdir():
+            if path.suffix in (".cpp", ".h", ".mk"):
+                shutil.copyfile(path, generated / path.name)
+        try:
+            profile_compile(ev, objects, profile_images)
+        except BaseException:
+            shutil.rmtree(objects)
+            raise
     return objects
 
 
@@ -591,7 +645,8 @@ def boot_probe(ev, images, cycles=100000000, goal="linux", prefetch=1, parameter
     }
     if goal == "userland":
         custom_fault_expectations(ev, directory)
-    objects = compile_model(ev, parameters={**(parameters or {}), "PREFETCH_ENABLE": prefetch})
+    objects = compile_model(ev, parameters={**(parameters or {}), "PREFETCH_ENABLE": prefetch},
+                            profile_images=directory)
     try:
         ev.run(["./compile-obj/boot-sim",
                 os.path.relpath(directory / "opensbi.bin", ev.directory),
