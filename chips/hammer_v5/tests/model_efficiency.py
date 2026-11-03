@@ -64,7 +64,17 @@ def measure(ev, images, cycles, prefetch, lowered=False, prefix_cycles=None):
     source = ev.directory / "boot.cpp"
     text = HARNESS.replace('if(goal=="userland") custom_fault.load();',
                            "custom_fault.load();")
-    source.write_text(instrument(text, prefix_cycles)
+    text = instrument(text, prefix_cycles)
+    text = text.replace(" Memory memory;", ' std::ofstream first_pins("first-pins.txt");\n Memory memory;')
+    for level in (0, 1):
+        anchor = f"d.clk={level}; d.eval();"
+        trace = (
+            f'\n   if(cycles<1024) first_pins<<cycles<<" {level}"' +
+            "".join(f'<<" "<<uint64_t(d.{name})'
+                    for direction, _, name in ports(ROOT / "rtl/hammer_v5_top.sv")
+                    if direction == "output") + '<<"\\n";\n')
+        text = text.replace(anchor, anchor + trace)
+    source.write_text(text
                       .replace("__INITIALIZE_INPUTS__", initialize)
                       .replace("__ISA_ORACLE__", CPP).replace("__BOOT_SUPPORT__", SUPPORT))
     decode_image(ev.directory / "decode.bin")
@@ -93,6 +103,8 @@ def measure(ev, images, cycles, prefetch, lowered=False, prefix_cycles=None):
                 ROOT / ev.record["commands"][-1]["stderr"]).read_text():
             raise AssertionError("compilation experiment failed for an unexpected reason")
         observed = json.loads((ev.directory / "boot-observed.json").read_text())
+        ev.record["architectural_observation"] = observed
+        ev.save()
         if observed["cycles"] != cycles or observed["goal_reached"] or not observed["integer_checks"]:
             raise AssertionError("compilation experiment did not complete its diagnostic edge window")
         result = {
@@ -112,19 +124,42 @@ def measure(ev, images, cycles, prefetch, lowered=False, prefix_cycles=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--images", required=True)
+    parser.add_argument("--images")
+    parser.add_argument("--netlist", help="check a retained source-matched synthesis JSON")
     parser.add_argument("--repair-of", required=True)
     parser.add_argument("--cycles", type=int, default=2000000)
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=0)
     args = parser.parse_args()
     if not 1 <= args.cycles <= 20000000:
         raise ValueError("compact compiler comparison requires 1..20000000 edges")
-    ev = Evidence("v5-model-lowering", SOURCE_SELECTORS, args.repair_of)
+    if bool(args.images) == bool(args.netlist):
+        raise ValueError("choose either boot images or a retained synthesis netlist")
+    extra_sources = ()
+    if args.netlist:
+        netlist = (ROOT / args.netlist).resolve()
+        netlist.relative_to(ROOT)
+        producer = netlist.parent / "receipt.json"
+        prior = json.loads(producer.read_text())
+        for name, expected in prior["sources_sha256"].items():
+            if name.startswith("rtl/") and digest(ROOT / name) != expected:
+                raise AssertionError("retained synthesis RTL source changed: " + name)
+        if prior["outputs_sha256"].get(args.netlist) != digest(netlist):
+            raise AssertionError("retained synthesis netlist is not producer-bound")
+        extra_sources = (args.netlist, producer.relative_to(ROOT).as_posix())
+    ev = Evidence("v5-model-lowering", (*SOURCE_SELECTORS, *extra_sources), args.repair_of)
     ev.record["argv"] = ["python3", "tests/model_efficiency.py", *sys.argv[1:]]
     ev.record["scope"] = {"compiler_only": True, "full_linux_acceptance": False,
                           "cycles": args.cycles, "prefetch": args.prefetch}
     try:
         ev.version("python3")
+        if args.netlist:
+            from structure import assert_structure
+            ev.record["scope"] = {"retained_synthesis_structural_regression": True,
+                                  "no_new_synthesis_execution": True}
+            ev.record["observed"] = assert_structure(netlist)
+            bind_outputs(ev)
+            print(json.dumps({"exit": 0, "receipt": ev.finish(0)}))
+            return 0
         results = []
         for lowered in (False, True):
             name = "lowered" if lowered else "direct"

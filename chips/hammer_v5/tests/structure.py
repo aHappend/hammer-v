@@ -64,6 +64,10 @@ def assert_structure(path):
                 raise AssertionError(f"{name}.{key}: unresolved cell {kind}")
             if "latch" in kind.lower() or kind in ("$div", "$mod", "$divfloor", "$modfloor"):
                 raise AssertionError(f"{name}.{key}: forbidden {kind}")
+            if kind in ("$aldff", "$aldffe"):
+                raise AssertionError(
+                    f"{name}.{key}: nonconstant asynchronous load {kind}; "
+                    "the delivered sequential reset values must remain constant after lowering")
             if "dff" in kind.lower():
                 sequential_bits += len(cell["connections"].get("Q", []))
             if kind in ("$mem", "$mem_v2"):
