@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Portable independent L1 execution; native timing/STA/HIL remain runtime gates."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import shutil
@@ -65,7 +66,8 @@ def bind_outputs(ev):
 def component(parent, name, execute, selectors=("rtl/*.sv", "tests/*.py")):
     remaining_seconds()
     child = Evidence("v5-" + parent.record["suite"] + "-" + name,
-                     selectors, preparation=False)
+                     selectors,
+                     preparation=parent.record["kind"] == "verifier-preparation")
     child.record["invoked_by"] = parent.relative(parent.directory / "receipt.json")
     child.record["component"] = name
     result, error = None, None
@@ -76,12 +78,13 @@ def component(parent, name, execute, selectors=("rtl/*.sv", "tests/*.py")):
     except ERRORS as failure:
         error = str(failure)
     receipt = child.finish(0 if error is None else 1, error)
-    parent.record.setdefault("components", []).append({
-        "name": name, "receipt": receipt,
-        "sha256": digest(ROOT / receipt), "exit": child.record["exit"],
-        "error": error,
-    })
-    parent.save()
+    with parent.lock:
+        parent.record.setdefault("components", []).append({
+            "name": name, "receipt": receipt,
+            "sha256": digest(ROOT / receipt), "exit": child.record["exit"],
+            "error": error,
+        })
+        parent.save()
     print(json.dumps({"component": name, "exit": child.record["exit"],
                       "receipt": receipt}), flush=True)
     return result
@@ -155,12 +158,19 @@ def build_software(ev):
 
 def linux(ev, cycles):
     images = component(ev, "offline-software", build_software, SOURCE_SELECTORS)
-    for prefetch in (0, 1):
+    def configuration(prefetch):
         def execute(child, prefetch=prefetch):
             if images is None:
                 raise RuntimeError("required fresh source-matched software build unsuccessful")
             boot_probe(child, images, cycles, "userland", prefetch)
         component(ev, f"userland-prefetch-{prefetch}", execute, SOURCE_SELECTORS)
+    remaining_seconds()
+    ev.record["linux_parallel_configurations"] = 2
+    ev.save()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(configuration, prefetch) for prefetch in (0, 1)]
+        for future in futures:
+            future.result()
 
 
 def reproduce_worker(ev):

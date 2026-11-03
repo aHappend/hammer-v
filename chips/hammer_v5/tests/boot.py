@@ -133,6 +133,7 @@ HARNESS = r"""
 #include "verilated.h"
 #include <array>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <deque>
 #include <fstream>
@@ -146,6 +147,7 @@ HARNESS = r"""
 #include <map>
 
 using Page = std::array<uint8_t,4096>;
+static volatile std::sig_atomic_t stop_requested=0;
 struct Memory {
  std::unordered_map<uint64_t,std::unique_ptr<Page>> pages;
  void valid(uint64_t a) {
@@ -174,6 +176,7 @@ struct Memory {
 __ISA_ORACLE__
 struct Record {uint64_t cycle,pc,next,data; uint32_t insn; unsigned rd,priv;};
 int main(int argc,char **argv) {
+ std::signal(SIGTERM, [](int) {stop_requested=1;});
  VerilatedContext context; context.commandArgs(argc,argv);
  Vhammer_v5_top d(&context);
  Memory memory;
@@ -226,7 +229,7 @@ int main(int argc,char **argv) {
   auto next_heartbeat=std::chrono::steady_clock::now()+std::chrono::seconds(30);
 __INITIALIZE_INPUTS__
   d.uart_rx=1;
-  for(cycles=0;cycles<limit && !done;cycles++) {
+  for(cycles=0;cycles<limit && !done && !stop_requested;cycles++) {
    bool reset=cycles<4;
    rng^=rng<<13; rng^=rng>>17; rng^=rng<<5;
    d.rst_n=!reset; d.start=!reset;
@@ -385,7 +388,9 @@ __INITIALIZE_INPUTS__
    <<",\"m_mode_load_checks\":"<<isa.loads<<",\"m_mode_store_checks\":"<<isa.stores
    <<",\"user_pid_count\":"<<observed_pids.size()
    <<",\"goal_reached\":"<<(done?"true":"false")<<"}\n";
-  if(!done) throw std::runtime_error("bounded RTL boot goal not reached");
+  if(!done) throw std::runtime_error(stop_requested
+      ? "RTL boot cancelled by owning invocation timeout"
+      : "bounded RTL boot goal not reached");
   if(!sretired) throw std::runtime_error("banner without actual S-mode retirement");
   if(goal=="userland" && (!uretired || !custom || !translated))
    throw std::runtime_error("userland marker without public architectural milestones");

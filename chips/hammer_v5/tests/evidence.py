@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -92,6 +93,7 @@ def digest(path):
 class Evidence:
     def __init__(self, name, selectors, repair_of=None, preparation=True):
         remaining_seconds()
+        self.lock = threading.RLock()
         base = ROOT / "evidence"
         if preparation:
             base = base / "preparation"
@@ -128,8 +130,9 @@ class Evidence:
         return path.resolve().relative_to(ROOT).as_posix()
 
     def save(self):
-        (self.directory / "receipt.json").write_text(
-            json.dumps(self.record, indent=2) + "\n")
+        with self.lock:
+            (self.directory / "receipt.json").write_text(
+                json.dumps(self.record, indent=2) + "\n")
 
     def run(self, argv, label, cwd=ROOT, timeout_s=3600, expected_exit=0):
         budget = remaining_seconds()

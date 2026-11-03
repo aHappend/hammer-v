@@ -82,6 +82,35 @@ def deadline_probe(ev):
             if fields[19] == token["start_ticks"] and fields[0] != "Z":
                 raise AssertionError("owned process still executing after timeout")
     ev.record["observed"] = {"nested_timeout": True, "descendants_stopped": True}
+    from concurrent.futures import ThreadPoolExecutor
+    from verify import component
+    ev.record["suite"] = "execution-probe"
+
+    def execute(index):
+        def child_run(child):
+            output = child.run([sys.executable, "-c",
+                                f"import time; time.sleep(1); print({index})"],
+                               "parallel-command")
+            if output.strip() != str(index):
+                raise AssertionError("parallel child output crossed configurations")
+        component(ev, str(index), child_run, ("tests/*.py",))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(execute, (0, 1)))
+    saved = json.loads((ev.directory / "receipt.json").read_text())
+    if {item["name"] for item in saved["components"]} != {"0", "1"}:
+        raise AssertionError("concurrent receipt update lost a configuration")
+    commands = []
+    for item in saved["components"]:
+        child = json.loads((ROOT / item["receipt"]).read_text())
+        if item["exit"] != 0 or digest(ROOT / item["receipt"]) != item["sha256"]:
+            raise AssertionError("parallel child failed or receipt corrupted")
+        if child["absolute_deadline_unix"] != ev.record["absolute_deadline_unix"]:
+            raise AssertionError("parallel child reset invocation deadline")
+        commands.append(child["commands"][-1])
+    if max(item["start"] for item in commands) >= min(item["end"] for item in commands):
+        raise AssertionError("configuration commands did not actually overlap")
+    ev.record["observed"]["parallel_configurations"] = 2
 
 
 def diagnostic_boot_images(ev, images, baud, legacy_ptys):
@@ -216,6 +245,10 @@ def audit_evidence(ev, receipt):
                 snapshot.read_text().splitlines(True),
                 (ROOT / name).read_text().splitlines(True),
                 fromfile="prior/" + name, tofile="current/" + name)))
+    for name in ev.record["sources_sha256"].keys() - record["sources_sha256"].keys():
+        if not name.startswith("tests/"):
+            raise AssertionError(f"unbound added design/software input: {name}")
+        differences[name] = {"prior": None, "current": digest(ROOT / name)}
     ev.record["checker_revision"] = differences
     pending = [(prior, record)]
     checked = []
