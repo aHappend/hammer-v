@@ -35,6 +35,33 @@ def apply(linux, opensbi, inputs):
             '\tbool "HAMMER-V5 custom-0 context support"\n'
             '\tdepends on 64BIT && MMU && RISCV_SBI && !SMP && !COMPAT\n'
             '\thelp\n\t  Eager custom vector task and extensible signal state.\n')
+    replace(linux / "init/Kconfig",
+            "\t# Unhide debug options, to make the on-by-default options visible\n"
+            "\tselect DEBUG_KERNEL\n",
+            "\t# HAMMER needs expert controls without forced debug instrumentation.\n"
+            "\tselect DEBUG_KERNEL if !SOC_HAMMER_V5\n")
+    replace(k / "kernel/cpufeature.c", "#include <asm/hwcap.h>",
+            "#include <asm/hwcap.h>\n#include <asm/hammer_v5.h>\n"
+            "#include <asm/sbi.h>")
+    replace(k / "kernel/cpufeature.c",
+            "\tlong speed = RISCV_HWPROBE_MISALIGNED_SLOW;\n\n",
+            "\tlong speed = RISCV_HWPROBE_MISALIGNED_SLOW;\n\n"
+            "#ifdef CONFIG_SOC_HAMMER_V5\n"
+            "\tif (of_machine_is_compatible(\"hammer,hammer-v5\")) {\n"
+            "\t\tstruct sbiret result;\n\n"
+            "\t\tresult = sbi_ecall(HAMMER_V5_SBI_EXT, 1, 0, 0, 0, 0, 0, 0);\n"
+            "\t\tif (!result.error && result.value == HAMMER_V5_MAGIC) {\n"
+            "\t\t\t/* The core traps; pinned OpenSBI emulates byte by byte. */\n"
+            "\t\t\tper_cpu(misaligned_access_speed, cpu) =\n"
+            "\t\t\t\tRISCV_HWPROBE_MISALIGNED_EMULATED;\n"
+            "\t\t\tpr_info(\"cpu%d: HAMMER-V5 firmware-emulated misaligned accesses\\n\",\n"
+            "\t\t\t\tcpu);\n"
+            "\t\t\treturn;\n"
+            "\t\t}\n"
+            "\t\tpr_warn(\"cpu%d: HAMMER-V5 firmware ABI unavailable; measuring unaligned accesses\\n\",\n"
+            "\t\t\tcpu);\n"
+            "\t}\n"
+            "#endif\n\n")
     replace(k / "include/asm/processor.h",
             "\tstruct __riscv_v_ext_state vstate;",
             "\tstruct __riscv_v_ext_state vstate;\n"

@@ -217,6 +217,12 @@ def main():
             "CONFIG_SERIAL_OF_PLATFORM": "y", "CONFIG_BINFMT_ELF": "y",
             "CONFIG_BLK_DEV_INITRD": "y", "CONFIG_RISCV_SBI": "y",
             "CONFIG_CRYPTO": "y", "CONFIG_CRYPTO_MANAGER_DISABLE_TESTS": "y",
+            "CONFIG_EXPERT": "y", "CONFIG_INIT_STACK_NONE": "y",
+            "CONFIG_PROC_FS": "y", "CONFIG_SYSFS": "y",
+            "CONFIG_DEVTMPFS": "y", "CONFIG_DEVTMPFS_MOUNT": "y",
+            "CONFIG_TMPFS": "y", "CONFIG_POSIX_TIMERS": "y",
+            "CONFIG_HIGH_RES_TIMERS": "y", "CONFIG_RISCV_TIMER": "y",
+            "CONFIG_HZ_100": "y", "CONFIG_FUTEX": "y", "CONFIG_MULTIUSER": "y",
         }
         for name, value in required.items():
             if f"{name}={value}\n" not in resulting_config:
@@ -224,10 +230,29 @@ def main():
         for name in ("CONFIG_VT", "CONFIG_LEGACY_PTYS"):
             if f"# {name} is not set\n" not in resulting_config:
                 raise ValueError(f"boot configuration did not disable {name}")
-        for name in ("CONFIG_SMP", "CONFIG_FPU", "CONFIG_RISCV_ISA_V", "CONFIG_COMPAT",
-                     "CONFIG_PERF_EVENTS", "CONFIG_RISCV_PMU_SBI"):
-            if f"{name}=y\n" in resulting_config:
-                raise ValueError(f"unsupported boot configuration enabled {name}")
+        disabled = (
+            "CONFIG_SMP", "CONFIG_FPU", "CONFIG_RISCV_ISA_V", "CONFIG_COMPAT",
+            "CONFIG_PERF_EVENTS", "CONFIG_RISCV_PMU_SBI",
+            "CONFIG_DEBUG_KERNEL", "CONFIG_DEBUG_MISC", "CONFIG_SLUB_DEBUG",
+            "CONFIG_SLUB_DEBUG_ON", "CONFIG_RCU_TRACE",
+            "CONFIG_INIT_STACK_ALL_ZERO", "CONFIG_INIT_STACK_ALL_PATTERN",
+        )
+        resolved = {}
+        for line in resulting_config.splitlines():
+            if line.startswith("CONFIG_") and "=" in line:
+                name, value = line.split("=", 1)
+                resolved[name] = value
+            elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+                resolved[line[2:-11]] = "n"
+        for name in disabled:
+            # Kconfig omits symbols whose dependencies make them unavailable.
+            if resolved.get(name, "n") != "n":
+                raise ValueError(f"boot configuration did not disable {name}")
+        receipt["resolved_kernel_settings"] = {
+            name: resolved.get(name, "n")
+            for name in sorted(set(required) | set(disabled) |
+                               {"CONFIG_VT", "CONFIG_LEGACY_PTYS"})
+        }
         run(kernel_make + [f"-j{args.jobs}", "Image", "scripts_dtc"])
         run([relative(kbuild / "scripts/dtc/dtc"), "-I", "dts", "-O", "dtb",
              "-p", "4096", "-o", relative(out / "hammer_v5.dtb"),
