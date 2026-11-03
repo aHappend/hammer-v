@@ -117,7 +117,7 @@ def instrument(text):
 
 
 def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
-                scheduler=False):
+                scheduler=False, extra_flags=()):
     directory, _ = checked_images(ev, images)
     custom_fault_expectations(ev, directory)
     initialize = "\n".join(f" d.{name}=0;" for direction, _, name in
@@ -140,6 +140,7 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         options += ["-CFLAGS", "-pg", "-LDFLAGS", "-pg"]
     if scheduler:
         options += [os.path.relpath(scheduler_configuration(ev), objects)]
+    options += extra_flags
     try:
         ev.run(["verilator", "--cc", "--exe", "--build", "-j", "2", "-Wno-fatal",
                 *options, "--top-module", "hammer_v5_top",
@@ -162,7 +163,7 @@ def run_variant(ev, images, text, optimized, cycles, prefetch, profile=False,
         if profile:
             ev.run(["gprof", "-b", "-p", "./compile-obj/boot-sim", "gmon.out"],
                    "model-profile", cwd=ev.directory)
-        if profile or scheduler:
+        if profile or scheduler or extra_flags:
             generated = ev.directory / ("generated-model-" + digest(source)[:16])
             generated.mkdir()
             for path in objects.iterdir():
@@ -198,6 +199,10 @@ def main():
                         help="genuine boot through faults only; never full Linux acceptance")
     parser.add_argument("--scheduler-compare", action="store_true",
                         help="compare unchanged RTL with array-split scheduling configuration")
+    parser.add_argument("--compiler-compare", action="store_true",
+                        help="compare bounded code-generation/installed-compiler optimizations")
+    parser.add_argument("--candidate", nargs=2, action="append", metavar=("NAME", "FLAGS_JSON"),
+                        help="additional installed-tool compiler flags, compared with scheduler baseline")
     args = parser.parse_args()
     if not 1 <= args.cycles <= 20000000:
         raise ValueError("efficiency diagnostic requires 1..20000000 edges")
@@ -230,15 +235,32 @@ def main():
             "path": baseline_receipt, "sha256": digest(ROOT / baseline_receipt)}
         results = []
         variants = (
-                ("baseline", baseline_harness(saved), False, False),
-                ("host-repair", HARNESS, False, False),
-                ("optimized", HARNESS, True, False))
+                ("baseline", baseline_harness(saved), False, False, ()),
+                ("host-repair", HARNESS, False, False, ()),
+                ("optimized", HARNESS, True, False, ()))
         if args.profile_only:
-            variants = variants[-1:]
+            variants = (("profile-scheduler", HARNESS, True, True, ("--prof-cfuncs",)),)
         if args.scheduler_compare:
-            variants = (("current", HARNESS, True, False),
-                        ("scheduler", HARNESS, True, True))
-        for name, text, optimized, scheduler in variants:
+            variants = (("current", HARNESS, True, False, ()),
+                        ("scheduler", HARNESS, True, True, ()))
+        if args.compiler_compare:
+            variants = (
+                ("scheduler", HARNESS, True, True, ()),
+                ("small-functions", HARNESS, True, True,
+                 ("--output-split", "5000", "--output-split-cfuncs", "500")),
+                ("lto", HARNESS, True, True,
+                 ("-CFLAGS", "-flto", "-LDFLAGS", "-flto")),
+                ("gate", HARNESS, True, True, ("--gate-stmts", "5000")),
+            )
+        if args.candidate:
+            variants = [("scheduler", HARNESS, True, True, ())]
+            for name, encoded in args.candidate:
+                flags = json.loads(encoded)
+                if (not name.replace("-", "").isalnum() or not isinstance(flags, list)
+                        or not all(isinstance(flag, str) for flag in flags)):
+                    raise ValueError("candidate needs a simple name and JSON string-list flags")
+                variants.append((name, HARNESS, True, True, tuple(flags)))
+        for name, text, optimized, scheduler, extra_flags in variants:
             child = Evidence("v5-boot-efficiency-" + name, SOURCE_SELECTORS, args.repair_of)
             child.record["invoked_by"] = ev.relative(ev.directory / "receipt.json")
             entry = {"name": name, "receipt": ev.relative(child.directory / "receipt.json")}
@@ -246,7 +268,7 @@ def main():
             ev.save()
             try:
                 result = run_variant(child, args.images, text, optimized, args.cycles,
-                                     args.prefetch, args.profile_only, scheduler)
+                                     args.prefetch, args.profile_only, scheduler, extra_flags)
                 bind_outputs(child)
             except (OSError, RuntimeError, AssertionError, ValueError) as error:
                 child.finish(1, error)
