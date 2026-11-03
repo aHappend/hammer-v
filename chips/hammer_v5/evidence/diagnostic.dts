@@ -8,7 +8,7 @@
 
     chosen {
         stdout-path = "serial0:6250000n8";
-        bootargs = "console=ttyS0,6250000 earlycon=uart8250,mmio,0x10010000 mem=128M rdinit=/init pty.legacy_count=0";
+        bootargs = "console=ttyS0,6250000 earlycon=uart8250,mmio,0x10010000 mem=128M rdinit=/init";
     };
 
     aliases {
