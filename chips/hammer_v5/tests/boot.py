@@ -210,9 +210,9 @@ def custom_fault_expectations(ev, directory):
         if member is None:
             raise AssertionError("pinned Linux traps.c missing")
         traps = member.read().decode()
-    start = traps.index("asmlinkage __visible __trap_section void do_trap_load_misaligned")
-    body = traps[start:traps.index("NOKPROBE_SYMBOL(do_trap_load_misaligned)", start)]
-    if "do_trap_error(regs, SIGBUS, BUS_ADRALN, regs->epc);" not in body:
+    normalized = " ".join(traps.split())
+    if ('DO_ERROR_INFO(do_trap_load_misaligned, SIGBUS, BUS_ADRALN, ' not in normalized or
+            'do_trap_error(regs, signo, code, regs->epc, "Oops - " str);' not in normalized):
         raise AssertionError("pinned Linux load-misalignment SIGBUS ABI changed")
     result = {"symbols": symbols, "init_sha256": digest(directory / "init.elf"),
               "linux_version": linux["version"], "linux_sha256": linux["sha256"],
