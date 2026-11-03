@@ -8,11 +8,12 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import tarfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from evidence import Evidence, ROOT, digest, stamp
+from evidence import Evidence, ROOT, digest, remaining_seconds, stamp
 
 
 WORKER = r"""
@@ -115,17 +116,21 @@ def deadline_probe(ev):
 
 def diagnostic_boot_images(ev, images, baud, legacy_ptys):
     from boot import checked_images
+    original = (ROOT / images).resolve()
+    dtc_source = original / "dtc"
+    if not dtc_source.is_file():
+        dtc_source = original / "linux-build/scripts/dtc/dtc"
     directory, _ = checked_images(ev, images)
     if baud not in (115200, 6250000):
         raise ValueError("diagnostic baud must use the original or divisor-one rate")
-    destination = ev.directory / ("official-image-baud-" + stamp())
+    destination = ev.directory / ("boot-images-baud-" + stamp())
     destination.mkdir()
     parent = json.loads((directory / "receipt.json").read_text())
     copied = {}
     for name in parent["outputs"]:
         source = ROOT / name
         target = destination / source.name
-        shutil.copyfile(source, target)
+        shutil.copy2(source, target)
         copied[ev.relative(target)] = digest(target)
     source = destination / "diagnostic.dts"
     text = (ROOT / "software/hammer_v5.dts").read_text()
@@ -139,7 +144,12 @@ def diagnostic_boot_images(ev, images, baud, legacy_ptys):
         source.write_text(text.replace('rdinit=/init";',
                                        f'rdinit=/init pty.legacy_count={legacy_ptys}";'))
     ev.record.setdefault("generated_sha256", {})[ev.relative(source)] = digest(source)
-    dtc = directory / "linux-build/scripts/dtc/dtc"
+    dtc = destination / "dtc"
+    if not dtc.exists():
+        shutil.copy2(dtc_source, dtc)
+        copied[ev.relative(dtc)] = digest(dtc)
+    if digest(dtc) != digest(dtc_source):
+        raise AssertionError("diagnostic device-tree compiler snapshot mismatch")
     ev.record["diagnostic_dtc"] = {"path": ev.relative(dtc), "sha256": digest(dtc)}
     version = ev.run([ev.relative(dtc), "-v"], "diagnostic-dtc-version")
     ev.record["diagnostic_dtc"]["version"] = version
@@ -172,7 +182,7 @@ def diagnostic_boot_images(ev, images, baud, legacy_ptys):
 
 
 def diagnostic_console_images(ev):
-    project = ev.directory / ("official-image-console-project-" + stamp())
+    project = ev.directory / ("boot-diagnostic-project-" + stamp())
     (project / "software").mkdir(parents=True)
     for path in (ROOT / "software").iterdir():
         if path.is_file():
@@ -194,7 +204,7 @@ def diagnostic_console_images(ev):
     if any(f"# CONFIG_{name} is not set\n" not in configuration
            for name in ("VT", "LEGACY_PTYS")):
         raise AssertionError("diagnostic kernel retained unwanted eager console devices")
-    destination = ev.directory / ("official-image-console-result-" + stamp())
+    destination = ev.directory / ("boot-images-console-" + stamp())
     destination.mkdir()
     outputs = {}
     for name, expected in parent["outputs"].items():
@@ -204,6 +214,9 @@ def diagnostic_console_images(ev):
         target = destination / source.name
         shutil.copyfile(source, target)
         outputs[ev.relative(target)] = digest(target)
+    dtc = directory / "linux-build/scripts/dtc/dtc"
+    shutil.copy2(dtc, destination / "dtc")
+    outputs[ev.relative(destination / "dtc")] = digest(dtc)
     derivation = {
         "kind": "diagnostic-image-derivation", "start": ev.record["start"], "end": stamp(),
         "parent_receipt": {"path": ev.relative(parent_path), "sha256": digest(parent_path),
@@ -225,23 +238,32 @@ def boot_profile(ev, images, cycles, prefetch, baud=None, legacy_ptys=None):
         images = diagnostic_boot_images(ev, images, baud or 115200, legacy_ptys)
     directory, _ = checked_images(ev, images)
     kernel = directory / "vmlinux"
-    ev.record["kernel_sha256"] = digest(kernel)
+    kernel_sha256 = digest(kernel)
+    ev.record["kernel_sha256"] = kernel_sha256
     ev.version("riscv64-linux-gnu-nm")
-    symbols = ev.run(["riscv64-linux-gnu-nm", "-n", ev.relative(kernel)],
-                     "kernel-symbols")
+    ev.run(["riscv64-linux-gnu-nm", "-n", ev.relative(kernel)], "kernel-symbols")
+    error = None
+    try:
+        boot_probe(ev, ev.relative(directory), cycles, "userland", prefetch)
+    except RuntimeError as failure:
+        error = str(failure)
+    ev.record["profile"] = summarize_boot_samples(ev.directory, kernel_sha256, error)
+    ev.save()
+    if error is not None:
+        raise RuntimeError(error)
+
+
+def summarize_boot_samples(directory, kernel_sha256, error):
     functions = []
-    for line in symbols.splitlines():
+    for line in (directory / "kernel-symbols.stdout.txt").read_text().splitlines():
         fields = line.split()
         if len(fields) == 3 and fields[1] in ("t", "T"):
             functions.append((int(fields[0], 16), fields[2]))
     functions.sort()
+    if not functions:
+        raise AssertionError("retained kernel symbol table contains no functions")
     addresses = [address for address, _ in functions]
-    error = None
-    try:
-        boot_probe(ev, images, cycles, "userland", prefetch)
-    except RuntimeError as failure:
-        error = str(failure)
-    samples = ev.directory / "pc-samples.txt"
+    samples = directory / "pc-samples.txt"
     if not samples.exists():
         raise RuntimeError(error or "boot profile samples missing")
     histogram = {}
@@ -250,27 +272,155 @@ def boot_profile(ev, images, cycles, prefetch, baud=None, legacy_ptys=None):
         index = bisect.bisect_right(addresses, int(pc, 16)) - 1
         name = functions[index][1] if index >= 0 else "firmware-or-unmapped"
         histogram[name] = histogram.get(name, 0) + int(count)
-    ev.record["profile"] = {
-        "kernel_sha256": digest(kernel),
-        "metrics": json.loads((ev.directory / "boot-profile.json").read_text()),
+    profile = {
+        "kernel_sha256": kernel_sha256,
+        "metrics": json.loads((directory / "boot-profile.json").read_text()),
         "cycle_weighted_functions": sorted(histogram.items(),
                                           key=lambda item: -item[1])[:40],
+        "function_samples": dict(sorted(histogram.items())),
         "boot_error": error,
     }
     phases = {}
-    for line in (ev.directory / "boot-phase-samples.txt").read_text().splitlines():
+    for line in (directory / "boot-phase-samples.txt").read_text().splitlines():
         phase, pc, count = line.split()
         index = bisect.bisect_right(addresses, int(pc, 16)) - 1
         name = functions[index][1] if index >= 0 else "firmware-or-unmapped"
         histogram = phases.setdefault(phase, {})
         histogram[name] = histogram.get(name, 0) + int(count)
-    ev.record["profile"]["phases_50m_cycles"] = {
+    profile["phases_50m_cycles"] = {
         phase: sorted(histogram.items(), key=lambda item: -item[1])[:12]
         for phase, histogram in phases.items()
     }
-    ev.save()
-    if error is not None:
-        raise RuntimeError(error)
+    profile["phase_sample_totals"] = {
+        phase: sum(histogram.values()) for phase, histogram in phases.items()
+    }
+    return profile
+
+
+def analyze_saved_boot(ev, receipt, linux_source=None, configuration=None):
+    prior = (ROOT / receipt).resolve()
+    prior.relative_to(ROOT)
+    record = json.loads(prior.read_text())
+    destination = ev.directory / ("retained-boot-samples-" + stamp())
+    destination.mkdir()
+    names = ("receipt.json", "kernel-symbols.stdout.txt", "kernel-symbols.stderr.txt",
+             "version-riscv64-linux-gnu-nm.stdout.txt",
+             "version-riscv64-linux-gnu-nm.stderr.txt",
+             "pc-samples.txt", "boot-phase-samples.txt", "boot-profile.json",
+             "boot-observed.json", "boot-run.stdout.txt", "boot-run.stderr.txt",
+             "uart.txt", "retirement-tail.txt", "boot.cpp")
+    consumed = {}
+    for name in names:
+        remaining_seconds()
+        source = prior.parent / name
+        expected = digest(source)
+        shutil.copyfile(source, destination / name)
+        if digest(destination / name) != expected:
+            raise AssertionError("retained boot analysis snapshot mismatch")
+        consumed[ev.relative(destination / name)] = expected
+    generated = record["generated_sha256"][ev.relative(prior.parent / "boot.cpp")]
+    if digest(destination / "boot.cpp") != generated:
+        raise AssertionError("retained boot harness differs from its producer receipt")
+    observed = json.loads((destination / "boot-observed.json").read_text())
+    if observed != record["observed"]:
+        raise AssertionError("retained boot observations differ from producer receipt")
+    ev.record["analysis_inputs_sha256"] = consumed
+    ev.record["retained_run"] = {
+        "receipt": ev.relative(prior), "sha256": digest(prior),
+        "exit": record["exit"], "error": record.get("error"),
+        "observed": observed,
+        "scope": "offline retained-data analysis only; not a new simulation or Linux pass",
+    }
+    ev.record["profile"] = summarize_boot_samples(
+        destination, record["kernel_sha256"], record.get("error"))
+    if linux_source is not None:
+        source = (ROOT / linux_source).resolve()
+        source.relative_to(ROOT)
+        manifest = json.loads((ROOT / "software/boot_manifest.json").read_text())
+        specification = next(item for item in manifest["sources"]
+                             if item["root"].startswith("linux-"))
+        archive = ROOT / "software" / specification["file"]
+        if digest(archive) != specification["sha256"]:
+            raise AssertionError("Linux archive differs from its pinned provenance")
+        wanted = {"lib/crypto/blake2s.c", "lib/crypto/blake2s-selftest.c",
+                  "lib/crypto/Kconfig", "crypto/Kconfig", "init/Kconfig"}
+        captured = ev.directory / ("linux-source-" + stamp())
+        captured.mkdir()
+        hashes = {}
+        with tarfile.open(archive, "r|xz") as stream:
+            for member in stream:
+                remaining_seconds()
+                relative = Path(member.name).relative_to(specification["root"]).as_posix()
+                if relative not in wanted:
+                    continue
+                data = stream.extractfile(member).read()
+                original = source / relative
+                if original.read_bytes() != data:
+                    raise AssertionError(f"diagnostic Linux source differs from pin: {relative}")
+                target = captured / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                hashes[ev.relative(target)] = digest(target)
+                wanted.remove(relative)
+                if not wanted:
+                    break
+        if wanted:
+            raise AssertionError(f"missing diagnostic Linux source members: {sorted(wanted)}")
+        ev.record["linux_source_provenance"] = {
+            "archive": ev.relative(archive), "sha256": specification["sha256"],
+            "members_sha256": hashes,
+        }
+    if configuration is not None:
+        source = (ROOT / configuration).resolve()
+        source.relative_to(ROOT)
+        target = destination / "baseline-linux.config"
+        shutil.copyfile(source, target)
+        ev.record["baseline_configuration"] = {
+            "path": ev.relative(target), "sha256": digest(target),
+            "scope": "supplied baseline configuration; not the reclaimed diagnostic variant",
+        }
+
+
+def boot_input_probe(ev, images):
+    from boot import checked_images
+    directory, _ = checked_images(ev, images)
+    if not directory.is_relative_to(ev.directory):
+        raise AssertionError("boot inputs were not retained inside the active run")
+    retained = json.loads((directory / "receipt.json").read_text())
+    for name, expected in {**retained["inputs"], **retained["outputs"]}.items():
+        path = ROOT / name
+        if not path.is_relative_to(ev.directory) or digest(path) != expected:
+            raise AssertionError("boot snapshot still depends on another run")
+    again, _ = checked_images(ev, ev.relative(directory))
+    if again != directory:
+        raise AssertionError("validating retained inputs made a redundant snapshot")
+    derived = diagnostic_boot_images(ev, images, 115200, None)
+    derived_directory, _ = checked_images(ev, derived)
+    dtc = derived_directory / "dtc"
+    if not os.access(dtc, os.X_OK):
+        raise AssertionError("retained diagnostic compiler lost executable permissions")
+    try:
+        boot_profile(ev, ev.relative(directory), 1000000, 1)
+    except RuntimeError:
+        observed = json.loads((ev.directory / "boot-observed.json").read_text())
+        error = (ev.directory / "boot-run.stderr.txt").read_text()
+        if (observed["cycles"] != 1000000 or observed["goal_reached"]
+                or not observed["integer_checks"]
+                or "bounded RTL boot goal not reached" not in error):
+            raise AssertionError("boot retention smoke failed before its diagnostic bound")
+        outcome = "expected diagnostic bound; unfinished userland correctly rejected"
+    else:
+        observed = json.loads((ev.directory / "boot-observed.json").read_text())
+        if not observed["goal_reached"] or not 0 < observed["cycles"] <= 1000000:
+            raise AssertionError("boot diagnostic accepted incomplete userland")
+        outcome = "validated early userland completion"
+    ev.record["observed"] = {
+        "self_contained_boot_snapshot": ev.relative(directory),
+        "revalidation_without_resnapshot": True,
+        "diagnostic_dtb": ev.relative(derived_directory / "hammer_v5.dtb"),
+        "startup_observed": observed, "startup_outcome": outcome,
+        "scope": "input/ELF/DTB retention and bounded RTL startup; not Linux acceptance",
+    }
 
 
 def audit_evidence(ev, receipt):
@@ -371,11 +521,15 @@ def throughput_probe(ev, images):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe", choices=("deadlines", "boot-profile", "audit", "reproduce",
-                                           "throughput"),
+                                           "throughput", "analyze-boot", "boot-inputs"),
                         required=True)
     parser.add_argument("--receipt")
     parser.add_argument("--repair-of")
     parser.add_argument("--images")
+    parser.add_argument("--linux-source",
+                        help="project-local extracted Linux source for pinned offline analysis")
+    parser.add_argument("--config",
+                        help="project-local baseline resolved Linux configuration")
     parser.add_argument("--cycles", type=int, default=500000000)
     parser.add_argument("--prefetch", type=int, choices=(0, 1), default=1)
     parser.add_argument("--baud", type=int, choices=(115200, 6250000),
@@ -406,6 +560,14 @@ def main():
             if not args.images:
                 raise ValueError("throughput diagnostic requires source-matched images")
             throughput_probe(ev, args.images)
+        elif args.probe == "analyze-boot":
+            if not args.receipt:
+                raise ValueError("offline boot analysis requires a retained receipt")
+            analyze_saved_boot(ev, args.receipt, args.linux_source, args.config)
+        elif args.probe == "boot-inputs":
+            if not args.images:
+                raise ValueError("boot input retention check requires local images")
+            boot_input_probe(ev, args.images)
         else:
             images = diagnostic_console_images(ev) if args.minimal_console else args.images
             if not images or args.cycles <= 0:

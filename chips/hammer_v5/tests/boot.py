@@ -4,7 +4,7 @@ import os
 import shutil
 import struct
 
-from evidence import ROOT, digest
+from evidence import ROOT, digest, remaining_seconds, stamp
 from integration import ports
 
 
@@ -100,6 +100,48 @@ def checked_images(ev, directory):
     for name, expected in receipt["outputs"].items():
         if digest(ROOT / name) != expected:
             raise AssertionError(f"corrupt software artifact: {name}")
+    if not directory.is_relative_to(ev.directory):
+        snapshot = ev.directory / ("boot-inputs-" + stamp())
+        snapshot.mkdir()
+        inputs, outputs = {}, {}
+        for name, expected in receipt["inputs"].items():
+            remaining_seconds()
+            captured = ev.directory / "sources/software" / (ROOT / name).name
+            if not captured.is_file() or digest(captured) != expected:
+                captured = snapshot / ("input-" + expected)
+                if not captured.exists():
+                    shutil.copyfile(ROOT / name, captured)
+            if digest(captured) != expected:
+                raise AssertionError(f"software input snapshot mismatch: {name}")
+            inputs[ev.relative(captured)] = expected
+        for name, expected in receipt["outputs"].items():
+            remaining_seconds()
+            target = snapshot / (ROOT / name).name
+            if target.exists():
+                raise AssertionError("ambiguous software output snapshot basename")
+            shutil.copy2(ROOT / name, target)
+            if digest(target) != expected:
+                raise AssertionError(f"software output snapshot mismatch: {name}")
+            outputs[ev.relative(target)] = expected
+        producer = snapshot / "producer-receipt.json"
+        shutil.copyfile(receipt_path, producer)
+        logs = {}
+        paths = {receipt.get("stdout"), receipt.get("stderr")}
+        for tool in receipt.get("tools", {}).values():
+            paths.update((tool.get("stdout"), tool.get("stderr")))
+        for name in sorted(path for path in paths if path):
+            target = snapshot / ("producer-" + (ROOT / name).name)
+            shutil.copyfile(ROOT / name, target)
+            logs[ev.relative(target)] = digest(target)
+        receipt = {
+            "kind": "verifier-boot-input-snapshot", "exit": 0,
+            "start": ev.record["start"], "end": stamp(),
+            "producer_receipt": {"path": ev.relative(producer), "sha256": digest(producer)},
+            "inputs": inputs, "outputs": outputs, "producer_logs_sha256": logs,
+        }
+        receipt_path = snapshot / "receipt.json"
+        receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+        directory = snapshot
     manifest = json.loads((directory / "images.json").read_text())
     for image in manifest["images"]:
         if digest(directory / image["file"]) != image["sha256"]:
