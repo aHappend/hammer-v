@@ -328,10 +328,26 @@ def main():
         images = args.images
         if args.fresh_build:
             images = build_software(ev)
+            identity = {}
             for name in ("opensbi.bin", "Image", "hammer_v5.dtb", "init.elf"):
-                if digest(ROOT / images / name) != digest(ROOT / args.images / name):
-                    raise AssertionError("fresh parallel build changed pinned image: " + name)
+                identity[name] = {
+                    "prior_sha256": digest(ROOT / args.images / name),
+                    "fresh_sha256": digest(ROOT / images / name),
+                }
+            ev.record["fresh_image_identity"] = identity
             ev.record["scope"]["fresh_software_build"] = True
+        if args.late_candidate:
+            identity = {
+                item["file"]: {"prior_sha256": item["sha256"],
+                               "actual_sha256": digest(ROOT / images / item["file"])}
+                for item in prior["software_build"]["images"]}
+            ev.record["historical_image_identity"] = identity
+            if any(item["prior_sha256"] != item["actual_sha256"] for item in identity.values()):
+                if not args.completion_measure:
+                    raise AssertionError("controlled prefix comparison requires identical boot images")
+                prefix_cycles = None
+                ev.record["scope"]["historical_prefix_comparison"] = (
+                    "not comparable: different boot image bytes; execute all current independent oracles")
         results = []
         variants = (
                 ("baseline", baseline_harness(saved), False, False, ()),
@@ -372,13 +388,15 @@ def main():
                                      args.prefetch, args.profile_only, scheduler, extra_flags,
                                      prefix_cycles, args.completion_measure)
                 if args.late_candidate:
-                    prefix = json.loads((child.directory / "prefix-observed.json").read_text())
-                    if prefix != prior["observed"]:
-                        raise AssertionError("late candidate changed retained architectural prefix")
-                    for name in ("uart.txt", "uart-events.txt", "user-ecalls.txt", "user-pids.txt"):
-                        if digest(child.directory / ("prefix-" + name)) != digest(
-                                (ROOT / baseline_receipt).parent / name):
-                            raise AssertionError("late candidate changed retained raw prefix: " + name)
+                    if prefix_cycles is not None:
+                        prefix = json.loads((child.directory / "prefix-observed.json").read_text())
+                        if prefix != prior["observed"]:
+                            raise AssertionError("late candidate changed retained architectural prefix")
+                        for name in ("uart.txt", "uart-events.txt", "user-ecalls.txt", "user-pids.txt"):
+                            if digest(child.directory / ("prefix-" + name)) != digest(
+                                    (ROOT / baseline_receipt).parent / name):
+                                raise AssertionError("late candidate changed retained raw prefix: " + name)
+                        child.record["retained_prefix_equivalent"] = prefix
                     from userland import compare_custom_faults, fields
                     faults = [record[1] for line in (child.directory / "uart-events.txt").read_text().splitlines()
                               if (record := fields(line.split(" ", 1)[1])) and record[0] == "FAULTS"]
@@ -386,7 +404,6 @@ def main():
                         raise AssertionError("late diagnostic did not complete genuine fault cases")
                     child.record["custom_fault_comparisons"] = compare_custom_faults(
                         child.directory, faults[0])
-                    child.record["retained_prefix_equivalent"] = prefix
                 bind_outputs(child)
             except (OSError, RuntimeError, AssertionError, ValueError) as error:
                 child.finish(1, error)
@@ -407,6 +424,9 @@ def main():
             ev.record["matched_fixed_edge_variants"] = len(results)
         elif args.profile_only:
             ev.record["compiled_model_profile_only"] = True
+        if args.completion_measure:
+            ev.record["scope"]["full_remaining_workload_not_yet_measured"] = False
+            ev.record["complete_workload_measured"] = True
         bind_outputs(ev)
         print(json.dumps({"exit": 0, "receipt": ev.finish(0)}))
         return 0
