@@ -71,10 +71,34 @@ length. Branch targets reject bit zero only; JALR clears bit zero. The V5 CSR
 preserves EPC bit one. Faulting cross-page fetches retain the original PC and
 the failing halfword VA supplied by the fetch leaf.
 
-The queue-head transport uses an explicit 262-bit vector for Yosys 0.33 parser
-compatibility: 128 PC/prediction bits, 64 expanded/raw instruction bits, three
-length bits, three fault/classification bits and 64 tval bits. The packed
-field order, queue storage and handshake behavior are unchanged.
+The four-entry fetch queue stores explicit 262-bit vectors rather than an array
+of packed structs, avoiding incorrect packed-struct-array lowering in Yosys
+0.33. Each entry has a constant asynchronous reset value of `262'b0`. The
+selected head remains interpreted as `fetch_t`; its packed field order is
+unchanged: PC [261:198], prediction [197:134], expanded instruction [133:102],
+raw instruction [101:70], byte length [69:67], error [66], page fault [65],
+illegal [64] and tval [63:0].
+
+| Queue boundary | Preserved behavior |
+|---|---|
+| Active reset | Clear all four entries, both pointers, occupancy and release state asynchronously |
+| First post-reset edge | Remain empty while stopped; no stale entry can enter decode |
+| Push/pop sampling | Use pre-edge transfer conditions and head; writes and pointer/count updates become visible after the edge |
+| Push only / pop only | Increment / decrement occupancy once, advancing only the corresponding pointer |
+| Simultaneous push and pop | Preserve occupancy, advance both pointers, and decode the old head |
+| Pointer wrap | Two-bit read/write pointers wrap from entry 3 to entry 0; depth is fixed at four |
+| Full / final drain | Full occupancy sets release; popping the final entry without a push clears release |
+| Stopped or flush | Clear pointers, occupancy and release before any push/pop update; stored payloads remain inaccessible until rewritten |
+
+This storage repair does not change fetch handshakes, release policy, redirects,
+instruction lengths or fault handling. Independent verification must establish
+four retained entries and constant asynchronous resets after lowering, direct
+versus lowered public-behavior equivalence with identical images, and wraparound,
+simultaneous transfers, redirects and reset coverage. The retained failures are
+`evidence/preparation/v5-model-lowering-20261103T140810617041Z/receipt.json`
+and
+`evidence/preparation/v5-model-lowering-20261103T141233481335Z/receipt.json`;
+neither is a passing result for this repair.
 
 Custom instructions are serializing decode operations: they advance only after
 older execute/memory/writeback stages drain, block younger operations, issue from

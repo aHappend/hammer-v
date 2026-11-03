@@ -184,7 +184,7 @@ module hammer_v5_core #(
         logic error, page_fault, illegal;
         logic [63:0] tval;
     } fetch_t;
-    fetch_t fetch_queue [0:3];
+    reg [261:0] fetch_queue [0:3];
     wire [261:0] queue_head_bits;
     fetch_t queue_head;
     reg [1:0] queue_read, queue_write;
@@ -629,7 +629,7 @@ module hammer_v5_core #(
             queue_count <= 3'b0;
             queue_release <= 1'b0;
             for (queue_slot = 0; queue_slot < 4; queue_slot = queue_slot + 1)
-                fetch_queue[queue_slot] <= '0;
+                fetch_queue[queue_slot] <= 262'b0;
         end else if (!running || queue_flush) begin
             queue_read <= 2'b0;
             queue_write <= 2'b0;
